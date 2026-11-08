@@ -1,0 +1,48 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/dbusspect.dtd">
+<node>
+  <interface name="io.github.zethasaintlab.AcerControlCenter1">
+    <method name="GetDaemonVersion">
+      <arg name="version" type="s" direction="out"/>
+    </method>
+    <method name="GetRaplPowerSnapshot">
+      <arg name="pkg_uj" type="t" direction="out"/>
+      <arg name="core_uj" type="t" direction="out"/>
+      <arg name="uncore_uj" type="t" direction="out"/>
+      <arg name="psys_uj" type="t" direction="out"/>
+      <arg name="timestamp_us" type="x" direction="out"/>
+      <arg name="available" type="b" direction="out"/>
+    </method>
+    <method name="SetCpuPerformanceTuning">
+      <arg name="governor" type="s" direction="in"/>
+      <arg name="epp" type="s" direction="in"/>
+      <arg name="turbo_enabled" type="b" direction="in"/>
+      <arg name="min_perf_pct" type="u" direction="in"/>
+      <arg name="max_perf_pct" type="u" direction="in"/>
+      <arg name="applied" type="b" direction="out"/>
+      <arg name="readback_json" type="s" direction="out"/>
+      <arg name="error_code" type="s" direction="out"/>
+    </method>
+    <method name="SetKeyboardLighting">
+      <arg name="mode" type="s" direction="in"/>
+      <arg name="brightness_pct" type="u" direction="in"/>
+      <arg name="zones_hex_csv" type="s" direction="in"/>
+      <arg name="applied" type="b" direction="out"/>
+      <arg name="readback_json" type="s" direction="out"/>
+      <arg name="error_code" type="s" direction="out"/>
+    </method>
+    <method name="SetBatteryChargeLimit">
+      <arg name="end_threshold_pct" type="u" direction="in"/>
+      <arg name="applied" type="b" direction="out"/>
+      <arg name="readback_pct" type="u" direction="out"/>
+      <arg name="error_code" type="s" direction="out"/>
+    </method>
+    <method name="SetFanControlMode">
+      <arg name="mode" type="s" direction="in"/>
+      <arg name="duty_pct" type="u" direction="in"/>
+      <arg name="applied" type="b" direction="out"/>
+      <arg name="readback_json" type="s" direction="out"/>
+      <arg name="error_code" type="s" direction="out"/>
+    </method>
+  </interface>
+</node>
