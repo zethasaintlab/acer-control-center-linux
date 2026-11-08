@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
     const QString serviceName = QStringLiteral("io.github.zethasaintlab.AcerControlCenter1");
     const QString objectPath = QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1");
 
-    if (!bus.registerObject(objectPath, &serviceObj, QDBusConnection::ExportAllSlots)) {
+    if (!bus.registerObject(objectPath, &serviceObj, QDBusConnection::ExportScriptableSlots)) {
         QTextStream(stderr) << "acer-control-daemon: Failed to register object path " << objectPath << "\n";
         return 2;
     }

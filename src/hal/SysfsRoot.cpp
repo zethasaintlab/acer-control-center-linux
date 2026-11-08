@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
+#include <unistd.h>
 
 namespace acc::hal {
 
@@ -33,14 +34,17 @@ SysfsRoot& SysfsRoot::instance() {
 }
 
 SysfsRoot::SysfsRoot() {
-    const QString envRoot = qEnvironmentVariable("ACC_SYSFS_ROOT").trimmed();
-    const QString envMode = qEnvironmentVariable("ACC_HARDWARE_MODE").trimmed().toLower();
-    if (!envRoot.isEmpty()) {
-        setCustomRootPath(envRoot, QStringLiteral("ACC_SYSFS_ROOT Fixture"));
-    } else if (envMode == QLatin1String("mock_full")) {
-        setMode(HardwareMode::MockFullCapabilities);
-    } else if (envMode == QLatin1String("mock_mirror")) {
-        setMode(HardwareMode::MockPhysicalMirror);
+    // Never honor environment variable root redirection when executing as root (e.g. acer-control-daemon).
+    if (::geteuid() != 0) {
+        const QString envRoot = qEnvironmentVariable("ACC_SYSFS_ROOT").trimmed();
+        const QString envMode = qEnvironmentVariable("ACC_HARDWARE_MODE").trimmed().toLower();
+        if (!envRoot.isEmpty()) {
+            setCustomRootPath(envRoot, QStringLiteral("ACC_SYSFS_ROOT Fixture"));
+        } else if (envMode == QLatin1String("mock_full")) {
+            setMode(HardwareMode::MockFullCapabilities);
+        } else if (envMode == QLatin1String("mock_mirror")) {
+            setMode(HardwareMode::MockPhysicalMirror);
+        }
     }
 }
 

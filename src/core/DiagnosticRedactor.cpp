@@ -92,7 +92,10 @@ QJsonObject DiagnosticRedactor::buildJsonReport(const SystemSnapshot& snapshot) 
     root.insert(QStringLiteral("dmi_identity"), dmiObj);
 
     QJsonArray capArr;
-    for (const CapabilityRecord& cap : snapshot.capabilities) {
+    for (CapabilityRecord cap : snapshot.capabilities) {
+        cap.interfacePath = redactSensitiveText(cap.interfacePath);
+        cap.summary = redactSensitiveText(cap.summary);
+        cap.detailExplanation = redactSensitiveText(cap.detailExplanation);
         capArr.append(cap.toJson());
     }
     root.insert(QStringLiteral("capabilities"), capArr);

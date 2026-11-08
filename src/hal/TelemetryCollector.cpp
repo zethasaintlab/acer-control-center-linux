@@ -394,7 +394,13 @@ core::ThermalTelemetry TelemetryCollector::readThermalTelemetry(double cpuPkgTem
 
     if (!th.fans.empty()) {
         th.manualFanSupported = th.fans.front().isWritable;
-        th.fanControlMode = QStringLiteral("Hardware PWM Bound");
+        const QString fanHwmon = HardwareDiscovery::findFirstFanPwmHwmonPath();
+        const QString pwmEn = fanHwmon.isEmpty()
+                                  ? QStringLiteral("2")
+                                  : SysfsRoot::readFileTrimmed(fanHwmon + QStringLiteral("/pwm1_enable"));
+        th.fanControlMode = (pwmEn == QLatin1String("1"))
+                                ? QStringLiteral("Manual PWM Override")
+                                : QStringLiteral("Firmware Automatic (PWM)");
         th.fanStatusExplanation = QStringLiteral("Kernel hwmon fan tachometers and PWM control are active.");
     } else {
         th.manualFanSupported = false;

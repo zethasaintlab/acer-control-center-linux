@@ -89,7 +89,7 @@ AppSettings ConfigStore::defaultSettings() {
 
     KeyboardLightingProfile p1;
     p1.id = QStringLiteral("atelier_static");
-    p1.name = QStringLiteral("Atelier Ice Blue");
+    p1.name = QStringLiteral("Ice Blue");
     p1.enabled = true;
     p1.mode = QStringLiteral("static");
     p1.brightnessPct = 80;
@@ -103,7 +103,7 @@ AppSettings ConfigStore::defaultSettings() {
 
     KeyboardLightingProfile p2;
     p2.id = QStringLiteral("workstation_warm");
-    p2.name = QStringLiteral("Workstation Warm White");
+    p2.name = QStringLiteral("Warm White");
     p2.enabled = true;
     p2.mode = QStringLiteral("static");
     p2.brightnessPct = 60;
@@ -117,7 +117,7 @@ AppSettings ConfigStore::defaultSettings() {
 
     KeyboardLightingProfile p3;
     p3.id = QStringLiteral("thermal_zone_split");
-    p3.name = QStringLiteral("Tactical Zone Split");
+    p3.name = QStringLiteral("Zone Split");
     p3.enabled = true;
     p3.mode = QStringLiteral("static");
     p3.brightnessPct = 100;
