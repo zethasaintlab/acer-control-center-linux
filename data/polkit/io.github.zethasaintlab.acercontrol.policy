@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+    <vendor>Acer Control Center — Linux Edition</vendor>
+    <vendor_url>https://github.com/zethasaintlab/acer-control-center-linux</vendor_url>
+    <icon_name>io.github.zethasaintlab.acer-control-center</icon_name>
+
+    <action id="io.github.zethasaintlab.acercontrol.read-rapl">
+        <description>Read Intel RAPL CPU energy counters</description>
+        <message>Reading Intel RAPL CPU energy telemetry requires hardware sensor authorization.</message>
+        <defaults>
+            <allow_any>no</allow_any>
+            <allow_inactive>no</allow_inactive>
+            <allow_active>yes</allow_active>
+        </defaults>
+    </action>
+
+    <action id="io.github.zethasaintlab.acercontrol.set-power-profile">
+        <description>Configure Intel P-State governor, HWP EPP, and turbo bounds</description>
+        <message>Authentication is required to modify CPU P-State performance tuning parameters.</message>
+        <defaults>
+            <allow_any>no</allow_any>
+            <allow_inactive>no</allow_inactive>
+            <allow_active>auth_admin_keep</allow_active>
+        </defaults>
+    </action>
+
+    <action id="io.github.zethasaintlab.acercontrol.set-keyboard-lighting">
+        <description>Configure keyboard backlight brightness and zone RGB illumination</description>
+        <message>Authorization is required to change keyboard backlight illumination.</message>
+        <defaults>
+            <allow_any>no</allow_any>
+            <allow_inactive>no</allow_inactive>
+            <allow_active>yes</allow_active>
+        </defaults>
+    </action>
+
+    <action id="io.github.zethasaintlab.acercontrol.set-battery-limit">
+        <description>Configure battery charging end threshold</description>
+        <message>Authentication is required to change the battery charging threshold limit.</message>
+        <defaults>
+            <allow_any>no</allow_any>
+            <allow_inactive>no</allow_inactive>
+            <allow_active>auth_admin_keep</allow_active>
+        </defaults>
+    </action>
+
+    <action id="io.github.zethasaintlab.acercontrol.set-fan-mode">
+        <description>Configure cooling fan PWM mode and duty cycle</description>
+        <message>Authentication is required to change cooling fan PWM control mode.</message>
+        <defaults>
+            <allow_any>no</allow_any>
+            <allow_inactive>no</allow_inactive>
+            <allow_active>auth_admin_keep</allow_active>
+        </defaults>
+    </action>
+</policyconfig>

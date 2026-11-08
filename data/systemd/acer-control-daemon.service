@@ -1,0 +1,32 @@
+[Unit]
+Description=Acer Control Center Privileged Hardware Control Daemon
+Documentation=https://github.com/zethasaintlab/acer-control-center-linux
+After=dbus.service polkit.service
+
+[Service]
+Type=dbus
+BusName=io.github.zethasaintlab.AcerControlCenter1
+ExecStart=/usr/libexec/acer-control-daemon
+Restart=on-failure
+RestartSec=3
+
+# Security & Least-Privilege Sandboxing
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+Alias=dbus-io.github.zethasaintlab.AcerControlCenter1.service
