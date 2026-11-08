@@ -85,11 +85,11 @@ Object path: `/io/github/zethasaintlab/AcerControlCenter1`
 
 | Method | Arguments | Returns | Polkit Action ID | Default Policy (`active` local seat) |
 |---|---|---|---|---|
-| `GetRaplPowerSnapshot` | *(none)* | `(u64 pkg_uj, u64 core_uj, u64 uncore_uj, u64 psys_uj, i64 ts_us)` | `io.github.zethasaintlab.acercontrol.read-power` | `yes` |
-| `SetCpuPerformanceTuning` | `(s governor, s epp, b turbo, u32 min_pct, u32 max_pct)` | `(b applied, s readback_json, s error)` | `io.github.zethasaintlab.acercontrol.manage-performance` | `auth_admin_keep` |
-| `SetKeyboardLighting` | `(s mode, u8 brightness, s hex_zones_csv)` | `(b applied, s readback_json, s error)` | `io.github.zethasaintlab.acercontrol.manage-keyboard` | `yes` (active console user) |
-| `SetBatteryChargeLimit` | `(u8 end_threshold_pct)` | `(b applied, u8 readback_pct, s error)` | `io.github.zethasaintlab.acercontrol.manage-battery` | `auth_admin_keep` |
-| `SetFanControlMode` | `(s mode, u8 duty_pct)` | `(b applied, s readback_json, s error)` | `io.github.zethasaintlab.acercontrol.manage-fans` | `auth_admin_keep` |
+| `GetRaplPowerSnapshot` | *(none)* | `(u64 pkg_uj, u64 core_uj, u64 uncore_uj, u64 psys_uj, i64 ts_us, b avail)` | `io.github.zethasaintlab.acercontrol.read-rapl` | `yes` (`allowUserInteraction = false`) |
+| `SetCpuPerformanceTuning` | `(s governor, s epp, b turbo, u32 min_pct, u32 max_pct)` | `(b applied, s readback_json, s error)` | `io.github.zethasaintlab.acercontrol.set-power-profile` | `auth_admin_keep` (`allowUserInteraction = true`) |
+| `SetKeyboardLighting` | `(s mode, u32 brightness, s hex_zones_csv)` | `(b applied, s readback_json, s error)` | `io.github.zethasaintlab.acercontrol.set-keyboard-lighting` | `yes` (`allowUserInteraction = true`) |
+| `SetBatteryChargeLimit` | `(u32 end_threshold_pct)` | `(b applied, u32 readback_pct, s error)` | `io.github.zethasaintlab.acercontrol.set-battery-limit` | `auth_admin_keep` (`allowUserInteraction = true`) |
+| `SetFanControlMode` | `(s mode, u32 duty_pct)` | `(b applied, s readback_json, s error)` | `io.github.zethasaintlab.acercontrol.set-fan-mode` | `auth_admin_keep` (`allowUserInteraction = true`) |
 
 ### 4.2 Input Validation & Readback Verification Rules
 - **No Shell Execution:** `acer-control-daemon` never calls `system()`, `popen()`, or `/bin/sh`. It opens allowlisted sysfs paths using `QFile` (`O_WRONLY | O_CLOEXEC`) after verifying canonical paths under the configured sysfs root.

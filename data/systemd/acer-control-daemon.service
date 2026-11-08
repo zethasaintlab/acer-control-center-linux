@@ -12,6 +12,7 @@ RestartSec=3
 
 # Security & Least-Privilege Sandboxing
 NoNewPrivileges=yes
+ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateNetwork=yes

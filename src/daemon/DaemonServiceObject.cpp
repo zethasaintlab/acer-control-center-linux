@@ -50,7 +50,7 @@ void DaemonServiceObject::GetRaplPowerSnapshot(
     available = false;
 
     QString reason;
-    if (!verifyCaller(QStringLiteral("io.github.zethasaintlab.acercontrol.read-power"), false, reason)) {
+    if (!verifyCaller(QString(PolkitActions::kReadRapl), false, reason)) {
         return;
     }
 
@@ -82,7 +82,7 @@ void DaemonServiceObject::SetCpuPerformanceTuning(
     QString& error_code
 ) {
     QString authReason;
-    if (!verifyCaller(QStringLiteral("io.github.zethasaintlab.acercontrol.manage-performance"), true, authReason)) {
+    if (!verifyCaller(QString(PolkitActions::kSetPowerProfile), true, authReason)) {
         applied = false;
         readback_json = QStringLiteral("{}");
         error_code = QStringLiteral("ERR_POLKIT_UNAUTHORIZED");
@@ -111,7 +111,7 @@ void DaemonServiceObject::SetKeyboardLighting(
     QString& error_code
 ) {
     QString authReason;
-    if (!verifyCaller(QStringLiteral("io.github.zethasaintlab.acercontrol.manage-keyboard"), true, authReason)) {
+    if (!verifyCaller(QString(PolkitActions::kSetKeyboardLighting), true, authReason)) {
         applied = false;
         readback_json = QStringLiteral("{}");
         error_code = QStringLiteral("ERR_POLKIT_UNAUTHORIZED");
@@ -136,7 +136,7 @@ void DaemonServiceObject::SetBatteryChargeLimit(
     QString& error_code
 ) {
     QString authReason;
-    if (!verifyCaller(QStringLiteral("io.github.zethasaintlab.acercontrol.manage-battery"), true, authReason)) {
+    if (!verifyCaller(QString(PolkitActions::kSetBatteryLimit), true, authReason)) {
         applied = false;
         readback_pct = 100;
         error_code = QStringLiteral("ERR_POLKIT_UNAUTHORIZED");
@@ -162,7 +162,7 @@ void DaemonServiceObject::SetFanControlMode(
     QString& error_code
 ) {
     QString authReason;
-    if (!verifyCaller(QStringLiteral("io.github.zethasaintlab.acercontrol.manage-fans"), true, authReason)) {
+    if (!verifyCaller(QString(PolkitActions::kSetFanMode), true, authReason)) {
         applied = false;
         readback_json = QStringLiteral("{}");
         error_code = QStringLiteral("ERR_POLKIT_UNAUTHORIZED");

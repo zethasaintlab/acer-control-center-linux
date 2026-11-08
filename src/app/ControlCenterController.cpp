@@ -550,10 +550,35 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
         hexes.append(z.hex);
     }
     const int effectiveBri = m_currentKbdProfile.enabled ? m_currentKbdProfile.brightnessPct : 0;
+    const QString zonesCsv = hexes.join(QLatin1Char(','));
+
+    if (!hal::SysfsRoot::instance().isMockActive()) {
+        QDBusMessage call = QDBusMessage::createMethodCall(
+            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+            QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
+            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+            QStringLiteral("SetKeyboardLighting")
+        );
+        call << m_currentKbdProfile.mode << static_cast<uint>(effectiveBri) << zonesCsv;
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 3000);
+        if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
+            const bool ok = reply.arguments().at(0).toBool();
+            const QString rb = reply.arguments().at(1).toString();
+            const QString errCode = reply.arguments().at(2).toString();
+            refreshNow();
+            setStatusBanner(
+                ok ? QStringLiteral("Daemon applied & verified keyboard lighting (%1).").arg(rb)
+                   : QStringLiteral("Daemon rejected keyboard lighting (%1).").arg(errCode),
+                !ok
+            );
+            return;
+        }
+    }
+
     const core::ControlResult res = hal::ControlOperations::applyKeyboardLighting(
         m_currentKbdProfile.mode,
         effectiveBri,
-        hexes.join(QLatin1Char(','))
+        zonesCsv
     );
     refreshNow();
     setStatusBanner(res.message, !res.applied);
@@ -650,12 +675,58 @@ void ControlCenterController::updateFanCurvePoints(const QVariantList& points) {
 }
 
 void ControlCenterController::setFanMode(const QString& mode, int manualDutyPct) {
+    if (!hal::SysfsRoot::instance().isMockActive()) {
+        QDBusMessage call = QDBusMessage::createMethodCall(
+            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+            QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
+            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+            QStringLiteral("SetFanControlMode")
+        );
+        call << mode << static_cast<uint>(std::clamp(manualDutyPct, 20, 100));
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 3000);
+        if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
+            const bool ok = reply.arguments().at(0).toBool();
+            const QString rb = reply.arguments().at(1).toString();
+            const QString errCode = reply.arguments().at(2).toString();
+            refreshNow();
+            setStatusBanner(
+                ok ? QStringLiteral("Daemon applied & verified fan PWM mode (%1).").arg(rb)
+                   : QStringLiteral("Daemon rejected fan mode (%1).").arg(errCode),
+                !ok
+            );
+            return;
+        }
+    }
+
     const core::ControlResult res = hal::ControlOperations::applyFanControlMode(mode, manualDutyPct);
     refreshNow();
     setStatusBanner(res.message, !res.applied);
 }
 
 void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
+    if (!hal::SysfsRoot::instance().isMockActive()) {
+        QDBusMessage call = QDBusMessage::createMethodCall(
+            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+            QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
+            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+            QStringLiteral("SetBatteryChargeLimit")
+        );
+        call << static_cast<uint>(std::clamp(thresholdPct, 50, 100));
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 3000);
+        if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
+            const bool ok = reply.arguments().at(0).toBool();
+            const uint rbPct = reply.arguments().at(1).toUInt();
+            const QString errCode = reply.arguments().at(2).toString();
+            refreshNow();
+            setStatusBanner(
+                ok ? QStringLiteral("Daemon verified battery charge threshold at %1%.").arg(rbPct)
+                   : QStringLiteral("Daemon rejected battery charge threshold (%1).").arg(errCode),
+                !ok
+            );
+            return;
+        }
+    }
+
     int rbPct = 100;
     const core::ControlResult res = hal::ControlOperations::applyBatteryChargeLimit(thresholdPct, rbPct);
     refreshNow();

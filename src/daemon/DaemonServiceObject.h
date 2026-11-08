@@ -18,6 +18,8 @@ public:
 
     void setAuthMode(AuthPolicyMode mode);
     AuthPolicyMode authMode() const;
+    const PolkitAuthorizer& authorizer() const { return m_authorizer; }
+    void clearAuthAuditTrail() { m_authorizer.clearAuditTrail(); }
 
 public Q_SLOTS:
     Q_SCRIPTABLE QString GetDaemonVersion();
