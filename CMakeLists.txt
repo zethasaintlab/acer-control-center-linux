@@ -75,9 +75,84 @@ add_executable(acer-control-daemon
 )
 target_link_libraries(acer-control-daemon PRIVATE acc_daemon_lib)
 
-# 4. Unit & Mock HAL Tests
+# 4. Precision Hardware Atelier GUI & ViewModels Library
+add_library(acc_gui_lib STATIC
+    src/ui/TelemetryStripChart.h
+    src/ui/TelemetryStripChart.cpp
+    src/ui/HsvColorWheelItem.h
+    src/ui/HsvColorWheelItem.cpp
+    src/ui/FanCurveEditorItem.h
+    src/ui/FanCurveEditorItem.cpp
+    src/ui/KeyboardVisualizerItem.h
+    src/ui/KeyboardVisualizerItem.cpp
+    src/app/ThemeEngine.h
+    src/app/ThemeEngine.cpp
+    src/app/ControlCenterController.h
+    src/app/ControlCenterController.cpp
+    src/ui/resources.qrc
+)
+target_include_directories(acc_gui_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(acc_gui_lib PUBLIC
+    acc_hal
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Qml
+    Qt6::Quick
+    Qt6::QuickControls2
+    Qt6::DBus
+)
+
+# 5. Desktop Application Executable
+add_executable(acer-control-center
+    src/main.cpp
+)
+target_link_libraries(acer-control-center PRIVATE acc_gui_lib)
+
+# 6. Unit, Mock HAL & GUI Tests
 add_executable(test_core_and_hal
     tests/unit/test_core_and_hal.cpp
 )
 target_link_libraries(test_core_and_hal PRIVATE acc_daemon_lib Qt6::Test)
 add_test(NAME test_core_and_hal COMMAND test_core_and_hal)
+
+add_executable(test_gui_atelier
+    tests/gui/test_gui_atelier.cpp
+)
+target_link_libraries(test_gui_atelier PRIVATE acc_gui_lib Qt6::Test)
+add_test(NAME test_gui_atelier COMMAND test_gui_atelier -platform offscreen)
+
+# 7. Installation Targets (Fedora 45 / RPM compatible)
+include(GNUInstallDirs)
+
+install(TARGETS acer-control-center
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+install(TARGETS acer-control-daemon
+    RUNTIME DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}
+)
+
+install(FILES data/applications/io.github.zethasaintlab.acer-control-center.desktop
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+)
+install(FILES data/metainfo/io.github.zethasaintlab.acer-control-center.metainfo.xml
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
+)
+install(FILES data/icons/io.github.zethasaintlab.acer-control-center.svg
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
+)
+install(FILES data/dbus/io.github.zethasaintlab.AcerControlCenter1.xml
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces
+)
+install(FILES data/dbus/io.github.zethasaintlab.AcerControlCenter1.conf
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/system.d
+)
+install(FILES data/dbus/io.github.zethasaintlab.AcerControlCenter1.service
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/system-services
+)
+install(FILES data/polkit/io.github.zethasaintlab.acercontrol.policy
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/actions
+)
+install(FILES data/systemd/acer-control-daemon.service
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system
+)

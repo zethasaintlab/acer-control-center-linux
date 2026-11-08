@@ -1,0 +1,18 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/qml">
+        <file>qml/Main.qml</file>
+        <file>qml/AtelierIcon.qml</file>
+        <file>qml/AtelierButton.qml</file>
+        <file>qml/AtelierSlider.qml</file>
+        <file>qml/SectionHeader.qml</file>
+        <file>qml/OverviewView.qml</file>
+        <file>qml/PerformanceView.qml</file>
+        <file>qml/ThermalView.qml</file>
+        <file>qml/KeyboardStudioView.qml</file>
+        <file>qml/BatteryView.qml</file>
+        <file>qml/GpuView.qml</file>
+        <file>qml/DiagnosticsView.qml</file>
+        <file>qml/SettingsView.qml</file>
+    </qresource>
+</RCC>

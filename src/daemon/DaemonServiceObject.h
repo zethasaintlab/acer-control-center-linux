@@ -20,9 +20,9 @@ public:
     AuthPolicyMode authMode() const;
 
 public Q_SLOTS:
-    QString GetDaemonVersion();
+    Q_SCRIPTABLE QString GetDaemonVersion();
 
-    void GetRaplPowerSnapshot(
+    Q_SCRIPTABLE void GetRaplPowerSnapshot(
         qulonglong& pkg_uj,
         qulonglong& core_uj,
         qulonglong& uncore_uj,
@@ -31,7 +31,7 @@ public Q_SLOTS:
         bool& available
     );
 
-    void SetCpuPerformanceTuning(
+    Q_SCRIPTABLE void SetCpuPerformanceTuning(
         const QString& governor,
         const QString& epp,
         bool turbo_enabled,
@@ -42,7 +42,7 @@ public Q_SLOTS:
         QString& error_code
     );
 
-    void SetKeyboardLighting(
+    Q_SCRIPTABLE void SetKeyboardLighting(
         const QString& mode,
         uint brightness_pct,
         const QString& zones_hex_csv,
@@ -51,14 +51,14 @@ public Q_SLOTS:
         QString& error_code
     );
 
-    void SetBatteryChargeLimit(
+    Q_SCRIPTABLE void SetBatteryChargeLimit(
         uint end_threshold_pct,
         bool& applied,
         uint& readback_pct,
         QString& error_code
     );
 
-    void SetFanControlMode(
+    Q_SCRIPTABLE void SetFanControlMode(
         const QString& mode,
         uint duty_pct,
         bool& applied,

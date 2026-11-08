@@ -222,15 +222,20 @@ AccentTokenSet ColorScience::deriveAccessibleAccentTokens(const QColor& rawAccen
     AccentTokenSet tokens;
     tokens.primary = validAccent;
 
-    // 1. Choose foreground text color on top of a solid accent button
+    // 1. Choose foreground text color on top of a solid accent button (guaranteed >= 4.5:1 AA)
+    const QColor pureBlack(0, 0, 0);
     const double crDarkInk = contrastRatio(validAccent, darkInk);
+    const double crPureBlack = contrastRatio(validAccent, pureBlack);
     const double crLightInk = contrastRatio(validAccent, lightInk);
-    if (crDarkInk >= crLightInk) {
+    if (crDarkInk >= 4.5 && crDarkInk >= crLightInk) {
         tokens.onAccentText = darkInk;
         tokens.contrastOnAccent = crDarkInk;
-    } else {
+    } else if (crLightInk >= crPureBlack) {
         tokens.onAccentText = lightInk;
         tokens.contrastOnAccent = crLightInk;
+    } else {
+        tokens.onAccentText = pureBlack;
+        tokens.contrastOnAccent = crPureBlack;
     }
 
     // 2. Ensure readableOnSurface achieves >= 4.5:1 against surfacePrimary
