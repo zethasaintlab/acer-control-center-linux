@@ -1,0 +1,48 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+dist/
+rpmbuild/
+*.rpm
+*.srpm
+*.tar.gz
+*.tar.xz
+
+# CMake / Ninja / CTest
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+.ninja_deps
+.ninja_log
+build.ninja
+
+# Compiled objects & binaries
+*.o
+*.obj
+*.so
+*.so.*
+*.a
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.qmlc
+*.jsc
+
+# IDE & Editor artifacts
+.vscode/
+.idea/
+.clangd/
+*.swp
+*.swo
+*~
+
+# Temporary & test artifacts
+tmp/
+*.log
+.DS_Store
