@@ -11,7 +11,9 @@
 #include "hal/TelemetryCollector.h"
 
 #include <QFile>
+#include <QMap>
 #include <QTemporaryDir>
+#include <QXmlStreamReader>
 #include <QtTest/QtTest>
 
 using namespace acc;
@@ -249,6 +251,221 @@ private Q_SLOTS:
         daemonObj.SetBatteryChargeLimit(80, applied, rbPct, errCode);
         QVERIFY(!applied);
         QCOMPARE(errCode, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+
+        hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
+    }
+
+    void testPolkitPolicyXmlBijectionAndPrivilegeBoundaries() {
+        const QString policyPath = QStringLiteral(QT_TESTCASE_SOURCEDIR "/data/polkit/io.github.zethasaintlab.acercontrol.policy");
+        QFile xmlFile(policyPath);
+        QVERIFY2(xmlFile.open(QIODevice::ReadOnly | QIODevice::Text), "Failed to open data/polkit/io.github.zethasaintlab.acercontrol.policy");
+
+        struct PolicyActionEntry {
+            int declarationCount = 0;
+            QString allowAny;
+            QString allowInactive;
+            QString allowActive;
+        };
+        QMap<QString, PolicyActionEntry> parsedActions;
+
+        QXmlStreamReader xml(&xmlFile);
+        QString currentActionId;
+        bool insideDefaults = false;
+
+        while (!xml.atEnd()) {
+            xml.readNext();
+            if (xml.isStartElement()) {
+                const QString elem = xml.name().toString();
+                if (elem == QLatin1String("action")) {
+                    currentActionId = xml.attributes().value(QLatin1String("id")).toString();
+                    QVERIFY(!currentActionId.isEmpty());
+                    parsedActions[currentActionId].declarationCount += 1;
+                } else if (elem == QLatin1String("defaults") && !currentActionId.isEmpty()) {
+                    insideDefaults = true;
+                } else if (insideDefaults && !currentActionId.isEmpty()) {
+                    const QString val = xml.readElementText().trimmed();
+                    if (elem == QLatin1String("allow_any")) {
+                        parsedActions[currentActionId].allowAny = val;
+                    } else if (elem == QLatin1String("allow_inactive")) {
+                        parsedActions[currentActionId].allowInactive = val;
+                    } else if (elem == QLatin1String("allow_active")) {
+                        parsedActions[currentActionId].allowActive = val;
+                    }
+                }
+            } else if (xml.isEndElement()) {
+                const QString elem = xml.name().toString();
+                if (elem == QLatin1String("defaults")) {
+                    insideDefaults = false;
+                } else if (elem == QLatin1String("action")) {
+                    currentActionId.clear();
+                }
+            }
+        }
+        QVERIFY2(!xml.hasError(), qPrintable(xml.errorString()));
+
+        // Verify exact 1-to-1 bijection between PolkitActions constants and XML <action> declarations
+        const QStringList expectedActions = daemon::PolkitActions::allActionIds();
+        QCOMPARE(expectedActions.size(), 5);
+        QCOMPARE(parsedActions.size(), expectedActions.size());
+
+        for (const QString& actionId : expectedActions) {
+            QVERIFY2(parsedActions.contains(actionId), qPrintable(QStringLiteral("Missing Polkit XML action: %1").arg(actionId)));
+            const PolicyActionEntry& entry = parsedActions[actionId];
+            QCOMPARE(entry.declarationCount, 1);
+            QCOMPARE(entry.allowAny, QStringLiteral("no"));
+            QCOMPARE(entry.allowInactive, QStringLiteral("no"));
+        }
+
+        // Verify read-only / non-destructive vs admin-gated write boundaries in policy defaults
+        QCOMPARE(parsedActions[QString(daemon::PolkitActions::kReadRapl)].allowActive, QStringLiteral("yes"));
+        QCOMPARE(parsedActions[QString(daemon::PolkitActions::kSetKeyboardLighting)].allowActive, QStringLiteral("yes"));
+        QCOMPARE(parsedActions[QString(daemon::PolkitActions::kSetPowerProfile)].allowActive, QStringLiteral("auth_admin_keep"));
+        QCOMPARE(parsedActions[QString(daemon::PolkitActions::kSetBatteryLimit)].allowActive, QStringLiteral("auth_admin_keep"));
+        QCOMPARE(parsedActions[QString(daemon::PolkitActions::kSetFanMode)].allowActive, QStringLiteral("auth_admin_keep"));
+
+        // Verify PolkitAuthorizer fails closed if an unregistered or legacy action ID is ever requested
+        daemon::PolkitAuthorizer auth(daemon::AuthPolicyMode::TestAllowAll);
+        QString reason;
+        QVERIFY(!auth.checkCallerAuthorized(
+            QStringLiteral(":1.99"),
+            QStringLiteral("io.github.zethasaintlab.acercontrol.read-power"),
+            false,
+            &reason
+        ));
+        QVERIFY(!auth.checkCallerAuthorized(
+            QStringLiteral(":1.99"),
+            QStringLiteral("io.github.zethasaintlab.acercontrol.manage-performance"),
+            true,
+            &reason
+        ));
+    }
+
+    void testAllFiveDaemonOperationsAuthorizationAndZeroWritesOnDeny() {
+        hal::SysfsRoot::instance().setMode(hal::HardwareMode::MockFullCapabilities);
+        const auto& root = hal::SysfsRoot::instance();
+
+        daemon::DaemonServiceObject daemonObj(daemon::AuthPolicyMode::TestAllowAll);
+        daemonObj.clearAuthAuditTrail();
+
+        // Phase A: Execute all 5 operations under TestAllowAll and verify exact action ID + interactivity flags
+        qulonglong pkgUj = 0, coreUj = 0, uncoreUj = 0, psysUj = 0;
+        qlonglong tsUs = 0;
+        bool raplAvail = false;
+        daemonObj.GetRaplPowerSnapshot(pkgUj, coreUj, uncoreUj, psysUj, tsUs, raplAvail);
+        QVERIFY(raplAvail);
+        QVERIFY(pkgUj > 0ULL);
+
+        bool applied = false;
+        QString rbJson, errCode;
+        uint rbPct = 0;
+
+        daemonObj.SetCpuPerformanceTuning(
+            QStringLiteral("powersave"), QStringLiteral("balance_power"), false, 20, 85, applied, rbJson, errCode
+        );
+        QVERIFY(applied);
+
+        daemonObj.SetKeyboardLighting(
+            QStringLiteral("static"), 75, QStringLiteral("#3B9EFF,#3B9EFF,#3B9EFF,#3B9EFF"), applied, rbJson, errCode
+        );
+        QVERIFY(applied);
+
+        daemonObj.SetBatteryChargeLimit(80, applied, rbPct, errCode);
+        QVERIFY(applied);
+        QCOMPARE(rbPct, 80U);
+
+        daemonObj.SetFanControlMode(QStringLiteral("manual"), 60, applied, rbJson, errCode);
+        QVERIFY(applied);
+
+        const auto& allowTrail = daemonObj.authorizer().auditTrail();
+        QCOMPARE(allowTrail.size(), static_cast<size_t>(5));
+
+        // 1. GetRaplPowerSnapshot: read-only, non-interactive (allowUserInteraction == false)
+        QCOMPARE(allowTrail[0].actionId, QString(daemon::PolkitActions::kReadRapl));
+        QCOMPARE(allowTrail[0].allowUserInteraction, false);
+        QCOMPARE(allowTrail[0].authorized, true);
+
+        // 2. SetCpuPerformanceTuning: write, interactive (allowUserInteraction == true)
+        QCOMPARE(allowTrail[1].actionId, QString(daemon::PolkitActions::kSetPowerProfile));
+        QCOMPARE(allowTrail[1].allowUserInteraction, true);
+        QCOMPARE(allowTrail[1].authorized, true);
+
+        // 3. SetKeyboardLighting: write, interactive (allowUserInteraction == true)
+        QCOMPARE(allowTrail[2].actionId, QString(daemon::PolkitActions::kSetKeyboardLighting));
+        QCOMPARE(allowTrail[2].allowUserInteraction, true);
+        QCOMPARE(allowTrail[2].authorized, true);
+
+        // 4. SetBatteryChargeLimit: write, interactive (allowUserInteraction == true)
+        QCOMPARE(allowTrail[3].actionId, QString(daemon::PolkitActions::kSetBatteryLimit));
+        QCOMPARE(allowTrail[3].allowUserInteraction, true);
+        QCOMPARE(allowTrail[3].authorized, true);
+
+        // 5. SetFanControlMode: write, interactive (allowUserInteraction == true)
+        QCOMPARE(allowTrail[4].actionId, QString(daemon::PolkitActions::kSetFanMode));
+        QCOMPARE(allowTrail[4].allowUserInteraction, true);
+        QCOMPARE(allowTrail[4].authorized, true);
+
+        // Snapshot current sysfs state before testing denied operations
+        const QString minPerfPath = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/intel_pstate/min_perf_pct"));
+        const QString maxPerfPath = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/intel_pstate/max_perf_pct"));
+        const QString noTurboPath = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/intel_pstate/no_turbo"));
+        const QString kbdBriPath = root.resolvePath(QStringLiteral("/sys/class/leds/acer::kbd_backlight/brightness"));
+        const QString kbdRgbPath = root.resolvePath(QStringLiteral("/sys/class/leds/acer::kbd_backlight/multi_intensity"));
+        const QString batLimitPath = root.resolvePath(QStringLiteral("/sys/class/power_supply/BAT0/charge_control_end_threshold"));
+        const QString fanPwmPath = root.resolvePath(QStringLiteral("/sys/class/hwmon/hwmon7/pwm1"));
+        const QString fanEnPath = root.resolvePath(QStringLiteral("/sys/class/hwmon/hwmon7/pwm1_enable"));
+
+        const QString preMinPerf = hal::SysfsRoot::readFileTrimmed(minPerfPath);
+        const QString preMaxPerf = hal::SysfsRoot::readFileTrimmed(maxPerfPath);
+        const QString preNoTurbo = hal::SysfsRoot::readFileTrimmed(noTurboPath);
+        const QString preKbdBri = hal::SysfsRoot::readFileTrimmed(kbdBriPath);
+        const QString preKbdRgb = hal::SysfsRoot::readFileTrimmed(kbdRgbPath);
+        const QString preBatLimit = hal::SysfsRoot::readFileTrimmed(batLimitPath);
+        const QString preFanPwm = hal::SysfsRoot::readFileTrimmed(fanPwmPath);
+        const QString preFanEn = hal::SysfsRoot::readFileTrimmed(fanEnPath);
+
+        // Phase B: Switch to TestDenyAll and verify all 5 operations fail closed with ZERO sysfs writes
+        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestDenyAll);
+        daemonObj.clearAuthAuditTrail();
+
+        daemonObj.GetRaplPowerSnapshot(pkgUj, coreUj, uncoreUj, psysUj, tsUs, raplAvail);
+        QVERIFY(!raplAvail);
+        QCOMPARE(pkgUj, 0ULL);
+
+        daemonObj.SetCpuPerformanceTuning(
+            QStringLiteral("performance"), QStringLiteral("performance"), true, 55, 100, applied, rbJson, errCode
+        );
+        QVERIFY(!applied);
+        QCOMPARE(errCode, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+
+        daemonObj.SetKeyboardLighting(
+            QStringLiteral("static"), 15, QStringLiteral("#FF0000,#FF0000,#FF0000,#FF0000"), applied, rbJson, errCode
+        );
+        QVERIFY(!applied);
+        QCOMPARE(errCode, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+
+        daemonObj.SetBatteryChargeLimit(60, applied, rbPct, errCode);
+        QVERIFY(!applied);
+        QCOMPARE(errCode, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+
+        daemonObj.SetFanControlMode(QStringLiteral("auto"), 95, applied, rbJson, errCode);
+        QVERIFY(!applied);
+        QCOMPARE(errCode, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+
+        // Verify zero sysfs attributes were modified when Polkit denied authorization
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(minPerfPath), preMinPerf);
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(maxPerfPath), preMaxPerf);
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(noTurboPath), preNoTurbo);
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(kbdBriPath), preKbdBri);
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(kbdRgbPath), preKbdRgb);
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(batLimitPath), preBatLimit);
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(fanPwmPath), preFanPwm);
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(fanEnPath), preFanEn);
+
+        const auto& denyTrail = daemonObj.authorizer().auditTrail();
+        QCOMPARE(denyTrail.size(), static_cast<size_t>(5));
+        for (size_t i = 0; i < 5; ++i) {
+            QCOMPARE(denyTrail[i].authorized, false);
+        }
 
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
     }

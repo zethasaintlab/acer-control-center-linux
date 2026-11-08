@@ -24,24 +24,45 @@ bool PolkitAuthorizer::checkCallerAuthorized(
     bool allowUserInteraction,
     QString* outReason
 ) const {
+    auto recordDecision = [&](bool auth) -> bool {
+        if (m_auditTrail.size() >= 256) {
+            m_auditTrail.erase(m_auditTrail.begin());
+        }
+        m_auditTrail.push_back(AuthCheckRecord{
+            callerBusName,
+            actionId,
+            allowUserInteraction,
+            auth
+        });
+        return auth;
+    };
+
+    // Fail closed if an unregistered Polkit action ID is ever requested.
+    if (!PolkitActions::isRegisteredActionId(actionId)) {
+        if (outReason) {
+            *outReason = QStringLiteral("Rejected unregistered Polkit action ID '%1'.").arg(actionId);
+        }
+        return recordDecision(false);
+    }
+
     if (m_mode == AuthPolicyMode::TestAllowAll) {
         if (outReason) {
-            *outReason = QStringLiteral("Authorized by TestAllowAll policy.");
+            *outReason = QStringLiteral("Authorized by TestAllowAll policy for '%1'.").arg(actionId);
         }
-        return true;
+        return recordDecision(true);
     }
     if (m_mode == AuthPolicyMode::TestDenyAll) {
         if (outReason) {
             *outReason = QStringLiteral("Denied by TestDenyAll policy for action '%1'.").arg(actionId);
         }
-        return false;
+        return recordDecision(false);
     }
 
-    if (callerBusName.trimmed().isEmpty()) {
+    if (callerBusName.trimmed().isEmpty() || callerBusName == QLatin1String(":local.inproc")) {
         if (outReason) {
-            *outReason = QStringLiteral("Missing D-Bus caller bus name.");
+            *outReason = QStringLiteral("Missing or non-D-Bus caller bus name ('%1').").arg(callerBusName);
         }
-        return false;
+        return recordDecision(false);
     }
 
     GError* gerr = nullptr;
@@ -54,7 +75,7 @@ bool PolkitAuthorizer::checkCallerAuthorized(
         if (gerr) {
             g_error_free(gerr);
         }
-        return false;
+        return recordDecision(false);
     }
 
     PolkitSubject* subject = polkit_system_bus_name_new(callerBusName.toUtf8().constData());
@@ -91,7 +112,7 @@ bool PolkitAuthorizer::checkCallerAuthorized(
 
     g_object_unref(subject);
     g_object_unref(authority);
-    return authorized;
+    return recordDecision(authorized);
 }
 
 } // namespace acc::daemon
