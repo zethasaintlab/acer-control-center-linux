@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Acer Control Center
+GenericName=Hardware Telemetry & Control Center
+Comment=Precision Hardware Atelier for Acer Aspire 7 A715-59G on Fedora Linux
+Exec=acer-control-center
+Icon=io.github.zethasaintlab.acer-control-center
+Terminal=false
+Categories=System;Settings;HardwareSettings;Qt;
+Keywords=Acer;Aspire;Hardware;Thermal;Fan;Battery;Keyboard;RGB;NVIDIA;Performance;
+StartupNotify=true
+StartupWMClass=acer-control-center
