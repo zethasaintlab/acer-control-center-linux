@@ -12,11 +12,15 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QImage>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTextStream>
+#include <QThread>
 #include <QTimer>
 #include <unistd.h>
 
@@ -62,10 +66,15 @@ int main(int argc, char* argv[]) {
         QStringLiteral("allow-root-test"),
         QStringLiteral("Allow running in isolated root container test environments.")
     );
+    QCommandLineOption dumpTelemetryJsonOpt(
+        QStringLiteral("dump-telemetry-json"),
+        QStringLiteral("Perform a read-only telemetry & capability snapshot and output JSON to stdout without modifying hardware.")
+    );
 
     parser.addOption(mockModeOpt);
     parser.addOption(captureScreenshotsOpt);
     parser.addOption(allowRootTestOpt);
+    parser.addOption(dumpTelemetryJsonOpt);
     parser.process(app);
 
     if (::geteuid() == 0) {
@@ -89,6 +98,104 @@ int main(int argc, char* argv[]) {
 
     acc::app::ThemeEngine themeEngine;
     acc::app::ControlCenterController controller(&themeEngine);
+
+    if (parser.isSet(dumpTelemetryJsonOpt)) {
+        QThread::msleep(120);
+        controller.refreshNow();
+
+        QJsonObject root;
+        root.insert(QStringLiteral("hardwareMode"), controller.hardwareModeLabel());
+        root.insert(QStringLiteral("mockActive"), controller.mockModeActive());
+        root.insert(QStringLiteral("productTitle"), controller.productTitle());
+        root.insert(QStringLiteral("boardTitle"), controller.boardTitle());
+        root.insert(QStringLiteral("biosTitle"), controller.biosTitle());
+        root.insert(QStringLiteral("odmPlatformNote"), controller.odmPlatformNote());
+        root.insert(QStringLiteral("wmiGuids"), controller.wmiGuidsJoined());
+        root.insert(QStringLiteral("activeTunedProfile"), controller.activeTunedProfile());
+
+        QJsonObject cpuObj;
+        cpuObj.insert(QStringLiteral("modelName"), controller.cpuModelName());
+        cpuObj.insert(QStringLiteral("packageTempC"), controller.cpuPackageTempC());
+        cpuObj.insert(QStringLiteral("totalUtilizationPct"), controller.cpuUtilizationPct());
+        cpuObj.insert(QStringLiteral("avgFreqMhz"), controller.cpuAvgFreqMhz());
+        cpuObj.insert(QStringLiteral("maxFreqMhz"), controller.cpuMaxFreqMhz());
+        cpuObj.insert(QStringLiteral("governor"), controller.cpuGovernor());
+        cpuObj.insert(QStringLiteral("epp"), controller.cpuEpp());
+        cpuObj.insert(QStringLiteral("turboEnabled"), controller.cpuTurboEnabled());
+        cpuObj.insert(QStringLiteral("minPerfPct"), controller.cpuMinPerfPct());
+        cpuObj.insert(QStringLiteral("maxPerfPct"), controller.cpuMaxPerfPct());
+        cpuObj.insert(QStringLiteral("powerAvailable"), controller.cpuPowerAvailable());
+        cpuObj.insert(QStringLiteral("powerSourceLabel"), controller.cpuPowerSource());
+        cpuObj.insert(QStringLiteral("packagePowerWatts"), controller.cpuPackagePowerW());
+        cpuObj.insert(QStringLiteral("cores"), QJsonArray::fromVariantList(controller.cpuCoresModel()));
+        root.insert(QStringLiteral("cpu"), cpuObj);
+
+        QJsonObject memObj;
+        memObj.insert(QStringLiteral("totalMiB"), controller.memTotalMiB());
+        memObj.insert(QStringLiteral("usedMiB"), controller.memUsedMiB());
+        memObj.insert(QStringLiteral("availableMiB"), controller.memAvailableMiB());
+        memObj.insert(QStringLiteral("cachedMiB"), controller.memCachedMiB());
+        memObj.insert(QStringLiteral("utilizationPct"), controller.memUtilizationPct());
+        memObj.insert(QStringLiteral("psiCpuSome10"), controller.psiCpuSome10());
+        memObj.insert(QStringLiteral("psiMemSome10"), controller.psiMemSome10());
+        memObj.insert(QStringLiteral("psiIoSome10"), controller.psiIoSome10());
+        root.insert(QStringLiteral("memory"), memObj);
+
+        QJsonObject gpuObj;
+        gpuObj.insert(QStringLiteral("available"), controller.gpuAvailable());
+        gpuObj.insert(QStringLiteral("sourceLabel"), controller.gpuSourceLabel());
+        gpuObj.insert(QStringLiteral("name"), controller.gpuName());
+        gpuObj.insert(QStringLiteral("driverVersion"), controller.gpuDriverVersion());
+        gpuObj.insert(QStringLiteral("pciBusId"), controller.gpuPciBusId());
+        gpuObj.insert(QStringLiteral("tempC"), controller.gpuTempC());
+        gpuObj.insert(QStringLiteral("utilizationPct"), controller.gpuUtilizationPct());
+        gpuObj.insert(QStringLiteral("memUtilizationPct"), controller.gpuMemUtilizationPct());
+        gpuObj.insert(QStringLiteral("vramUsedMiB"), controller.gpuVramUsedMiB());
+        gpuObj.insert(QStringLiteral("vramTotalMiB"), controller.gpuVramTotalMiB());
+        gpuObj.insert(QStringLiteral("graphicsClockMhz"), controller.gpuGraphicsClockMhz());
+        gpuObj.insert(QStringLiteral("memClockMhz"), controller.gpuMemClockMhz());
+        gpuObj.insert(QStringLiteral("pstate"), controller.gpuPstate());
+        gpuObj.insert(QStringLiteral("powerDrawWatts"), controller.gpuPowerDrawW());
+        gpuObj.insert(QStringLiteral("powerMaxLimitWatts"), controller.gpuMaxLimitW());
+        gpuObj.insert(QStringLiteral("powerRailGated"), controller.gpuPowerRailGated());
+        gpuObj.insert(QStringLiteral("throttleReasons"), QJsonArray::fromStringList(controller.gpuThrottleReasons()));
+        root.insert(QStringLiteral("gpu"), gpuObj);
+
+        QJsonObject batObj;
+        batObj.insert(QStringLiteral("acOnline"), controller.acOnline());
+        batObj.insert(QStringLiteral("status"), controller.batStatus());
+        batObj.insert(QStringLiteral("capacityPct"), controller.batCapacityPct());
+        batObj.insert(QStringLiteral("voltageVolts"), controller.batVoltageV());
+        batObj.insert(QStringLiteral("currentAmps"), controller.batCurrentA());
+        batObj.insert(QStringLiteral("powerWatts"), controller.batPowerW());
+        batObj.insert(QStringLiteral("chargeFullAh"), controller.batChargeFullAh());
+        batObj.insert(QStringLiteral("chargeDesignAh"), controller.batChargeDesignAh());
+        batObj.insert(QStringLiteral("wearHealthPct"), controller.batWearHealthPct());
+        batObj.insert(QStringLiteral("chargeLimitSupported"), controller.batChargeLimitSupported());
+        batObj.insert(QStringLiteral("explanation"), controller.batStatusExplanation());
+        root.insert(QStringLiteral("battery"), batObj);
+
+        QJsonObject thObj;
+        thObj.insert(QStringLiteral("stateLabel"), controller.thermalStateLabel());
+        thObj.insert(QStringLiteral("maxNvmeTempC"), controller.maxNvmeTempC());
+        thObj.insert(QStringLiteral("maxBoardTempC"), controller.maxBoardTempC());
+        thObj.insert(QStringLiteral("manualFanSupported"), controller.manualFanSupported());
+        thObj.insert(QStringLiteral("fanControlMode"), controller.fanControlModeLabel());
+        thObj.insert(QStringLiteral("fanStatusExplanation"), controller.fanStatusExplanation());
+        thObj.insert(QStringLiteral("sensors"), QJsonArray::fromVariantList(controller.thermalSensorsModel()));
+        thObj.insert(QStringLiteral("fans"), QJsonArray::fromVariantList(controller.fansModel()));
+        root.insert(QStringLiteral("thermal"), thObj);
+
+        QJsonObject dispObj;
+        dispObj.insert(QStringLiteral("brightnessSupported"), controller.displayBrightnessSupported());
+        dispObj.insert(QStringLiteral("brightnessPct"), controller.displayBrightnessPct());
+        root.insert(QStringLiteral("display"), dispObj);
+
+        root.insert(QStringLiteral("capabilities"), QJsonArray::fromVariantList(controller.capabilitiesModel()));
+
+        QTextStream(stdout) << QString::fromUtf8(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        return 0;
+    }
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("theme"), &themeEngine);

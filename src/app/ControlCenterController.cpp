@@ -560,7 +560,7 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
             QStringLiteral("SetKeyboardLighting")
         );
         call << m_currentKbdProfile.mode << static_cast<uint>(effectiveBri) << zonesCsv;
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 3000);
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
         if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
             const bool ok = reply.arguments().at(0).toBool();
             const QString rb = reply.arguments().at(1).toString();
@@ -573,6 +573,16 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
             );
             return;
         }
+        const QString dbusErr = reply.errorName().isEmpty()
+                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
+                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
+        refreshNow();
+        setStatusBanner(
+            QStringLiteral("Privileged daemon D-Bus call failed for keyboard lighting (%1).").arg(dbusErr),
+            true
+        );
+        return;
     }
 
     const core::ControlResult res = hal::ControlOperations::applyKeyboardLighting(
@@ -622,7 +632,7 @@ void ControlCenterController::applyCustomCpuTuning(
     Q_EMIT settingsUpdated();
 
     if (!hal::SysfsRoot::instance().isMockActive()) {
-        // Call privileged daemon over D-Bus if running
+        // Call privileged daemon over D-Bus; never fall back to unprivileged direct sysfs writes in physical mode
         QDBusMessage call = QDBusMessage::createMethodCall(
             QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
             QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
@@ -632,7 +642,7 @@ void ControlCenterController::applyCustomCpuTuning(
         call << governor << epp << turbo
              << static_cast<uint>(m_settings.customOperatingProfile.minPerfPct)
              << static_cast<uint>(m_settings.customOperatingProfile.maxPerfPct);
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 3000);
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
         if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
             const bool ok = reply.arguments().at(0).toBool();
             const QString rb = reply.arguments().at(1).toString();
@@ -645,6 +655,16 @@ void ControlCenterController::applyCustomCpuTuning(
             );
             return;
         }
+        const QString dbusErr = reply.errorName().isEmpty()
+                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
+                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
+        refreshNow();
+        setStatusBanner(
+            QStringLiteral("Privileged daemon D-Bus call failed for CPU tuning (%1).").arg(dbusErr),
+            true
+        );
+        return;
     }
 
     const core::ControlResult res = hal::ControlOperations::applyCpuPerformanceTuning(
@@ -683,7 +703,7 @@ void ControlCenterController::setFanMode(const QString& mode, int manualDutyPct)
             QStringLiteral("SetFanControlMode")
         );
         call << mode << static_cast<uint>(std::clamp(manualDutyPct, 20, 100));
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 3000);
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
         if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
             const bool ok = reply.arguments().at(0).toBool();
             const QString rb = reply.arguments().at(1).toString();
@@ -696,6 +716,16 @@ void ControlCenterController::setFanMode(const QString& mode, int manualDutyPct)
             );
             return;
         }
+        const QString dbusErr = reply.errorName().isEmpty()
+                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
+                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
+        refreshNow();
+        setStatusBanner(
+            QStringLiteral("Privileged daemon D-Bus call failed for fan mode (%1).").arg(dbusErr),
+            true
+        );
+        return;
     }
 
     const core::ControlResult res = hal::ControlOperations::applyFanControlMode(mode, manualDutyPct);
@@ -712,7 +742,7 @@ void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
             QStringLiteral("SetBatteryChargeLimit")
         );
         call << static_cast<uint>(std::clamp(thresholdPct, 50, 100));
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 3000);
+        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
         if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
             const bool ok = reply.arguments().at(0).toBool();
             const uint rbPct = reply.arguments().at(1).toUInt();
@@ -725,6 +755,16 @@ void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
             );
             return;
         }
+        const QString dbusErr = reply.errorName().isEmpty()
+                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
+                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
+        refreshNow();
+        setStatusBanner(
+            QStringLiteral("Privileged daemon D-Bus call failed for battery charge limit (%1).").arg(dbusErr),
+            true
+        );
+        return;
     }
 
     int rbPct = 100;
