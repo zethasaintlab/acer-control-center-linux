@@ -211,6 +211,7 @@ bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalCo
     // 4. cpufreq & intel_pstate & RAPL
     for (int i = 0; i < 10; ++i) {
         const QString cpuBase = QStringLiteral("/sys/devices/system/cpu/cpu%1/cpufreq").arg(i);
+        writeMockFile(rootPath, QStringLiteral("/sys/devices/system/cpu/cpu%1/topology/core_id").arg(i), QStringLiteral("%1\n").arg(i));
         writeMockFile(rootPath, cpuBase + QStringLiteral("/scaling_driver"), QStringLiteral("intel_pstate\n"));
         writeMockFile(rootPath, cpuBase + QStringLiteral("/scaling_governor"), QStringLiteral("powersave\n"));
         writeMockFile(rootPath, cpuBase + QStringLiteral("/scaling_available_governors"), QStringLiteral("performance powersave\n"));

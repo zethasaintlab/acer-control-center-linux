@@ -469,6 +469,46 @@ private Q_SLOTS:
 
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
     }
+
+    void testSystemdServiceHardeningAndRaptorLakeCoreIdMapping() {
+        // 1. Audit systemd unit sandboxing directives
+        const QString unitPath = QStringLiteral(QT_TESTCASE_SOURCEDIR "/data/systemd/acer-control-daemon.service");
+        const QString unitText = hal::SysfsRoot::readFileTrimmed(unitPath);
+        QVERIFY(!unitText.isEmpty());
+        QVERIFY(unitText.contains(QStringLiteral("NoNewPrivileges=yes")));
+        QVERIFY(unitText.contains(QStringLiteral("ProtectSystem=strict")));
+        QVERIFY(unitText.contains(QStringLiteral("ProtectHome=yes")));
+        QVERIFY(unitText.contains(QStringLiteral("ProtectKernelTunables=yes")));
+        QVERIFY(unitText.contains(QStringLiteral("PrivateDevices=yes")));
+        QVERIFY(unitText.contains(QStringLiteral("ProtectControlGroups=yes")));
+        QVERIFY(unitText.contains(QStringLiteral("RestrictAddressFamilies=AF_UNIX")));
+        QVERIFY(unitText.contains(QStringLiteral("CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH")));
+        QVERIFY(unitText.contains(QStringLiteral("UMask=0077")));
+        QVERIFY(unitText.contains(QStringLiteral("ReadWritePaths=-/sys/devices/system/cpu/intel_pstate")));
+        // Never allow unrestricted ReadWritePaths=/sys or ReadWritePaths=-/sys
+        QVERIFY(!unitText.contains(QStringLiteral("ReadWritePaths=/sys\n")));
+        QVERIFY(!unitText.contains(QStringLiteral("ReadWritePaths=-/sys\n")));
+
+        // 2. Verify Raptor Lake non-contiguous topology/core_id mapping to coretemp
+        auto& root = hal::SysfsRoot::instance();
+        root.setMode(hal::HardwareMode::MockPhysicalMirror);
+        const QString topo2Path = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu2/topology/core_id"));
+        QDir().mkpath(QFileInfo(topo2Path).absolutePath());
+        QVERIFY(hal::SysfsRoot::writeFileVerified(topo2Path, QStringLiteral("4")));
+
+        const QString coretempDir = hal::HardwareDiscovery::findHwmonByName(QStringLiteral("coretemp"));
+        QVERIFY(!coretempDir.isEmpty());
+        QVERIFY(hal::SysfsRoot::writeFileVerified(coretempDir + QStringLiteral("/temp6_label"), QStringLiteral("Core 4")));
+        QVERIFY(hal::SysfsRoot::writeFileVerified(coretempDir + QStringLiteral("/temp6_input"), QStringLiteral("61000")));
+
+        hal::TelemetryCollector collector;
+        const auto snap = collector.collectSnapshot(QStringLiteral("balanced"));
+        QVERIFY(snap.cpu.cores.size() > 2);
+        QCOMPARE(snap.cpu.cores[2].coreId, 2);
+        QCOMPARE(snap.cpu.cores[2].tempC, 61.0);
+
+        root.setMode(hal::HardwareMode::PhysicalSystem);
+    }
 };
 
 QTEST_MAIN(TestCoreAndHal)

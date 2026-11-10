@@ -205,11 +205,18 @@ core::CpuTelemetry TelemetryCollector::readCpuTelemetry() {
         freqSumMhz += curMhz;
         ++freqCount;
 
+        bool okTopoId = false;
+        const int topoCoreId = SysfsRoot::readFileTrimmed(
+                                   root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu%1/topology/core_id").arg(i)),
+                                   &okTopoId)
+                                   .toInt();
+        const int tempLookupKey = okTopoId ? topoCoreId : i;
+
         core::CpuCoreReading cr;
         cr.coreId = i;
         cr.label = QStringLiteral("CPU %1").arg(i);
         cr.freqMhz = curMhz;
-        cr.tempC = coreTemps.value(i, cpu.packageTempC);
+        cr.tempC = coreTemps.value(tempLookupKey, coreTemps.value(i, cpu.packageTempC));
         cr.utilizationPct = perCpuLoad.value(i, cpu.totalUtilizationPct);
         cpu.cores.push_back(cr);
     }
@@ -370,7 +377,7 @@ core::ThermalTelemetry TelemetryCollector::readThermalTelemetry(double cpuPkgTem
             const double degC = millideg / 1000.0;
             th.maxBoardTempC = std::max(th.maxBoardTempC, degC);
 
-            if (zType == QLatin1String("SEN2") || zType == QLatin1String("SEN3") || zType == QLatin1String("TCPU")) {
+            if (!zType.isEmpty()) {
                 core::ThermalSensorReading sr;
                 sr.id = zEntry;
                 sr.label = QStringLiteral("ACPI Zone %1 (%2)").arg(zType, zEntry);
