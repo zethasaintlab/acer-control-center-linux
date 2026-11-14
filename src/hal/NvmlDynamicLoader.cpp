@@ -3,6 +3,7 @@
 #include "core/DiagnosticRedactor.h"
 #include "hal/SysfsRoot.h"
 
+#include <QFileInfo>
 #include <dlfcn.h>
 #include <algorithm>
 #include <cmath>
@@ -205,6 +206,39 @@ core::GpuTelemetry NvmlDynamicLoader::readTelemetry() const {
     }
 
     if (!isLoaded()) {
+        const QString procGpuInfo = SysfsRoot::instance().resolvePath(
+            QStringLiteral("/proc/driver/nvidia/gpus/0000:01:00.0/information")
+        );
+        if (QFileInfo::exists(procGpuInfo)) {
+            const QString infoText = SysfsRoot::readFileTrimmed(procGpuInfo);
+            QString modelName = QStringLiteral("NVIDIA GeForce RTX 3050 6GB Laptop GPU");
+            QString fwVersion;
+            const QStringList lines = infoText.split(QLatin1Char('\n'));
+            for (const QString& ln : lines) {
+                if (ln.startsWith(QLatin1String("Model:"))) {
+                    modelName = ln.mid(6).trimmed();
+                } else if (ln.startsWith(QLatin1String("GPU Firmware:"))) {
+                    fwVersion = ln.mid(13).trimmed();
+                }
+            }
+            const QString pciPowerState = SysfsRoot::readFileTrimmed(
+                SysfsRoot::instance().resolvePath(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/power_state"))
+            );
+            g.available = true;
+            g.sourceLabel = QStringLiteral("/proc/driver/nvidia (NVML Library Version Mismatch — Reboot Pending)");
+            g.name = modelName;
+            g.driverVersion = fwVersion.isEmpty() ? QStringLiteral("nvidia.ko (Reboot Pending)") : fwVersion;
+            g.pciBusId = QStringLiteral("0000:01:00.0");
+            g.subsystemId = QStringLiteral("1025:1900 (Acer Kelilu_RTH)");
+            g.vramTotalMiB = 6144;
+            g.powerDefaultLimitWatts = 60.0;
+            g.powerMaxLimitWatts = 75.0;
+            g.pstate = pciPowerState.isEmpty() ? QStringLiteral("D0") : pciPowerState;
+            g.throttleReasonsDecoded = {
+                QStringLiteral("NVML Driver/Library Version Mismatch (Reboot required after NVIDIA package update)")
+            };
+            return g;
+        }
         g.available = false;
         g.sourceLabel = QStringLiteral("NVML Not Loaded");
         return g;

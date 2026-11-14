@@ -263,7 +263,10 @@ std::vector<core::CapabilityRecord> HardwareDiscovery::probeAllCapabilities(bool
     });
 
     // 9. NVIDIA GPU Telemetry
-    const bool gpuAvail = nvmlLoaded || root.isMockActive();
+    const bool hasProcNvidia = QFileInfo::exists(
+        root.resolvePath(QStringLiteral("/proc/driver/nvidia/gpus/0000:01:00.0/information"))
+    );
+    const bool gpuAvail = nvmlLoaded || hasProcNvidia || root.isMockActive();
     caps.push_back(core::CapabilityRecord{
         QStringLiteral("cap.gpu.nvidia"),
         QStringLiteral("NVIDIA GeForce RTX 3050 6GB Telemetry & Throttling"),
@@ -271,10 +274,12 @@ std::vector<core::CapabilityRecord> HardwareDiscovery::probeAllCapabilities(bool
         QStringLiteral("libnvidia-ml.so.1 (Dynamic Runtime Loader) / PCI 0000:01:00.0"),
         gpuAvail ? core::CapabilityState::ReadOnly : core::CapabilityState::NotDetected,
         false,
-        gpuAvail
+        (nvmlLoaded || root.isMockActive())
             ? QStringLiteral("Clocks, VRAM, utilization, temperature, P-state, TGP limits, and throttle reason decoding")
-            : QStringLiteral("libnvidia-ml.so.1 not available; application runs without NVIDIA dependency"),
-        QStringLiteral("Includes P8 rail-gating power anomaly filter for GA107BM on driver 615.78.08.")
+            : (hasProcNvidia
+                   ? QStringLiteral("PCI 0000:01:00.0 & /proc/driver/nvidia active (NVML library version mismatch pending reboot)")
+                   : QStringLiteral("libnvidia-ml.so.1 not available; application runs without NVIDIA dependency")),
+        QStringLiteral("Includes P8 rail-gating power anomaly filter for GA107BM and /proc/driver/nvidia fallback across driver updates.")
     });
 
     // 10. Battery Telemetry & Capacity Ratio
