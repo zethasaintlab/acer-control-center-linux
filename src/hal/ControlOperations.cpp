@@ -2,6 +2,7 @@
 #include "hal/ControlOperations.h"
 #include "core/ColorScience.h"
 #include "core/DiagnosticRedactor.h"
+#include "hal/ClevoKeyboardBackend.h"
 #include "hal/HardwareDiscovery.h"
 #include "hal/SysfsRoot.h"
 
@@ -227,7 +228,6 @@ core::ControlResult ControlOperations::applyKeyboardLighting(
     int brightnessPct,
     const QString& zonesHexCsv
 ) {
-    Q_UNUSED(mode);
     core::ControlResult res;
 
     if (brightnessPct < 0 || brightnessPct > 100) {
@@ -251,54 +251,59 @@ core::ControlResult ControlOperations::applyKeyboardLighting(
         parsedZones.push_back(core::RgbColor{59, 158, 255});
     }
 
+    // Backend A: Linux /sys/class/leds/*kbd_backlight* (Multicolor RGB or Monochrome Brightness)
     const QString ledPath = HardwareDiscovery::findFirstKeyboardLedPath();
-    if (ledPath.isEmpty()) {
-        res.applied = false;
-        res.errorCode = QStringLiteral("ERR_KEYBOARD_LED_NOT_DETECTED");
-        res.message = QStringLiteral(
-            "No physical keyboard LED device exists under /sys/class/leds. "
-            "Profile saved to Keyboard Studio Preview without performing unverified hardware writes."
-        );
-        return res;
-    }
+    if (!ledPath.isEmpty()) {
+        bool okMax = false;
+        const int maxB = SysfsRoot::readFileTrimmed(ledPath + QStringLiteral("/max_brightness"), &okMax).toInt();
+        const int effectiveMax = (okMax && maxB > 0) ? maxB : 100;
+        const int targetRawB = std::clamp(static_cast<int>(std::lround((brightnessPct * effectiveMax) / 100.0)), 0, effectiveMax);
 
-    bool okMax = false;
-    const int maxB = SysfsRoot::readFileTrimmed(ledPath + QStringLiteral("/max_brightness"), &okMax).toInt();
-    const int effectiveMax = (okMax && maxB > 0) ? maxB : 100;
-    const int targetRawB = std::clamp(static_cast<int>(std::lround((brightnessPct * effectiveMax) / 100.0)), 0, effectiveMax);
-
-    QString rbBrightness, err;
-    if (!SysfsRoot::writeFileVerified(ledPath + QStringLiteral("/brightness"), QString::number(targetRawB), &rbBrightness, &err)) {
-        res.errorCode = QStringLiteral("ERR_LED_BRIGHTNESS_WRITE");
-        res.message = err;
-        return res;
-    }
-
-    QString rbIntensity;
-    const QString multiPath = ledPath + QStringLiteral("/multi_intensity");
-    if (QFileInfo::exists(multiPath)) {
-        const core::RgbColor primary = parsedZones.front();
-        const QString rgbTriple = QStringLiteral("%1 %2 %3").arg(primary.r).arg(primary.g).arg(primary.b);
-        if (!SysfsRoot::writeFileVerified(multiPath, rgbTriple, &rbIntensity, &err)) {
-            res.errorCode = QStringLiteral("ERR_LED_RGB_WRITE");
+        QString rbBrightness, err;
+        if (!SysfsRoot::writeFileVerified(ledPath + QStringLiteral("/brightness"), QString::number(targetRawB), &rbBrightness, &err)) {
+            res.errorCode = QStringLiteral("ERR_LED_BRIGHTNESS_WRITE");
             res.message = err;
             return res;
         }
+
+        QString rbIntensity;
+        const QString multiPath = ledPath + QStringLiteral("/multi_intensity");
+        const bool hasMultiIntensity = QFileInfo::exists(multiPath);
+        if (hasMultiIntensity) {
+            const core::RgbColor primary = parsedZones.front();
+            const QString rgbTriple = QStringLiteral("%1 %2 %3").arg(primary.r).arg(primary.g).arg(primary.b);
+            if (!SysfsRoot::writeFileVerified(multiPath, rgbTriple, &rbIntensity, &err)) {
+                res.errorCode = QStringLiteral("ERR_LED_RGB_WRITE");
+                res.message = err;
+                return res;
+            }
+        }
+
+        QJsonObject rbObj;
+        rbObj.insert(QStringLiteral("backend"), hasMultiIntensity ? QStringLiteral("linux_leds_rgb") : QStringLiteral("linux_leds_monochrome"));
+        rbObj.insert(QStringLiteral("led_device"), QFileInfo(ledPath).fileName());
+        rbObj.insert(QStringLiteral("brightness_raw"), rbBrightness.toInt());
+        rbObj.insert(QStringLiteral("max_brightness"), effectiveMax);
+        rbObj.insert(QStringLiteral("multi_intensity"), rbIntensity);
+        rbObj.insert(QStringLiteral("rgb_applied"), hasMultiIntensity);
+
+        res.applied = true;
+        res.errorCode = QStringLiteral("OK");
+        res.readbackSummary = QString::fromUtf8(QJsonDocument(rbObj).toJson(QJsonDocument::Compact));
+        if (hasMultiIntensity) {
+            res.message = QStringLiteral("Applied & verified keyboard lighting on %1 (brightness=%2/%3, rgb=%4).")
+                              .arg(QFileInfo(ledPath).fileName(), rbBrightness, QString::number(effectiveMax), rbIntensity);
+        } else {
+            res.message = QStringLiteral("Verified monochrome keyboard brightness on %1 (%2/%3); physical RGB is unsupported on this LED node (color retained in Studio Preview).")
+                              .arg(QFileInfo(ledPath).fileName(), rbBrightness, QString::number(effectiveMax));
+        }
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("INFO"), QStringLiteral("HAL"), res.message);
+        return res;
     }
 
-    QJsonObject rbObj;
-    rbObj.insert(QStringLiteral("led_device"), QFileInfo(ledPath).fileName());
-    rbObj.insert(QStringLiteral("brightness_raw"), rbBrightness.toInt());
-    rbObj.insert(QStringLiteral("multi_intensity"), rbIntensity);
-
-    res.applied = true;
-    res.errorCode = QStringLiteral("OK");
-    res.readbackSummary = QString::fromUtf8(QJsonDocument(rbObj).toJson(QJsonDocument::Compact));
-    res.message = QStringLiteral("Applied & verified keyboard lighting on %1 (brightness=%2/%3, rgb=%4).")
-                      .arg(QFileInfo(ledPath).fileName(), rbBrightness, QString::number(effectiveMax),
-                           rbIntensity.isEmpty() ? QStringLiteral("monochrome") : rbIntensity);
-    core::DiagnosticRedactor::instance().appendLog(QStringLiteral("INFO"), QStringLiteral("HAL"), res.message);
-    return res;
+    // Backend B / C: Check Clevo WMI Method Block (ABBC0F6D / object_id=BB) or Firmware Hotkey fallback
+    const core::DmiIdentity dmi = HardwareDiscovery::probeDmiAndWmi();
+    return ClevoKeyboardBackend::applyViaWmiBridge(dmi, mode, brightnessPct, parsedZones);
 }
 
 core::ControlResult ControlOperations::applyBatteryChargeLimit(int endThresholdPct, int& outReadbackPct) {

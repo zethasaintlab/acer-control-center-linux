@@ -88,4 +88,43 @@ On the `Aspire A715-59G` (`Kelilu_RTH`), `/sys/bus/wmi/devices/` exposes a compl
 | `cap.battery.telemetry` | Battery Charge %, Voltage, Current, Wattage & Est. Capacity Ratio | `/sys/class/power_supply/BAT0/*`, `/sys/class/power_supply/AC/online` | `0444` | `ReadOnly` | Verified (`charge_full 1956000` / `charge_full_design 3410000` → `57.4%` fuel-gauge capacity ratio; serial redacted). |
 | `cap.battery.limit` | Battery Charge End Threshold (e.g. 80% Care Mode) | `/sys/class/power_supply/BAT0/charge_control_end_threshold` | Absent | `NotDetected` | Supported in HAL & daemon when sysfs node exists; disabled with clear hardware explanation on `Kelilu_RTH`. |
 | `cap.backlight.display` | Internal eDP Panel Brightness | `/sys/class/backlight/intel_backlight` (`max_brightness: 48000`) & `org.freedesktop.login1.Session.SetBrightness` | `0644` / D-Bus | `FullySupported` | Verified (`intel_backlight` on `card1-eDP-1`). |
-| `cap.keyboard.lighting` | Physical Keyboard Backlight & RGB Zones | `/sys/class/leds/*kbd_backlight*` (`brightness`, `max_brightness`, `multi_intensity`) | Absent (`ABBC0F6D` unverified) | `NotDetected` | Full unrestricted HSV/HSL/RGB/Hex Color Picker & Profile Studio implemented; binds to `/sys/class/leds/*kbd_backlight*` when present/mocked and never fabricates physical hardware writes when absent. |
+| `cap.keyboard.lighting` | Physical Keyboard Backlight & RGB Zones | `/sys/class/leds/*kbd_backlight*` (`brightness`, `max_brightness`, `multi_intensity`) | Absent (`ABBC0F6D` `object_id=BB` unbound) | `NotDetected` | Full unrestricted HSV/HSL/RGB/Hex Color Picker & Profile Studio implemented; routes to Backend A (`/sys/class/leds/*kbd_backlight*`, distinguishing Monochrome vs Multicolor RGB), Backend B (`ClevoKeyboardBackend` `WMBB` `0x67` verified bridge in mock/driver fixtures), or Backend C (`FirmwareHotkeyOnly` Preview Mode on physical `Kelilu_RTH`). |
+
+---
+
+## 5. Stage 12 — Keyboard Backlight Reverse Engineering & Multi-Backend Architecture (`Kelilu_RTH`)
+
+### 5.1 End-to-End Execution Path (`GUI -> Controller -> D-Bus -> Polkit -> Daemon -> HAL -> Hardware`)
+1. **GUI (`src/ui/qml/KeyboardStudioView.qml`):** Renders the interactive 4-zone chassis deck visualizer, unrestricted HSV/HSL wheel, sRGB sliders, `#RRGGBB` hex input, custom swatches, and hardware capability/domain separation banner.
+2. **Controller (`src/app/ControlCenterController.cpp`):** Maintains independent keyboard lighting state (`m_currentKbdProfile`, `m_kbdRgb`, `m_kbdHsv`, `m_kbdHsl`) completely decoupled from `ThemeEngine::accentHex()`. When `applyKeyboardLightingToHardware()` is invoked in physical mode, it issues a synchronous D-Bus method call `SetKeyboardLighting(mode, brightness_pct, zones_hex_csv)` to `io.github.zethasaintlab.AcerControlCenter1`.
+3. **Polkit & Daemon (`src/daemon/DaemonServiceObject.cpp`, `src/daemon/PolkitAuthorizer.cpp`):** Verifies the caller against Polkit action `io.github.zethasaintlab.acercontrol.set-keyboard-lighting` (`allow_active=yes`, `allow_any=no`, `allow_inactive=no`). Denied callers fail closed (`ERR_POLKIT_UNAUTHORIZED`) with zero hardware writes.
+4. **HAL Discovery & Control (`src/hal/HardwareDiscovery.cpp`, `src/hal/ControlOperations.cpp`, `src/hal/ClevoKeyboardBackend.cpp`):**
+   - Evaluates the 3-tier backend priority (`Backend A: LinuxLedsMulticolorRgb / LinuxLedsMonochrome` $\rightarrow$ `Backend B: ClevoWmiMethodBb` $\rightarrow$ `Backend C: FirmwareHotkeyOnly`).
+
+### 5.2 Physical WMI & ACPI Topology Discovered on `A715-59G` (`Kelilu_RTH`, BIOS `V1.17`)
+
+| Bus / Device Path | Attributes Observed | Kernel Driver Binding | Functional Role |
+|---|---|---|---|
+| `/sys/bus/wmi/devices/ABBC0F6B-8EA1-11D1-00A0-C90629100000-2` | `DEVTYPE=event`, `notify_id=D0`, `instance_count=1`, `expensive=0` (under `\_SB_.WMI_`) | Unbound | Clevo WMI hotkey/EC event notification block (`0xD0`) |
+| `/sys/bus/wmi/devices/ABBC0F6C-8EA1-11D1-00A0-C90629100000-3` | `DEVTYPE=event`, `notify_id=D1`, `instance_count=1`, `expensive=0` (under `\_SB_.WMI_`) | Unbound | Clevo WMI secondary event notification block (`0xD1`) |
+| `/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1` | `DEVTYPE=method`, `object_id=BB`, `instance_count=1`, `expensive=0` (under `\_SB_.WMI_`) | Unbound (no in-tree module in `modules.alias`) | Maps to ACPI control method `\_SB_.WMI_.WMBB(instance, method_id, arg)` |
+| `/sys/bus/wmi/devices/F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0-0` | `DEVTYPE=method`, `object_id=MX`, `instance_count=1` (under `\_SB_.PC00.WMI1`) | Bound to `mxm-wmi` | NVIDIA MXM GPU WMI method (`WMMX`) |
+| `/sys/bus/acpi/devices/CLV0001:00` | `hid=CLV0001`, `path=\_SB_.DCHU`, `status=15` | Unbound | Clevo DCHU Windows Control Center ACPI bridge |
+| `/sys/bus/acpi/devices/CLV0002:00` | `hid=CLV0002`, `path=\_SB_.DCHP`, `status=15` | Unbound | Clevo DCHP Windows Control Center ACPI bridge |
+| `/sys/bus/acpi/devices/10251783:00` | `hid=10251783`, `path=\_SB_.PC00.AEVD` | Unbound | Acer vendor ACPI event device (`AEVD`) |
+| `/sys/bus/acpi/devices/PNP0C09:00` | `hid=PNP0C09`, `path=\_SB_.PC00.LPCB.EC__`, `GPE=0x6e`, `ports=0x62/0x66` | Bound to `acpi-ec` | Embedded Controller managing thermal fans & `Fn` keyboard illumination |
+| `/sys/bus/acpi/devices/MSFT0001:00` | `hid=MSFT0001` (`PNP0303`), `path=\_SB_.PC00.LPCB.PS2K` | Bound to `i8042` / `atkbd` | Internal PS/2 keyboard (`input4::capslock`, `numlock`, `scrolllock` only) |
+
+### 5.3 Clevo WMBB (`ABBC0F6D-8EA1-11D1-00A0-C90629100000`) Protocol & Hardware Safety Gate
+- Cross-referencing upstream Linux Clevo drivers (`tuxedocomputers/tuxedo-drivers` `clevo_wmi.c` / `clevo_keyboard.c`, `Lekensteyn/acpi-stuff`, `gtozzi/clevo-backlight`), Clevo `WMBB` (`object_id=BB`) uses:
+  - **Method ID `0x67` (`CLEVO_CMD_SET_KB_RGB_LEDS`):** Accepts a 32-bit `uint32_t` sub-command word:
+    - Zone 0 (Left): `0xF0000000 | (B << 16) | (R << 8) | G` (`BRG` byte order)
+    - Zone 1 (Center): `0xF1000000 | (B << 16) | (R << 8) | G`
+    - Zone 2 (Right): `0xF2000000 | (B << 16) | (R << 8) | G`
+    - Brightness (`0..255`): `0xF4000000 | (brightnessByte & 0xFF)`
+    - Mode / State: `0x00000000` (Off), `0x10000000` (Static On), `0x1002A000` (Breathing), `0x33010000` (Wave/Cycle)
+- **Why Physical Execution of `WMBB` Remains Disabled by Default on `Kelilu_RTH`:**
+  1. Linux `wmi.c` does not expose a user-space method execution node under `/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1/` unless a kernel driver binds to the GUID.
+  2. Official Acer `Aspire 7 A715-59G` regional SKUs ship with either a **monochrome white single-zone** backlight (controlled by EC `Fn` shortcuts) or a **multi-zone** backlight. Without decompiling the root-only DSDT (`0400`) or installing out-of-tree kernel modules (`acpi_call` / `tuxedo-drivers`), issuing raw ACPI/WMI writes on physical hardware is prohibited by our Hardware Write Safety policy.
+  3. Therefore, `ClevoKeyboardBackend` (`src/hal/ClevoKeyboardBackend.h` / `.cpp`) implements the complete, bounds-checked `0x67` packet encoder and strict DMI (`Acer` / `Aspire A715-59G` / `RTH` / `Kelilu_RTH`) + BIOS (`V1.17`) + WMI (`ABBC0F6D`, `object_id=BB`, `DEVTYPE=method`) gate, keeping physical hardware in safe `FirmwareHotkeyOnly` / Preview Mode while enabling deterministic verification against mock WMI response fixtures.
+

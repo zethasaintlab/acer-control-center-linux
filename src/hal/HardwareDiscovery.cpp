@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
 #include "hal/HardwareDiscovery.h"
+#include "hal/ClevoKeyboardBackend.h"
 #include "hal/SysfsRoot.h"
 
 #include <QDir>
@@ -97,8 +98,14 @@ core::DmiIdentity HardwareDiscovery::probeDmiAndWmi() {
 
 core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core::DmiIdentity& dmi) {
     core::KeyboardHardwareState state;
-    const QString ledPath = findFirstKeyboardLedPath();
+    const ClevoWmiTopology clevoTopo = ClevoKeyboardBackend::probeTopology(dmi);
+    state.wmiMethodBbPresent = clevoTopo.methodGuidBbPresent;
+    state.wmiObjectId = clevoTopo.objectId;
+    state.clevoAcpiBridgePresent = clevoTopo.clevoAcpiDchuPresent || clevoTopo.clevoAcpiDchpPresent;
+    state.wmbbVerifiedBridgeActive = clevoTopo.verifiedBridgeReady;
 
+    // Backend A: Linux /sys/class/leds/*kbd_backlight* (Multicolor RGB or Monochrome Brightness)
+    const QString ledPath = findFirstKeyboardLedPath();
     if (!ledPath.isEmpty()) {
         state.ledSysfsPath = ledPath;
         state.supportsBacklightBrightness = true;
@@ -115,6 +122,15 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
         const bool hasMultiIntensity = QFileInfo::exists(ledPath + QStringLiteral("/multi_intensity"));
         state.supportsRgbZones = hasMultiIntensity;
         state.zoneCount = hasMultiIntensity ? 4 : 1;
+        state.backendKind = hasMultiIntensity
+                                ? core::KeyboardBackendKind::LinuxLedsMulticolorRgb
+                                : core::KeyboardBackendKind::LinuxLedsMonochrome;
+        state.backendKindId = hasMultiIntensity
+                                  ? QStringLiteral("physical_rgb")
+                                  : QStringLiteral("physical_monochrome");
+        state.controlModeBadge = hasMultiIntensity
+                                     ? QStringLiteral("PHYSICAL RGB CONTROL (MULTICOLOR LED RW)")
+                                     : QStringLiteral("PHYSICAL MONOCHROME (BRIGHTNESS RW // RGB PREVIEW ONLY)");
         state.capabilityState = hasMultiIntensity
                                     ? core::CapabilityState::FullySupported
                                     : core::CapabilityState::PartiallySupported;
@@ -123,11 +139,33 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
                                          : QStringLiteral("KERNEL LED DEVICE ACTIVE (%1)").arg(QFileInfo(ledPath).fileName());
         state.hardwareExplanation = hasMultiIntensity
                                         ? QStringLiteral("Multicolor LED sysfs interface detected (`multi_intensity`). Unrestricted sRGB color & brightness writes are verified via readback.")
-                                        : QStringLiteral("Single-color keyboard backlight detected (`brightness`). Brightness is hardware-controllable; physical RGB color changes are unsupported by this LED node.");
+                                        : QStringLiteral("Single-color keyboard backlight detected (`brightness` only; no `multi_intensity`). Physical brightness & On/Off are hardware-controllable; RGB color studio operates in Preview-only mode.");
         return state;
     }
 
-    // No /sys/class/leds/*kbd_backlight* device present
+    // Backend B: Isolated Experimental Clevo WMI Method Block (ABBC0F6D / object_id=BB / method 0x67)
+    // Active only when DMI + BIOS V1.17 + WMI object_id=BB + verified bridge fixture are all validated.
+    if (clevoTopo.verifiedBridgeReady) {
+        state.ledSysfsPath = clevoTopo.methodDeviceSysfsPath;
+        state.supportsBacklightBrightness = true;
+        state.supportsRgbZones = true;
+        state.supportsTimeout = false;
+        state.zoneCount = 3;
+        state.maxBrightness = 255;
+        state.currentBrightnessPct = 80;
+        state.backendKind = core::KeyboardBackendKind::ClevoWmiMethodBb;
+        state.backendKindId = QStringLiteral("clevo_wmbb_bridge");
+        state.controlModeBadge = QStringLiteral("CLEVO WMBB VERIFIED BRIDGE (METHOD 0x67 RW)");
+        state.capabilityState = core::CapabilityState::FullySupported;
+        state.hardwareRoutingBadge = QStringLiteral("CLEVO WMBB BRIDGE ACTIVE (ABBC0F6D // OBJECT_ID=BB // METHOD 0x67)");
+        state.hardwareExplanation = QStringLiteral(
+            "Verified Clevo WMBB bridge (`ABBC0F6D-8EA1-11D1-00A0-C90629100000`, `object_id=BB`) active for "
+            "Aspire A715-59G (`Kelilu_RTH`, BIOS V1.17). 3-zone BRG sub-commands (`0xF0..0xF2`) and brightness (`0xF4`) are verified via readback."
+        );
+        return state;
+    }
+
+    // Backend C: Firmware Hotkey Control / Unbound Clevo WMI (Preview Mode on physical A715-59G)
     state.ledSysfsPath.clear();
     state.supportsBacklightBrightness = false;
     state.supportsRgbZones = false;
@@ -136,16 +174,32 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
     state.maxBrightness = 100;
     state.currentBrightnessPct = 0;
 
-    const bool hasClevoWmi = dmi.wmiGuids.join(QLatin1Char(',')).contains(QLatin1String("ABBC0F6D"), Qt::CaseInsensitive);
-    state.capabilityState = hasClevoWmi
-                                ? core::CapabilityState::NotDetected
-                                : core::CapabilityState::Unsupported;
-    state.hardwareRoutingBadge = QStringLiteral("PHYSICAL LED NOT DETECTED IN /sys/class/leds — STUDIO IN PROFILE DESIGN & PREVIEW MODE");
-    state.hardwareExplanation = QStringLiteral(
-        "No `*kbd_backlight*` class device is exposed under `/sys/class/leds/` on the running kernel (`%1`). "
-        "On the Aspire A715-59G (`Kelilu_RTH`), physical keyboard illumination is controlled by EC firmware shortcuts (`Fn+F9`/`F10`) or unbound ODM WMI (`ABBC0F6D`). "
-        "You can design, preview, and save unrestricted HSV/HSL/RGB/Hex lighting profiles here, or enable Mock Hardware Mode in Diagnostics to test the full D-Bus/sysfs write pipeline."
-    ).arg(dmi.productName.isEmpty() ? QStringLiteral("A715-59G") : dmi.productName);
+    const bool hasClevoWmi = clevoTopo.methodGuidBbPresent ||
+                             dmi.wmiGuids.join(QLatin1Char(',')).contains(QLatin1String("ABBC0F6D"), Qt::CaseInsensitive);
+    if (hasClevoWmi) {
+        state.backendKind = core::KeyboardBackendKind::FirmwareHotkeyOnly;
+        state.backendKindId = QStringLiteral("firmware_hotkey_only");
+        state.controlModeBadge = QStringLiteral("FIRMWARE HOTKEY CONTROL // SOFTWARE PREVIEW ONLY");
+        state.capabilityState = core::CapabilityState::NotDetected;
+        state.hardwareRoutingBadge = QStringLiteral("PHYSICAL LED NOT DETECTED IN /sys/class/leds — STUDIO IN PROFILE DESIGN & PREVIEW MODE");
+        state.hardwareExplanation = QStringLiteral(
+            "No `*kbd_backlight*` class device is exposed under `/sys/class/leds/` on `%1` (`%2`). "
+            "ACPI WMI method block `ABBC0F6D-8EA1-11D1-00A0-C90629100000` (`object_id=%3`, `\\_SB_.WMI_.WMBB`) and Clevo DCHU bridge (`CLV0001`) are unbound in mainline Linux. "
+            "Physical illumination is managed by EC firmware shortcuts (`Fn+F9`/`F10`), while speculative WMBB writes remain disabled for hardware safety."
+        ).arg(dmi.productName.isEmpty() ? QStringLiteral("A715-59G") : dmi.productName,
+              dmi.boardVendor.isEmpty() ? QStringLiteral("Kelilu_RTH") : dmi.boardVendor,
+              clevoTopo.objectId.isEmpty() ? QStringLiteral("BB") : clevoTopo.objectId);
+    } else {
+        state.backendKind = core::KeyboardBackendKind::None;
+        state.backendKindId = QStringLiteral("unsupported_lighting");
+        state.controlModeBadge = QStringLiteral("UNSUPPORTED LIGHTING");
+        state.capabilityState = core::CapabilityState::Unsupported;
+        state.hardwareRoutingBadge = QStringLiteral("UNSUPPORTED LIGHTING HARDWARE — STUDIO IN PREVIEW MODE");
+        state.hardwareExplanation = QStringLiteral(
+            "Neither `/sys/class/leds/*kbd_backlight*` nor Clevo WMI `ABBC0F6D` illumination interfaces are present on this platform. "
+            "Keyboard Studio operates in software profile design and preview mode only."
+        );
+    }
 
     return state;
 }

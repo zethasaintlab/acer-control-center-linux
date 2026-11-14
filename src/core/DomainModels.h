@@ -180,12 +180,27 @@ struct KeyboardLightingProfile {
     std::vector<KeyboardZoneColor> zones;
 };
 
+enum class KeyboardBackendKind {
+    None,
+    LinuxLedsMonochrome,
+    LinuxLedsMulticolorRgb,
+    ClevoWmiMethodBb,
+    FirmwareHotkeyOnly
+};
+
 struct KeyboardHardwareState {
     CapabilityState capabilityState = CapabilityState::NotDetected;
+    KeyboardBackendKind backendKind = KeyboardBackendKind::None;
+    QString backendKindId = QStringLiteral("none");
+    QString controlModeBadge = QStringLiteral("UNSUPPORTED LIGHTING");
     QString ledSysfsPath;
     bool supportsBacklightBrightness = false;
     bool supportsRgbZones = false;
     bool supportsTimeout = false;
+    bool wmiMethodBbPresent = false;
+    QString wmiObjectId;
+    bool clevoAcpiBridgePresent = false;
+    bool wmbbVerifiedBridgeActive = false;
     int zoneCount = 4;
     int maxBrightness = 100;
     int currentBrightnessPct = 0;

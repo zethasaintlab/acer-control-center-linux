@@ -88,10 +88,14 @@ class ControlCenterController : public QObject {
 
     // 04 // KEYBOARD LIGHTING STUDIO (Independent Physical Keyboard Color System)
     Q_PROPERTY(QString kbdCapabilityBadge READ kbdCapabilityBadge NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdControlModeBadge READ kbdControlModeBadge NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdBackendKindId READ kbdBackendKindId NOTIFY telemetryUpdated)
     Q_PROPERTY(QString kbdRoutingBadge READ kbdRoutingBadge NOTIFY telemetryUpdated)
     Q_PROPERTY(QString kbdHardwareExplanation READ kbdHardwareExplanation NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdHardwareConnected READ kbdHardwareConnected NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdRgbSupported READ kbdRgbSupported NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool kbdMonochromeOnly READ kbdMonochromeOnly NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool kbdFirmwareHotkeyManaged READ kbdFirmwareHotkeyManaged NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdEnabled READ kbdEnabled WRITE setKbdEnabled NOTIFY keyboardStudioChanged)
     Q_PROPERTY(QString kbdMode READ kbdMode WRITE setKbdMode NOTIFY keyboardStudioChanged)
     Q_PROPERTY(int kbdBrightnessPct READ kbdBrightnessPct WRITE setKbdBrightnessPct NOTIFY keyboardStudioChanged)
@@ -236,10 +240,14 @@ public:
 
     // Keyboard Studio
     QString kbdCapabilityBadge() const;
+    QString kbdControlModeBadge() const { return m_snapshot.keyboardHw.controlModeBadge; }
+    QString kbdBackendKindId() const { return m_snapshot.keyboardHw.backendKindId; }
     QString kbdRoutingBadge() const { return m_snapshot.keyboardHw.hardwareRoutingBadge; }
     QString kbdHardwareExplanation() const { return m_snapshot.keyboardHw.hardwareExplanation; }
     bool kbdHardwareConnected() const { return m_snapshot.keyboardHw.supportsBacklightBrightness; }
     bool kbdRgbSupported() const { return m_snapshot.keyboardHw.supportsRgbZones; }
+    bool kbdMonochromeOnly() const { return m_snapshot.keyboardHw.supportsBacklightBrightness && !m_snapshot.keyboardHw.supportsRgbZones; }
+    bool kbdFirmwareHotkeyManaged() const { return m_snapshot.keyboardHw.backendKind == core::KeyboardBackendKind::FirmwareHotkeyOnly; }
     bool kbdEnabled() const { return m_currentKbdProfile.enabled; }
     void setKbdEnabled(bool e);
     QString kbdMode() const { return m_currentKbdProfile.mode; }

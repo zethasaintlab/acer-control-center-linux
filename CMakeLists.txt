@@ -48,6 +48,8 @@ target_link_libraries(acc_core PUBLIC Qt6::Core Qt6::Gui)
 add_library(acc_hal STATIC
     src/hal/SysfsRoot.h
     src/hal/SysfsRoot.cpp
+    src/hal/ClevoKeyboardBackend.h
+    src/hal/ClevoKeyboardBackend.cpp
     src/hal/NvmlDynamicLoader.h
     src/hal/NvmlDynamicLoader.cpp
     src/hal/HardwareDiscovery.h

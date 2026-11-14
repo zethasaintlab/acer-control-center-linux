@@ -7,6 +7,7 @@
 
 #include "app/ControlCenterController.h"
 #include "app/ThemeEngine.h"
+#include "hal/SysfsRoot.h"
 #include "ui/FanCurveEditorItem.h"
 #include "ui/HsvColorWheelItem.h"
 #include "ui/KeyboardVisualizerItem.h"
@@ -104,7 +105,34 @@ private slots:
         controller.switchHardwareMode(1);
         QCOMPARE(controller.manualFanSupported(), false);
         QCOMPARE(controller.kbdHardwareConnected(), false);
+        QCOMPARE(controller.kbdRgbSupported(), false);
+        QCOMPARE(controller.kbdMonochromeOnly(), false);
+        QCOMPARE(controller.kbdFirmwareHotkeyManaged(), true);
+        QCOMPARE(controller.kbdBackendKindId(), QStringLiteral("firmware_hotkey_only"));
         QCOMPARE(controller.batChargeLimitSupported(), false);
+
+        // Saving a software profile in Preview Mode must succeed locally without claiming a hardware write
+        controller.saveNewKbdProfile(QStringLiteral("Stage 12 Studio Preview"));
+        QCOMPARE(controller.statusBannerIsError(), false);
+        QVERIFY(controller.statusBannerText().contains(QLatin1String("Saved custom keyboard profile")));
+        QVERIFY(!controller.statusBannerText().contains(QLatin1String("verified keyboard lighting")));
+
+        // Verify Monochrome-only LED posture in controller
+        controller.switchHardwareMode(2);
+        const QString multiPath = hal::SysfsRoot::instance().resolvePath(
+            QStringLiteral("/sys/class/leds/acer::kbd_backlight/multi_intensity")
+        );
+        QVERIFY(QFile::remove(multiPath));
+        controller.refreshNow();
+        QCOMPARE(controller.kbdHardwareConnected(), true);
+        QCOMPARE(controller.kbdRgbSupported(), false);
+        QCOMPARE(controller.kbdMonochromeOnly(), true);
+        QCOMPARE(controller.kbdBackendKindId(), QStringLiteral("physical_monochrome"));
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), false);
+        QVERIFY(controller.statusBannerText().contains(QLatin1String("monochrome")));
+
+        controller.switchHardwareMode(1);
     }
 
     void testQmlMainWindowInstantiationOffscreen() {

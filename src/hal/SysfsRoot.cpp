@@ -225,15 +225,62 @@ bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalCo
     writeMockFile(rootPath, QStringLiteral("/sys/class/dmi/id/bios_date"), QStringLiteral("06/30/2026\n"));
     writeMockFile(rootPath, QStringLiteral("/sys/class/dmi/id/chassis_type"), QStringLiteral("10\n"));
 
-    // 2. WMI GUIDs
+    // 2. WMI GUIDs & ACPI Platform Topology (exact observed A715-59G / Kelilu_RTH attributes)
     writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6B-8EA1-11D1-00A0-C90629100000-2/modalias"),
                   QStringLiteral("wmi:ABBC0F6B-8EA1-11D1-00A0-C90629100000\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6B-8EA1-11D1-00A0-C90629100000-2/guid"),
+                  QStringLiteral("ABBC0F6B-8EA1-11D1-00A0-C90629100000\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6B-8EA1-11D1-00A0-C90629100000-2/notify_id"),
+                  QStringLiteral("D0\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6B-8EA1-11D1-00A0-C90629100000-2/instance_count"),
+                  QStringLiteral("1\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6B-8EA1-11D1-00A0-C90629100000-2/expensive"),
+                  QStringLiteral("0\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6B-8EA1-11D1-00A0-C90629100000-2/uevent"),
+                  QStringLiteral("DEVTYPE=event\nWMI_GUID=ABBC0F6B-8EA1-11D1-00A0-C90629100000\nMODALIAS=wmi:ABBC0F6B-8EA1-11D1-00A0-C90629100000\n"));
+
     writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6C-8EA1-11D1-00A0-C90629100000-3/modalias"),
                   QStringLiteral("wmi:ABBC0F6C-8EA1-11D1-00A0-C90629100000\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6C-8EA1-11D1-00A0-C90629100000-3/guid"),
+                  QStringLiteral("ABBC0F6C-8EA1-11D1-00A0-C90629100000\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6C-8EA1-11D1-00A0-C90629100000-3/notify_id"),
+                  QStringLiteral("D1\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6C-8EA1-11D1-00A0-C90629100000-3/instance_count"),
+                  QStringLiteral("1\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6C-8EA1-11D1-00A0-C90629100000-3/expensive"),
+                  QStringLiteral("0\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6C-8EA1-11D1-00A0-C90629100000-3/uevent"),
+                  QStringLiteral("DEVTYPE=event\nWMI_GUID=ABBC0F6C-8EA1-11D1-00A0-C90629100000\nMODALIAS=wmi:ABBC0F6C-8EA1-11D1-00A0-C90629100000\n"));
+
     writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1/modalias"),
                   QStringLiteral("wmi:ABBC0F6D-8EA1-11D1-00A0-C90629100000\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1/guid"),
+                  QStringLiteral("ABBC0F6D-8EA1-11D1-00A0-C90629100000\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1/object_id"),
+                  QStringLiteral("BB\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1/instance_count"),
+                  QStringLiteral("1\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1/expensive"),
+                  QStringLiteral("0\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1/uevent"),
+                  QStringLiteral("DEVTYPE=method\nWMI_GUID=ABBC0F6D-8EA1-11D1-00A0-C90629100000\nMODALIAS=wmi:ABBC0F6D-8EA1-11D1-00A0-C90629100000\n"));
+
     writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0-0/modalias"),
                   QStringLiteral("wmi:F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/wmi/devices/F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0-0/object_id"),
+                  QStringLiteral("MX\n"));
+
+    // ACPI devices observed on Kelilu_RTH (Clevo DCHU/DCHP, Acer AEVD, ACPI EC, i8042 PS2K)
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/CLV0001:00/hid"), QStringLiteral("CLV0001\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/CLV0001:00/path"), QStringLiteral("\\_SB_.DCHU\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/CLV0002:00/hid"), QStringLiteral("CLV0002\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/CLV0002:00/path"), QStringLiteral("\\_SB_.DCHP\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/10251783:00/hid"), QStringLiteral("10251783\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/10251783:00/path"), QStringLiteral("\\_SB_.PC00.AEVD\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/PNP0C09:00/hid"), QStringLiteral("PNP0C09\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/PNP0C09:00/path"), QStringLiteral("\\_SB_.PC00.LPCB.EC__\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/MSFT0001:00/hid"), QStringLiteral("MSFT0001\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/MSFT0001:00/path"), QStringLiteral("\\_SB_.PC00.LPCB.PS2K\n"));
 
     // 3. /proc/cpuinfo, /proc/stat, /proc/meminfo, /proc/pressure
     writeMockFile(rootPath, QStringLiteral("/proc/cpuinfo"),

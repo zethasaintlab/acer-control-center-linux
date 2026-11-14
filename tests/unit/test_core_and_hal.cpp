@@ -4,6 +4,7 @@
 #include "core/ConfigStore.h"
 #include "core/DiagnosticRedactor.h"
 #include "daemon/DaemonServiceObject.h"
+#include "hal/ClevoKeyboardBackend.h"
 #include "hal/ControlOperations.h"
 #include "hal/HardwareDiscovery.h"
 #include "hal/NvmlDynamicLoader.h"
@@ -532,6 +533,190 @@ private Q_SLOTS:
         root.setMode(hal::HardwareMode::PhysicalSystem);
         QVERIFY(!hal::SysfsRoot::writeFileVerified(outsideFile, QStringLiteral("hacked"), nullptr, &errMsg));
         QVERIFY(errMsg.contains(QStringLiteral("Refused write to non-allowlisted physical path")));
+    }
+
+    void testClevoKeyboardBackendPacketsAndMultiBackendSafety() {
+        // 1. Test Clevo WMBB (method_id 0x67) 32-bit packet encoding & BRG byte ordering
+        uint32_t pkt = 0U;
+        QString err;
+        // Zone 0 (0xF0), R=0x3B (59), G=0x9E (158), B=0xFF (255) -> 0xF0 | (B<<16) | (R<<8) | G = 0xF0FF3B9E
+        QVERIFY(hal::ClevoKeyboardBackend::encodeZoneColorPacket(0, 0x3B, 0x9E, 0xFF, pkt, &err));
+        QCOMPARE(pkt, 0xF0FF3B9EU);
+        QCOMPARE(hal::ClevoKeyboardBackend::formatPacketHex(pkt), QStringLiteral("0xF0FF3B9E"));
+
+        // Zone 1 (0xF1), R=0xE0, G=0x4F, B=0x5F -> 0xF15FE04F
+        QVERIFY(hal::ClevoKeyboardBackend::encodeZoneColorPacket(1, 0xE0, 0x4F, 0x5F, pkt, &err));
+        QCOMPARE(pkt, 0xF15FE04FU);
+
+        // Zone 2 (0xF2), R=0x2E, G=0xBE, B=0x7E -> 0xF27E2EBE
+        QVERIFY(hal::ClevoKeyboardBackend::encodeZoneColorPacket(2, 0x2E, 0xBE, 0x7E, pkt, &err));
+        QCOMPARE(pkt, 0xF27E2EBEU);
+
+        // Out-of-range zoneIndex or RGB values must be rejected
+        QVERIFY(!hal::ClevoKeyboardBackend::encodeZoneColorPacket(-1, 59, 158, 255, pkt, &err));
+        QVERIFY(!hal::ClevoKeyboardBackend::encodeZoneColorPacket(3, 59, 158, 255, pkt, &err));
+        QVERIFY(!hal::ClevoKeyboardBackend::encodeZoneColorPacket(0, 256, 158, 255, pkt, &err));
+        QVERIFY(!hal::ClevoKeyboardBackend::encodeZoneColorPacket(0, 59, -1, 255, pkt, &err));
+
+        // Brightness packet: 0% -> 0xF4000000, 100% -> 0xF40000FF, 80% -> 0xF40000CC (204)
+        QVERIFY(hal::ClevoKeyboardBackend::encodeBrightnessPacket(0, pkt, &err));
+        QCOMPARE(pkt, 0xF4000000U);
+        QVERIFY(hal::ClevoKeyboardBackend::encodeBrightnessPacket(100, pkt, &err));
+        QCOMPARE(pkt, 0xF40000FFU);
+        QVERIFY(hal::ClevoKeyboardBackend::encodeBrightnessPacket(80, pkt, &err));
+        QCOMPARE(pkt, 0xF40000CCU);
+        QVERIFY(!hal::ClevoKeyboardBackend::encodeBrightnessPacket(-5, pkt, &err));
+        QVERIFY(!hal::ClevoKeyboardBackend::encodeBrightnessPacket(105, pkt, &err));
+
+        // Mode packet encoding & allowlist
+        QVERIFY(hal::ClevoKeyboardBackend::encodeModePacket(QStringLiteral("static"), true, pkt, &err));
+        QCOMPARE(pkt, 0x10000000U);
+        QVERIFY(hal::ClevoKeyboardBackend::encodeModePacket(QStringLiteral("static"), false, pkt, &err));
+        QCOMPARE(pkt, 0x00000000U);
+        QVERIFY(hal::ClevoKeyboardBackend::encodeModePacket(QStringLiteral("breathing"), true, pkt, &err));
+        QCOMPARE(pkt, 0x1002A000U);
+        QVERIFY(hal::ClevoKeyboardBackend::encodeModePacket(QStringLiteral("wave"), true, pkt, &err));
+        QCOMPARE(pkt, 0x33010000U);
+        QVERIFY(!hal::ClevoKeyboardBackend::encodeModePacket(QStringLiteral("arbitrary_raw_ec_cmd"), true, pkt, &err));
+
+        // 2. Test Backend A Monochrome vs Multicolor RGB LED sysfs distinction
+        auto& root = hal::SysfsRoot::instance();
+        root.setMode(hal::HardwareMode::MockFullCapabilities);
+        const QString multiPath = root.resolvePath(QStringLiteral("/sys/class/leds/acer::kbd_backlight/multi_intensity"));
+        QVERIFY(QFile::remove(multiPath)); // Convert mock LED to Monochrome-only (brightness without multi_intensity)
+
+        const core::DmiIdentity dmi = hal::HardwareDiscovery::probeDmiAndWmi();
+        const core::KeyboardHardwareState monoState = hal::HardwareDiscovery::probeKeyboardHardware(dmi);
+        QCOMPARE(monoState.backendKind, core::KeyboardBackendKind::LinuxLedsMonochrome);
+        QCOMPARE(monoState.backendKindId, QStringLiteral("physical_monochrome"));
+        QCOMPARE(monoState.capabilityState, core::CapabilityState::PartiallySupported);
+        QCOMPARE(monoState.supportsBacklightBrightness, true);
+        QCOMPARE(monoState.supportsRgbZones, false);
+
+        // Applying lighting on monochrome hardware must write & verify brightness ONLY and report rgb_applied=false
+        const core::ControlResult monoRes = hal::ControlOperations::applyKeyboardLighting(
+            QStringLiteral("static"), 65, QStringLiteral("#FF0055")
+        );
+        QVERIFY(monoRes.applied);
+        QCOMPARE(monoRes.errorCode, QStringLiteral("OK"));
+        QVERIFY(monoRes.readbackSummary.contains(QLatin1String("\"backend\":\"linux_leds_monochrome\"")));
+        QVERIFY(monoRes.readbackSummary.contains(QLatin1String("\"rgb_applied\":false")));
+        QVERIFY(monoRes. readbackSummary.contains(QLatin1String("\"brightness_raw\":65")));
+
+        // 3. Test Backend B (Clevo WMBB Verified Bridge) when no /sys/class/leds/*kbd_backlight* exists
+        root.setMode(hal::HardwareMode::MockPhysicalMirror);
+        const QString wmbbDir = root.resolvePath(QStringLiteral("/sys/bus/wmi/devices/ABBC0F6D-8EA1-11D1-00A0-C90629100000-1"));
+        const QString bridgePath = wmbbDir + QStringLiteral("/wmbb_verified_bridge");
+        const QString statusPath = wmbbDir + QStringLiteral("/wmbb_status");
+
+        // Before bridge node is created, physical mirror must be in FirmwareHotkeyOnly (NotDetected)
+        const core::KeyboardHardwareState fwHotkeyState = hal::HardwareDiscovery::probeKeyboardHardware(dmi);
+        QCOMPARE(fwHotkeyState.backendKind, core::KeyboardBackendKind::FirmwareHotkeyOnly);
+        QCOMPARE(fwHotkeyState.backendKindId, QStringLiteral("firmware_hotkey_only"));
+        QCOMPARE(fwHotkeyState.capabilityState, core::CapabilityState::NotDetected);
+        QCOMPARE(fwHotkeyState.wmiMethodBbPresent, true);
+        QCOMPARE(fwHotkeyState.wmiObjectId, QStringLiteral("BB"));
+        QCOMPARE(fwHotkeyState.clevoAcpiBridgePresent, true);
+
+        // Enable verified WMBB bridge fixture in mock tree
+        {
+            QFile bf(bridgePath);
+            QVERIFY(bf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            bf.write("idle\n");
+            QFile sf(statusPath);
+            QVERIFY(sf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            sf.write("0x00000000\n");
+        }
+
+        const core::KeyboardHardwareState wmbbState = hal::HardwareDiscovery::probeKeyboardHardware(dmi);
+        QCOMPARE(wmbbState.backendKind, core::KeyboardBackendKind::ClevoWmiMethodBb);
+        QCOMPARE(wmbbState.backendKindId, QStringLiteral("clevo_wmbb_bridge"));
+        QCOMPARE(wmbbState.capabilityState, core::CapabilityState::FullySupported);
+        QCOMPARE(wmbbState.supportsBacklightBrightness, true);
+        QCOMPARE(wmbbState.supportsRgbZones, true);
+        QCOMPARE(wmbbState.zoneCount, 3);
+
+        // Execute verified WMBB write via DaemonServiceObject under Polkit TestAllowAll
+        daemon::DaemonServiceObject daemonObj(daemon::AuthPolicyMode::TestAllowAll);
+        bool applied = false;
+        QString rbJson, errCode;
+        daemonObj.SetKeyboardLighting(
+            QStringLiteral("static"),
+            80,
+            QStringLiteral("#3B9EFF,#E04F5F,#2EBE7E"),
+            applied,
+            rbJson,
+            errCode
+        );
+        QVERIFY(applied);
+        QCOMPARE(errCode, QStringLiteral("OK"));
+        QVERIFY(rbJson.contains(QLatin1String("\"backend\":\"clevo_wmbb_bridge\"")));
+        QVERIFY(rbJson.contains(QLatin1String("0xF0FF3B9E")));
+        QVERIFY(rbJson.contains(QLatin1String("0xF15FE04F")));
+        QVERIFY(rbJson.contains(QLatin1String("0xF27E2EBE")));
+        QVERIFY(rbJson.contains(QLatin1String("0xF40000CC")));
+        QVERIFY(rbJson.contains(QLatin1String("0x10000000")));
+
+        // 4. Test Polkit denial prevents WMBB bridge mutation
+        const QString savedBridgeVal = hal::SysfsRoot::readFileTrimmed(bridgePath);
+        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestDenyAll);
+        daemonObj.SetKeyboardLighting(
+            QStringLiteral("wave"),
+            20,
+            QStringLiteral("#FF0000,#FF0000,#FF0000"),
+            applied,
+            rbJson,
+            errCode
+        );
+        QVERIFY(!applied);
+        QCOMPARE(errCode, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(bridgePath), savedBridgeVal);
+
+        // 5. Test EC/WMI error status (0xFFFFFFFF) fails closed without writing bridge
+        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestAllowAll);
+        QVERIFY(hal::SysfsRoot::writeFileVerified(statusPath, QStringLiteral("0xFFFFFFFF")));
+        daemonObj.SetKeyboardLighting(
+            QStringLiteral("static"),
+            50,
+            QStringLiteral("#3B9EFF"),
+            applied,
+            rbJson,
+            errCode
+        );
+        QVERIFY(!applied);
+        QCOMPARE(errCode, QStringLiteral("ERR_WMI_EC_RESPONSE_INVALID"));
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(bridgePath), savedBridgeVal);
+        QVERIFY(hal::SysfsRoot::writeFileVerified(statusPath, QStringLiteral("0x00000000")));
+
+        // 6. Test wrong WMI object_id (e.g. "XX" instead of "BB") is rejected with ERR_UNSUPPORTED_WMI_DEVICE
+        const QString objIdPath = wmbbDir + QStringLiteral("/object_id");
+        QVERIFY(hal::SysfsRoot::writeFileVerified(objIdPath, QStringLiteral("XX")));
+        const core::ControlResult badWmiRes = hal::ControlOperations::applyKeyboardLighting(
+            QStringLiteral("static"), 80, QStringLiteral("#3B9EFF")
+        );
+        QVERIFY(!badWmiRes.applied);
+        QCOMPARE(badWmiRes.errorCode, QStringLiteral("ERR_UNSUPPORTED_WMI_DEVICE"));
+        QVERIFY(hal::SysfsRoot::writeFileVerified(objIdPath, QStringLiteral("BB")));
+
+        // 7. Test unknown BIOS version (V9.99) or wrong model is rejected with ERR_UNSUPPORTED_MODEL_OR_BIOS
+        const QString biosVerPath = root.resolvePath(QStringLiteral("/sys/class/dmi/id/bios_version"));
+        QVERIFY(hal::SysfsRoot::writeFileVerified(biosVerPath, QStringLiteral("V9.99")));
+        const core::ControlResult badBiosRes = hal::ControlOperations::applyKeyboardLighting(
+            QStringLiteral("static"), 80, QStringLiteral("#3B9EFF")
+        );
+        QVERIFY(!badBiosRes.applied);
+        QCOMPARE(badBiosRes.errorCode, QStringLiteral("ERR_UNSUPPORTED_MODEL_OR_BIOS"));
+        QVERIFY(hal::SysfsRoot::writeFileVerified(biosVerPath, QStringLiteral("V1.17")));
+
+        // 8. Test UnsupportedLighting state when no LED and no ABBC0F6D WMI device exist
+        QVERIFY(QDir(wmbbDir).removeRecursively());
+        const core::DmiIdentity dmiNoWmi = hal::HardwareDiscovery::probeDmiAndWmi();
+        const core::KeyboardHardwareState unsupportedState = hal::HardwareDiscovery::probeKeyboardHardware(dmiNoWmi);
+        QCOMPARE(unsupportedState.backendKind, core::KeyboardBackendKind::None);
+        QCOMPARE(unsupportedState.backendKindId, QStringLiteral("unsupported_lighting"));
+        QCOMPARE(unsupportedState.capabilityState, core::CapabilityState::Unsupported);
+
+        root.setMode(hal::HardwareMode::PhysicalSystem);
     }
 };
 

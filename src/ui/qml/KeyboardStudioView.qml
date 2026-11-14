@@ -20,7 +20,7 @@ Flickable {
         // 01 // HARDWARE CAPABILITY & SEPARATION NOTICE
         Rectangle {
             width: parent.width
-            height: 88
+            height: 108
             color: theme.surfacePrimary
             border.width: 1
             border.color: theme.borderSubtle
@@ -31,12 +31,13 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "01"
-                title: "PHYSICAL KEYBOARD LIGHTING ROUTING  //  SEPARATE FROM APP ACCENT COLOR"
+                title: "PHYSICAL KEYBOARD LIGHTING ROUTING  //  " + ctrl.kbdControlModeBadge
                 badgeText: ctrl.kbdCapabilityBadge
-                badgeColor: ctrl.kbdHardwareConnected ? theme.statusNominal : theme.statusWarning
+                badgeColor: ctrl.kbdHardwareConnected ? (ctrl.kbdRgbSupported ? theme.statusNominal : theme.statusInfo) : theme.statusWarning
             }
 
             Text {
+                id: kbdExpText
                 anchors.top: kbdCapHdr.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -46,6 +47,23 @@ Flickable {
                 font.family: "sans-serif"
                 font.pixelSize: 12
                 color: theme.textSecondary
+            }
+
+            Text {
+                anchors.bottom: parent.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                anchors.bottomMargin: 6
+                elide: Text.ElideRight
+                text: "DOMAIN SEPARATION:  [1] APP ACCENT: " + theme.accentHex + " (INDEPENDENT)   |   " +
+                      "[2] HW BRIGHTNESS: " + (ctrl.kbdHardwareConnected ? "WRITABLE (VERIFIED)" : (ctrl.kbdFirmwareHotkeyManaged ? "EC FN HOTKEYS" : "UNAVAILABLE")) + "   |   " +
+                      "[3] HW RGB ZONES: " + (ctrl.kbdRgbSupported ? "WRITABLE (VERIFIED)" : "UNSUPPORTED (PREVIEW ONLY)") + "   |   " +
+                      "[4] PROFILE PREVIEW: ACTIVE"
+                font.family: "monospace"
+                font.pixelSize: 10
+                color: theme.textMuted
             }
         }
 
@@ -446,7 +464,9 @@ Flickable {
                         width: parent.width
                         height: 36
                         text: ctrl.kbdHardwareConnected
-                              ? "APPLY TO HARDWARE & VERIFY READBACK"
+                              ? (ctrl.kbdRgbSupported
+                                 ? "APPLY RGB + BRIGHTNESS TO HARDWARE & VERIFY"
+                                 : "APPLY MONOCHROME BRIGHTNESS TO HARDWARE (RGB IN PREVIEW)")
                               : "PHYSICAL KEYBOARD LED NOT DETECTED (PREVIEW ONLY)"
                         enabledState: ctrl.kbdHardwareConnected
                         primaryAccent: ctrl.kbdHardwareConnected
