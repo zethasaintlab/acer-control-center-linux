@@ -26,6 +26,7 @@ Requires:       polkit
 Requires:       dbus-common
 Requires:       hicolor-icon-theme
 Recommends:     tuned-ppd
+Recommends:     qt6-qtwayland
 
 %description
 Acer Control Center — Linux Edition is a native C++23 and Qt 6 Quick desktop

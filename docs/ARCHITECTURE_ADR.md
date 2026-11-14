@@ -91,8 +91,11 @@ Object path: `/io/github/zethasaintlab/AcerControlCenter1`
 | `SetBatteryChargeLimit` | `(u32 end_threshold_pct)` | `(b applied, u32 readback_pct, s error)` | `io.github.zethasaintlab.acercontrol.set-battery-limit` | `auth_admin_keep` (`allowUserInteraction = true`) |
 | `SetFanControlMode` | `(s mode, u32 duty_pct)` | `(b applied, s readback_json, s error)` | `io.github.zethasaintlab.acercontrol.set-fan-mode` | `auth_admin_keep` (`allowUserInteraction = true`) |
 
-### 4.2 Input Validation & Readback Verification Rules
-- **No Shell Execution:** `acer-control-daemon` never calls `system()`, `popen()`, or `/bin/sh`. It opens allowlisted sysfs paths using `QFile` (`O_WRONLY | O_CLOEXEC`) after verifying canonical paths under the configured sysfs root.
+### 4.2 Input Validation, Systemd Sandboxing & Readback Verification Rules
+- **No Shell Execution:** `acer-control-daemon` never calls `system()`, `popen()`, or `/bin/sh`. It opens allowlisted sysfs paths using `QFile` (`O_WRONLY | O_CLOEXEC`) after verifying canonical paths (`QFileInfo::canonicalFilePath()`) under `/sys/devices/` (or the active mock root).
+- **Zero Linux Capabilities & Narrow Mount Namespace (`acer-control-daemon.service`):**
+  - `CapabilityBoundingSet=` (empty) and `AmbientCapabilities=` (empty): all target sysfs files are `0400` or `0644` owned by `root:root`, so the daemon reads and writes them via standard VFS owner DAC bits with `CapEff=0`, `CapPrm=0`, `CapBnd=0`.
+  - `ProtectSystem=strict`, `ProtectKernelTunables=yes`, and `ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq` ensure the mount namespace leaves the rest of `/sys` read-only (`0.9 SAFE` score in `systemd-analyze security`).
 - **Allowlisted Arguments:**
   - `governor` $\in \{\text{"powersave"}, \text{"performance"}\}$ (verified against `scaling_available_governors`).
   - `epp` $\in \{\text{"default"}, \text{"performance"}, \text{"balance\_performance"}, \text{"balance\_power"}, \text{"power"}\}$ (verified against `energy_performance_available_preferences`).

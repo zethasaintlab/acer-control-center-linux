@@ -64,9 +64,9 @@ Flickable {
                 Column {
                     width: parent.width * 0.25
                     spacing: 4
-                    Text { text: "WEAR HEALTH (FULL VS DESIGN)"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
+                    Text { text: "EST. CAPACITY RATIO (FULL / DESIGN)"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
                     Text { text: ctrl.batWearHealthPct.toFixed(1) + " %"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: ctrl.batWearHealthPct >= 75 ? theme.statusNominal : theme.statusWarning }
-                    Text { text: ctrl.batChargeFullAh.toFixed(2) + " Ah / " + ctrl.batChargeDesignAh.toFixed(2) + " Ah"; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
+                    Text { text: "Full: " + ctrl.batChargeFullAh.toFixed(2) + " Ah | Design: " + ctrl.batChargeDesignAh.toFixed(2) + " Ah"; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
                 }
 
                 Column {

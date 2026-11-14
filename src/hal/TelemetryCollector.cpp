@@ -469,13 +469,17 @@ core::BatteryTelemetry TelemetryCollector::readBatteryTelemetry() const {
         bool okLim = false;
         const int lim = SysfsRoot::readFileTrimmed(limitPath, &okLim).toInt();
         bat.chargeEndThresholdPct = (okLim && lim >= 50 && lim <= 100) ? lim : 80;
-        bat.statusExplanation = QStringLiteral("Kernel charge_control_end_threshold active (%1%).").arg(bat.chargeEndThresholdPct);
+        bat.statusExplanation = QStringLiteral(
+            "Kernel charge_control_end_threshold active (%1%). "
+            "Note: Full-charge vs design capacity ratio is an ACPI fuel-gauge estimate and may vary with charge termination conditions."
+        ).arg(bat.chargeEndThresholdPct);
     } else {
         bat.chargeLimitSupported = false;
         bat.chargeEndThresholdPct = 100;
         bat.statusExplanation = QStringLiteral(
             "Standard ACPI battery telemetry (`BAT0`) is active. "
-            "Charge threshold control (`charge_control_end_threshold`) is not exposed by `acpi-battery` on the `Kelilu_RTH` board."
+            "Charge threshold control (`charge_control_end_threshold`) is not exposed by `acpi-battery` on the `Kelilu_RTH` board. "
+            "Note: Full-charge vs design capacity ratio (`charge_full / charge_full_design`) is a fuel-gauge estimate, not a definitive cell health measurement."
         );
     }
 

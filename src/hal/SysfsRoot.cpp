@@ -120,6 +120,13 @@ QString SysfsRoot::readFileTrimmed(const QString& fullPath, bool* outOk) {
 }
 
 bool SysfsRoot::writeFileVerified(const QString& fullPath, const QString& value, QString* outReadback, QString* outError) {
+    if (fullPath.contains(QStringLiteral(".."))) {
+        if (outError) {
+            *outError = QStringLiteral("Path traversal rejected on '%1'").arg(fullPath);
+        }
+        return false;
+    }
+
     QFile outFile(fullPath);
     if (!outFile.exists()) {
         if (outError) {
@@ -127,6 +134,48 @@ bool SysfsRoot::writeFileVerified(const QString& fullPath, const QString& value,
         }
         return false;
     }
+
+    const QString canonicalTarget = QFileInfo(fullPath).canonicalFilePath();
+    if (canonicalTarget.isEmpty()) {
+        if (outError) {
+            *outError = QStringLiteral("Cannot resolve canonical path for '%1'").arg(fullPath);
+        }
+        return false;
+    }
+
+    const SysfsRoot& root = SysfsRoot::instance();
+    if (root.isMockActive()) {
+        QString customRootCopy;
+        {
+            QMutexLocker locker(&root.m_mutex);
+            customRootCopy = root.m_customRoot;
+        }
+        const QString canonicalMockRoot = QFileInfo(customRootCopy).canonicalFilePath();
+        if (canonicalMockRoot.isEmpty() || !canonicalTarget.startsWith(canonicalMockRoot + QLatin1Char('/'))) {
+            if (outError) {
+                *outError = QStringLiteral("Refused write outside active mock sysfs root: '%1'").arg(canonicalTarget);
+            }
+            return false;
+        }
+    } else {
+        const QString cleanedPath = QDir::cleanPath(fullPath);
+        const bool allowedLogicalPrefix =
+            cleanedPath.startsWith(QStringLiteral("/sys/devices/system/cpu/intel_pstate/")) ||
+            cleanedPath.startsWith(QStringLiteral("/sys/devices/system/cpu/cpu")) ||
+            cleanedPath.startsWith(QStringLiteral("/sys/devices/system/cpu/cpufreq/")) ||
+            cleanedPath.startsWith(QStringLiteral("/sys/class/leds/")) ||
+            cleanedPath == QStringLiteral("/sys/class/power_supply/BAT0/charge_control_end_threshold") ||
+            cleanedPath.startsWith(QStringLiteral("/sys/class/hwmon/")) ||
+            cleanedPath == QStringLiteral("/sys/class/backlight/intel_backlight/brightness");
+        if (!allowedLogicalPrefix || !canonicalTarget.startsWith(QStringLiteral("/sys/devices/"))) {
+            if (outError) {
+                *outError = QStringLiteral("Refused write to non-allowlisted physical path: '%1' (canonical '%2')")
+                                .arg(fullPath, canonicalTarget);
+            }
+            return false;
+        }
+    }
+
     if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (outError) {
             *outError = QStringLiteral("Permission denied or open failed on '%1': %2").arg(fullPath, outFile.errorString());

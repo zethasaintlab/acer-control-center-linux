@@ -8,6 +8,7 @@
 #include <QDBusConnection>
 #include <QDBusError>
 #include <QTextStream>
+#include <unistd.h>
 
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
@@ -30,6 +31,10 @@ int main(int argc, char* argv[]) {
     const bool useSessionMock = parser.isSet(sessionMockOpt);
     acc::daemon::AuthPolicyMode authMode = acc::daemon::AuthPolicyMode::SystemPolkit;
     if (useSessionMock) {
+        if (::geteuid() == 0) {
+            QTextStream(stderr) << "acer-control-daemon: --session-mock is prohibited when executing as root (euid=0).\n";
+            return 4;
+        }
         authMode = acc::daemon::AuthPolicyMode::TestAllowAll;
         acc::hal::SysfsRoot::instance().setMode(acc::hal::HardwareMode::MockFullCapabilities);
     }

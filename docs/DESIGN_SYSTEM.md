@@ -104,7 +104,7 @@ Every screen and component is audited against these strict prohibitions:
 4. **`04 // KEYBOARD STUDIO` (Keyboard Lighting Studio):**
    - Interactive scale vector visualizer of the Acer Aspire 7 15.6" keyboard (with numpad & 4-zone segmentation) + **Unrestricted Color Picker** (2D HSV/HSL wheel, RGB `0–255` sliders & spinboxes, `#RRGGBB` hex input, live sRGB preview, saved custom swatches) + lighting profile manager (`Save`, `Load`, `Rename`, `Delete`).
 5. **`05 // BATTERY & POWER` (Battery & Power Center):**
-   - Real-time charge state, discharge/charge wattage (`V × I`), wear health analysis (`charge_full` vs `charge_full_design`), rolling charge/power history chart, AC adapter status, battery notifications, and conditional Charge Limit (`80% Care Mode`) control.
+   - Real-time charge state, discharge/charge wattage (`V × I`), estimated capacity ratio (`charge_full / charge_full_design` with explicit fuel-gauge estimation notes), rolling charge/power history chart, AC adapter status, battery notifications, and conditional Charge Limit (`80% Care Mode`) control.
 6. **`06 // GPU` (NVIDIA GPU Center):**
    - Dedicated RTX 3050 6GB instrument panel: Graphics/SM/Memory clock gauges, VRAM allocation bar, P-state indicator (`P0`–`P8`), power limits (`60W` default / `75W` max) with P8 rail-gate detection, and decoded NVML throttle reason flags.
 7. **`07 // DIAGNOSTICS` (Hardware Diagnostics):**
