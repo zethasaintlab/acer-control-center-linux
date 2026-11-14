@@ -277,18 +277,18 @@ std::vector<core::CapabilityRecord> HardwareDiscovery::probeAllCapabilities(bool
         QStringLiteral("Includes P8 rail-gating power anomaly filter for GA107BM on driver 615.78.08.")
     });
 
-    // 10. Battery Telemetry & Wear Health
+    // 10. Battery Telemetry & Capacity Ratio
     const QString batPath = root.resolvePath(QStringLiteral("/sys/class/power_supply/BAT0"));
     const bool hasBat = QFileInfo::exists(batPath);
     caps.push_back(core::CapabilityRecord{
         QStringLiteral("cap.battery.telemetry"),
-        QStringLiteral("Battery Telemetry, Discharge Wattage & Wear Health"),
+        QStringLiteral("Battery Telemetry, Discharge Wattage & Estimated Capacity Ratio"),
         QStringLiteral("Battery & Power"),
         QStringLiteral("/sys/class/power_supply/BAT0 & AC"),
         hasBat ? core::CapabilityState::ReadOnly : core::CapabilityState::NotDetected,
         false,
-        QStringLiteral("Real-time capacity, voltage, current, computed power (W), and design-vs-full wear health"),
-        QStringLiteral("Serial numbers in BAT0/serial_number and uevent are never displayed or exported.")
+        QStringLiteral("Current charge %, voltage, current, computed power (W), full-charge vs design capacity, and fuel-gauge capacity ratio"),
+        QStringLiteral("charge_full / charge_full_design is a smart-battery fuel-gauge estimate subject to termination and temperature variance, not a definitive cell health test. Serial numbers in BAT0/serial_number and uevent are never displayed or exported.")
     });
 
     // 11. Battery Charge Threshold

@@ -71,7 +71,7 @@ See [docs/HARDWARE_AUDIT_A715_59G.md](docs/HARDWARE_AUDIT_A715_59G.md) for the c
 | **Memory & Linux PSI Pressure** | `/proc/meminfo`, `/proc/pressure/{cpu,memory,io}` | **Read-Only Supported** | Yes |
 | **NVMe, Wi-Fi & ACPI Thermal Zones** | `hwmon1,3,4,6`, `thermal_zone0..7` (`SEN2`,`SEN3`,`TCPU`) | **Read-Only Supported** | Yes |
 | **NVIDIA RTX 3050 6GB Telemetry** | `libnvidia-ml.so.1` (`dlopen` + `P8` filter) | **Read-Only Supported** | Yes |
-| **Battery Telemetry & Wear Health** | `/sys/class/power_supply/BAT0` & `AC` | **Read-Only Supported** | Yes |
+| **Battery Telemetry & Est. Capacity Ratio** | `/sys/class/power_supply/BAT0` & `AC` | **Read-Only Supported** | Yes |
 | **Internal eDP Panel Backlight** | `/sys/class/backlight/intel_backlight` (`logind`) | **Fully Supported (48,000 steps)** | Yes |
 | **Fan Tachometer RPM & Manual PWM** | `/sys/class/hwmon/*/fan*_input`, `pwm1` | **Not Exposed by Default Kernel (EC Auto)** | **Full RW in Mock Mode** |
 | **Keyboard Backlight & RGB Zones** | `/sys/class/leds/*kbd_backlight*` | **Not Exposed by Default Kernel (Preview Mode)** | **Full RW in Mock Mode** |

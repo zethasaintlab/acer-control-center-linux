@@ -93,7 +93,8 @@ sudo dnf remove acer-control-center
 
 1. **GUI Never Runs as Root:** `acer-control-center` enforces an early `geteuid() == 0` guard in `main()` before `QApplication` initialization and refuses to launch as `root`.
 2. **No Shell Execution:** Neither the GUI nor `acer-control-daemon` invokes `/bin/sh`, `system()`, `popen()`, or `QProcess`.
-3. **Polkit Action Matrix:**
+3. **Hardened Systemd Sandbox (`0.9 SAFE`):** `acer-control-daemon.service` runs with `CapabilityBoundingSet=` (empty), `AmbientCapabilities=` (empty), `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `ProtectKernelTunables=yes`, `PrivateDevices=yes`, `PrivateNetwork=yes`, and `ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq`.
+4. **Polkit Action Matrix:**
 
 | Polkit Action ID | Default (`allow_active`) | Operation |
 |---|---|---|

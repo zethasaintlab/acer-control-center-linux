@@ -59,6 +59,7 @@ Flickable {
                     AtelierButton {
                         text: "RESTORE FIRMWARE AUTO"
                         activeState: !ctrl.manualFanSupported
+                        enabledState: ctrl.manualFanSupported
                         onClicked: ctrl.setFanMode("auto", 50)
                     }
 

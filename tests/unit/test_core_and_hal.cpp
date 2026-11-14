@@ -482,12 +482,18 @@ private Q_SLOTS:
         QVERIFY(unitText.contains(QStringLiteral("PrivateDevices=yes")));
         QVERIFY(unitText.contains(QStringLiteral("ProtectControlGroups=yes")));
         QVERIFY(unitText.contains(QStringLiteral("RestrictAddressFamilies=AF_UNIX")));
-        QVERIFY(unitText.contains(QStringLiteral("CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH")));
+        QVERIFY(unitText.contains(QStringLiteral("CapabilityBoundingSet=\n")));
+        QVERIFY(unitText.contains(QStringLiteral("AmbientCapabilities=\n")));
+        QVERIFY(!unitText.contains(QStringLiteral("CAP_SYS_ADMIN")));
+        QVERIFY(!unitText.contains(QStringLiteral("CAP_DAC_OVERRIDE")));
+        QVERIFY(!unitText.contains(QStringLiteral("CAP_DAC_READ_SEARCH")));
         QVERIFY(unitText.contains(QStringLiteral("UMask=0077")));
-        QVERIFY(unitText.contains(QStringLiteral("ReadWritePaths=-/sys/devices/system/cpu/intel_pstate")));
-        // Never allow unrestricted ReadWritePaths=/sys or ReadWritePaths=-/sys
+        QVERIFY(unitText.contains(QStringLiteral("ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq")));
+        // Never allow unrestricted ReadWritePaths=/sys, /sys/devices/platform, or /sys/class/power_supply/BAT0
         QVERIFY(!unitText.contains(QStringLiteral("ReadWritePaths=/sys\n")));
         QVERIFY(!unitText.contains(QStringLiteral("ReadWritePaths=-/sys\n")));
+        QVERIFY(!unitText.contains(QStringLiteral("/sys/devices/platform")));
+        QVERIFY(!unitText.contains(QStringLiteral("/sys/class/power_supply/BAT0")));
 
         // 2. Verify Raptor Lake non-contiguous topology/core_id mapping to coretemp
         auto& root = hal::SysfsRoot::instance();
@@ -507,7 +513,25 @@ private Q_SLOTS:
         QCOMPARE(snap.cpu.cores[2].coreId, 2);
         QCOMPARE(snap.cpu.cores[2].tempC, 61.0);
 
+        // 3. Verify SysfsRoot::writeFileVerified rejects path traversal and out-of-root writes
+        QString errMsg;
+        QVERIFY(!hal::SysfsRoot::writeFileVerified(topo2Path + QStringLiteral("/../core_id"), QStringLiteral("5"), nullptr, &errMsg));
+        QVERIFY(errMsg.contains(QStringLiteral("Path traversal rejected")));
+
+        QTemporaryDir outsideDir;
+        QVERIFY(outsideDir.isValid());
+        const QString outsideFile = outsideDir.filePath(QStringLiteral("rogue.txt"));
+        {
+            QFile f(outsideFile);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("initial\n");
+        }
+        QVERIFY(!hal::SysfsRoot::writeFileVerified(outsideFile, QStringLiteral("hacked"), nullptr, &errMsg));
+        QVERIFY(errMsg.contains(QStringLiteral("Refused write outside active mock sysfs root")));
+
         root.setMode(hal::HardwareMode::PhysicalSystem);
+        QVERIFY(!hal::SysfsRoot::writeFileVerified(outsideFile, QStringLiteral("hacked"), nullptr, &errMsg));
+        QVERIFY(errMsg.contains(QStringLiteral("Refused write to non-allowlisted physical path")));
     }
 };
 

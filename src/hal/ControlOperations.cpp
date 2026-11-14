@@ -68,6 +68,7 @@ core::ControlResult ControlOperations::applyCpuPerformanceTuning(
     const QString prevMaxPerf = SysfsRoot::readFileTrimmed(pstateBase + QStringLiteral("/max_perf_pct"));
     const QString cpu0Base = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq"));
     const QString prevGov = SysfsRoot::readFileTrimmed(cpu0Base + QStringLiteral("/scaling_governor"));
+    const QString prevEpp = SysfsRoot::readFileTrimmed(cpu0Base + QStringLiteral("/energy_performance_preference"));
 
     auto rollback = [&]() {
         if (!prevNoTurbo.isEmpty()) {
@@ -80,7 +81,19 @@ core::ControlResult ControlOperations::applyCpuPerformanceTuning(
             SysfsRoot::writeFileVerified(pstateBase + QStringLiteral("/min_perf_pct"), prevMinPerf);
         }
         if (!prevGov.isEmpty()) {
-            SysfsRoot::writeFileVerified(cpu0Base + QStringLiteral("/scaling_governor"), prevGov);
+            for (int c = 0; c < 32; ++c) {
+                const QString cBase = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu%1/cpufreq").arg(c));
+                if (!QFileInfo::exists(cBase)) {
+                    continue;
+                }
+                SysfsRoot::writeFileVerified(cBase + QStringLiteral("/scaling_governor"), prevGov);
+                if (!prevEpp.isEmpty() && prevGov != QLatin1String("performance")) {
+                    const QString eppPath = cBase + QStringLiteral("/energy_performance_preference");
+                    if (QFileInfo::exists(eppPath)) {
+                        SysfsRoot::writeFileVerified(eppPath, prevEpp);
+                    }
+                }
+            }
         }
     };
 

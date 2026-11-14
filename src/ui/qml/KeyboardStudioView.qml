@@ -447,8 +447,9 @@ Flickable {
                         height: 36
                         text: ctrl.kbdHardwareConnected
                               ? "APPLY TO HARDWARE & VERIFY READBACK"
-                              : "TEST HARDWARE WRITE (REPORTS NOT DETECTED)"
-                        primaryAccent: true
+                              : "PHYSICAL KEYBOARD LED NOT DETECTED (PREVIEW ONLY)"
+                        enabledState: ctrl.kbdHardwareConnected
+                        primaryAccent: ctrl.kbdHardwareConnected
                         onClicked: ctrl.applyKeyboardLightingToHardware()
                     }
                 }
