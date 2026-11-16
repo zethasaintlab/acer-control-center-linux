@@ -58,16 +58,70 @@ rpm -qlp build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
 rpm -qRp build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
 ```
 
-### Installing & Removing the RPM on Fedora 45
+### 2.3 Complete Fedora 45 (DNF5) RPM Installation, Verification & Rollback Procedure
+
+Fedora 45 uses `dnf5` (`dnf5 5.4.7.0` observed on host). Because `acer-control-center` is installed directly from local `.rpm` files (`@commandline` repository) rather than a remote Fedora mirror, rollback must use the preserved local `1.0.0-1.fc45` RPM rather than assuming `dnf5 history undo` can fetch an older local package from a remote repo.
+
+#### Step 1 — Record Pre-Upgrade Baseline & Verify Rollback Artifact (Read-Only)
 ```bash
-# Install
-sudo dnf install ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
+# Record currently installed NEVRA, build timestamp, and installed file digests:
+rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH} (built %{BUILDTIME:date})\n' acer-control-center
+rpm -qi acer-control-center
+rpm -q --dump acer-control-center | grep -E '/usr/(bin/acer-control-center|libexec/acer-control-daemon|lib/systemd/system/acer-control-daemon.service)'
 
-# Enable or check D-Bus activated service status
-systemctl status acer-control-daemon.service
+# Record DNF5 transaction history for acer-control-center (e.g., ID 60 before upgrade):
+dnf5 history list --contains-pkgs=acer-control-center
 
-# Uninstall cleanly (preserves user settings in ~/.config/acer-control-center/)
-sudo dnf remove acer-control-center
+# Record active systemd unit, live sandbox properties, and running D-Bus daemon version:
+systemctl status acer-control-daemon.service --no-pager
+systemctl cat acer-control-daemon.service --no-pager
+systemctl show -p MainPID,ActiveState,SubState,FragmentPath,ReadWritePaths,CapabilityBoundingSet acer-control-daemon.service
+busctl call io.github.zethasaintlab.AcerControlCenter1 /io/github/zethasaintlab/AcerControlCenter1 io.github.zethasaintlab.AcerControlCenter1 GetDaemonVersion
+
+# Verify both the previous working RPM (1.0.0-1.fc45) and target RPM (1.0.0-2.fc45) exist locally:
+ls -la build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-*.fc45.x86_64.rpm
+sha256sum build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-1.fc45.x86_64.rpm \
+          build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
+```
+
+#### Step 2 — Upgrade to `1.0.0-2.fc45` & Verify Effective Systemd / Daemon State (Operator-Authorized)
+```bash
+# Upgrade (or install on clean system) via DNF5:
+sudo dnf5 upgrade ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
+
+# Record the new DNF5 transaction ID:
+dnf5 history list --contains-pkgs=acer-control-center
+
+# Reload systemd manager configuration and restart the privileged daemon:
+sudo systemctl daemon-reload
+sudo systemctl restart acer-control-daemon.service
+
+# Verify installed NEVRA, RPM file integrity, and effective systemd sandbox configuration:
+rpm -q acer-control-center
+rpm -V acer-control-center
+systemctl status acer-control-daemon.service --no-pager
+systemctl show -p MainPID,ActiveState,SubState,FragmentPath,ReadWritePaths,CapabilityBoundingSet,ProtectSystem,ProtectKernelTunables acer-control-daemon.service
+busctl call io.github.zethasaintlab.AcerControlCenter1 /io/github/zethasaintlab/AcerControlCenter1 io.github.zethasaintlab.AcerControlCenter1 GetDaemonVersion
+```
+Expected post-upgrade invariants:
+- `rpm -q acer-control-center` outputs `acer-control-center-1.0.0-2.fc45.x86_64` and `rpm -V acer-control-center` returns exit `0` with empty output.
+- `systemctl show` confirms `ReadWritePaths` includes `-/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00`, `CapabilityBoundingSet` is empty (`CapabilityBoundingSet=`), and `ActiveState=active`.
+- `GetDaemonVersion` returns `s "1.0.0-fc45"`.
+
+#### Step 3 — Deterministic RPM Rollback Procedure (If Upgrade or Daemon Fails)
+If the upgrade introduces a unit/daemon regression or RPM verification failure, roll back explicitly against the preserved local `1.0.0-1.fc45` package (do **not** rely on `dnf5 history undo` alone for `@commandline` local RPMs):
+```bash
+# Downgrade offline to preserved working 1.0.0-1.fc45 RPM:
+sudo dnf5 downgrade ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-1.fc45.x86_64.rpm
+sudo systemctl daemon-reload
+sudo systemctl restart acer-control-daemon.service
+rpm -q acer-control-center
+systemctl status acer-control-daemon.service --no-pager
+```
+If complete package removal is required instead (preserves user config in `~/.config/acer-control-center/`):
+```bash
+sudo dnf5 remove acer-control-center
+sudo systemctl daemon-reload
 ```
 
 ---
@@ -109,74 +163,184 @@ sudo dnf remove acer-control-center
 
 ## 5. Optional Clean-Room `CLV0001` Kernel Driver & Physical Validation Runbook
 
-RPM installation **never** compiles or loads out-of-tree kernel modules during `%post` scriptlets. Operators who choose to validate or use `CLV0001` keyboard backlight preset control on `Aspire A715-59G` (`Kelilu_RTH`) follow this controlled opt-in procedure.
+RPM installation **never** compiles or loads out-of-tree kernel modules during `%post` scriptlets. Operators who choose to validate or use `CLV0001` keyboard backlight preset control on `Aspire A715-59G` (`Kelilu_RTH`) must follow this staged procedure separating read-only checks from state-changing host operations.
 
-### 5.1 Prerequisites & Read-Only Preflight
-- Target machine matches exact DMI fields (`Acer` / `Aspire A715-59G` / `RTH` / `Kelilu_RTH`) and exposes `/sys/bus/acpi/devices/CLV0001:00` (`\_SB_.DCHU`).
-- Kernel headers (`kernel-devel` matching `uname -r`) are installed and the CMake project + module are built without root:
+### 5.1 State & Status Terminology (Four Distinct Layers)
+Never conflate ACPI namespace presence, driver binding, software command state, and physical LED illumination:
+
+| Layer | Field / Source | Meaning & Allowed Values |
+|---|---|---|
+| **1. ACPI Device Status (`_STA`)** | `clv0001Status` / `/sys/bus/acpi/devices/CLV0001:00/status` | Decimal representation of firmware ACPI AML `_STA` return bits (`15` = `0x0F`: bit 0 `0x01` present, bit 1 `0x02` enabled, bit 2 `0x04` UI-visible, bit 3 `0x08` functioning properly). `15` means the BIOS ACPI device is present and enabled even when **no** driver is bound. |
+| **2. Driver Binding State** | `clv0001DriverBound` / `/sys/bus/acpi/devices/CLV0001:00/driver` | `false` when unbound; `true` once `acer_clv0001_kbd` binds `CLV0001:00` and exposes `clv0001_kbd_{command,state,presets}`. |
+| **3. Software Command & ACPI Eval State** | `clv0001LastStatus` / `status=` in `clv0001_kbd_state` | `uninitialized` (loaded cleanly, zero `_DSM` writes yet); `accepted_no_hw_readback` (`acpi_evaluate_dsm()` returned `integer`, `buffer`, or `package` — **does NOT confirm physical LED illumination**); `error:rate_limited` (`-EBUSY`, rejected `< 40 ms` before `_DSM`); `error:acpi_eval_failed` (`-EIO`, ACPI returned `NULL`); `error:unexpected_return_type` (`-EPROTO`). |
+| **4. Physical LED Readback** | `physical_readback=unsupported` in `clv0001_kbd_state` | Permanently `unsupported` (`false`) because `CLV0001` `_DSM 0x67` is a write-only firmware setter. Actual physical keyboard illumination is confirmed **solely by human visual observation**. |
+
+### 5.2 Stage 1 — Read-Only Physical Preflight (Zero Host State Changes)
+All commands in Stage 1 are strictly read-only and must pass before loading `acer_clv0001_kbd.ko` or writing sysfs:
 ```bash
-# 1. Read-only hardware preflight before loading module:
+# 1. Verify running kernel release matches compiled module vermagic:
+uname -r
+modinfo -F vermagic build/driver-build/acer_clv0001_kbd.ko
+modinfo -F license,alias,srcversion build/driver-build/acer_clv0001_kbd.ko
+
+# 2. Check kernel lockdown posture (module load fails if Secure Boot lockdown enforces signed modules):
+cat /sys/kernel/security/lockdown
+
+# 3. Verify no competing keyboard/Clevo module is loaded:
+lsmod | grep -E "acer_clv0001_kbd|alg_rgb|clevo" || echo "Clean: no competing module loaded"
+
+# 4. Verify exact 4-field DMI identity (module fails closed with -ENODEV if any field differs):
+head -n 1 /sys/class/dmi/id/{sys_vendor,product_name,board_name,board_vendor}
+
+# 5. Verify CLV0001 ACPI node presence, namespace path, ACPI _STA, and unbound platform posture:
+head -n 1 /sys/bus/acpi/devices/CLV0001:00/{hid,path,status}
+readlink -e /sys/bus/acpi/devices/CLV0001:00/physical_node
+readlink -e /sys/bus/platform/devices/CLV0001:00/driver || echo "Unbound as expected"
+
+# 6. Verify installed RPM, daemon version, and effective systemd ReadWritePaths:
+rpm -q acer-control-center
+systemctl show -p MainPID,ActiveState,SubState,ReadWritePaths,CapabilityBoundingSet acer-control-daemon.service
+busctl call io.github.zethasaintlab.AcerControlCenter1 /io/github/zethasaintlab/AcerControlCenter1 io.github.zethasaintlab.AcerControlCenter1 GetDaemonVersion
+
+# 7. Run read-only application JSON preflight:
 ./build/acer-control-center --dump-telemetry-json
-
-# 2. Build out-of-tree kernel module against the running kernel:
-mkdir -p build/driver-build
-cp driver/acer_clv0001_kbd.c driver/Makefile build/driver-build/
-make -C "/lib/modules/$(uname -r)/build" M="$PWD/build/driver-build" modules
-modinfo build/driver-build/acer_clv0001_kbd.ko
 ```
+Preflight pass criteria:
+- `uname -r` (`7.3.3-300.fc45.x86_64`) matches `modinfo -F vermagic`, and `/sys/kernel/security/lockdown` shows `[none] ...` (or module is signed if `integrity`/`confidentiality` is active).
+- DMI reads `Acer`, `Aspire A715-59G`, `RTH`, `Kelilu_RTH`; `CLV0001:00` reports `hid=CLV0001`, `path=\_SB_.DCHU`, `status=15`, and no competing driver is bound.
+- Before running D-Bus/GUI physical writes in Stage 4, ensure `acer-control-center` has been upgraded to `1.0.0-2.fc45` (Section 2.3 Step 2) and `systemctl show -p ReadWritePaths` includes `-/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00`.
 
-### 5.2 Operator-Authorized Module Load & Expected Topology
-Loading the module alone performs only read-only DMI/HID/ACPI checks and sysfs creation — it executes **zero** `_DSM 0x67` firmware writes.
+### 5.3 Stage 2 — Operator-Authorized Module Load & Binding Verification (Zero Firmware Writes)
+Loading `acer_clv0001_kbd.ko` performs only read-only DMI/HID/ACPI checks and sysfs creation — it executes **zero** `_DSM 0x67` firmware calls.
 ```bash
 # Requires explicit operator root authorization:
 sudo insmod build/driver-build/acer_clv0001_kbd.ko
 
-# Verify kernel log & binding:
+# Inspect kernel log, platform driver binding, sysfs permissions, and initial uninitialized state:
 dmesg | tail -n 15
+readlink -e /sys/bus/platform/devices/CLV0001:00/driver
 ls -la /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_*
-readlink -f /sys/bus/acpi/devices/CLV0001:00/driver
 cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_presets
 cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state
 ```
-Expected initial posture:
-- `/sys/bus/acpi/devices/CLV0001:00/driver` -> `.../bus/platform/drivers/acer_clv0001_kbd`.
-- `clv0001_kbd_command` is `-rw-------` (`0600`) owned by `root:root`; `clv0001_kbd_state` and `clv0001_kbd_presets` are `-r--r--r--` (`0444`) owned by `root:root`.
+Expected post-load posture:
+- `/sys/bus/platform/devices/CLV0001:00/driver` -> `/sys/bus/platform/drivers/acer_clv0001_kbd`.
+- `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_*` (symlinked at `/sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_*`): `clv0001_kbd_command` is `-rw-------` (`0600`) owned by `root:root`; `clv0001_kbd_state` and `clv0001_kbd_presets` are `-r--r--r--` (`0444`) owned by `root:root`.
 - `clv0001_kbd_state` reports `status=uninitialized`, `preset=none`, `brightness_level=0`, `payload_grb=00 00 00 F0`, `acpi_return_type=none`, `physical_readback=unsupported`.
 
-### 5.3 Safe Initial Preset, Brightness, Error & Rate-Limit Verification
+### 5.4 Stage 3 — Negative Validation (Rejected Before Any ACPI Firmware Operation)
+Verify that invalid inputs are rejected inside `clv0001_kbd_command_store()` (`-EINVAL`) **before** any `acpi_evaluate_dsm()` call:
 ```bash
-# Safe initial cyan preset at level 2 (50% -> 0x5F scale -> GRB 7E 00 63 F0):
+# All three writes must fail with 'Invalid argument' (-EINVAL):
+printf 'invalid_preset 4\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command || echo "PASS: invalid preset rejected (-EINVAL)"
+printf 'cyan 9\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command || echo "PASS: out-of-range brightness rejected (-EINVAL)"
+printf 'cyan 2 extra\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command || echo "PASS: extra token rejected (-EINVAL)"
+
+# Confirm state remains untouched (zero _DSM calls occurred):
+cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state
+```
+Pass criterion: `clv0001_kbd_state` must still report `status=uninitialized`, `preset=none`, `payload_grb=00 00 00 F0`, and `acpi_return_type=none`.
+
+### 5.5 Stage 4 — Controlled State-Changing Firmware Writes & Visual Confirmation
+Every command below evaluates `_DSM 0x67` and modifies hardware keyboard illumination state:
+```bash
+# 1. Safe initial state-changing write: cyan at discrete level 2 (scale 0x5F -> GRB 7E 00 63 F0):
 printf 'cyan 2\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command
 cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state
+# [HUMAN VISUAL CHECK]: Confirm keyboard backlight is physically lit in cyan at ~50% brightness.
 
-# Brightness step 4 (100% -> FF FF FF F0) and backlight off (00 00 00 F0):
+# 2. Brightness & preset step check: white at level 4 (scale 0xBF -> GRB FF FF FF F0):
+sleep 0.1
 printf 'white 4\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command
+cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state
+# [HUMAN VISUAL CHECK]: Confirm keyboard backlight turns bright white.
+
+# 3. Legitimate state-changing backlight-off write ("off 0" sends GRB 00 00 00 F0 via _DSM 0x67):
 sleep 0.1
 printf 'off 0\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command
 cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state
+# [HUMAN VISUAL CHECK]: Confirm keyboard backlight turns completely off.
 
-# Verify fail-closed rejection of invalid preset (-EINVAL) and 40 ms rate limit (-EBUSY):
-printf 'invalid_preset 4\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command || echo "Rejected with -EINVAL as expected"
+# 4. Optional rate-limit (-EBUSY) verification (< 40 ms back-to-back writes):
+sleep 0.1
+printf 'red 2\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command && \
+  printf 'blue 2\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command || \
+  echo "Rate-limit triggered as expected (-EBUSY)"
+cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state
 ```
-Expected status after an accepted write: `status=accepted_no_hw_readback`, `physical_readback=unsupported`, `acpi_return_type` equal to `integer` / `buffer` / `package`.
-
-### 5.4 End-to-End Daemon & Unprivileged GUI Verification
+Then verify end-to-end daemon D-Bus/Polkit execution and the unprivileged GUI (requires `1.0.0-2.fc45` RPM upgrade and daemon restart from Section 2.3):
 ```bash
-# Install updated unit/daemon or restart system service after RPM install:
-sudo systemctl restart acer-control-daemon.service
-systemctl status acer-control-daemon.service
+# D-Bus verification through Polkit-gated acer-control-daemon:
+sleep 0.1
+busctl call io.github.zethasaintlab.AcerControlCenter1 \
+    /io/github/zethasaintlab/AcerControlCenter1 \
+    io.github.zethasaintlab.AcerControlCenter1 \
+    SetKeyboardLighting ssu "preset:cyan" 75 "cyan"
 
-# Launch unprivileged GUI and confirm CLV0001 detection:
+# Launch unprivileged GUI and inspect CLV0001 Studio:
 ./build/acer-control-center --dump-telemetry-json
-./build/acer-control-center
+acer-control-center
 ```
-In `04 // KEYBOARD STUDIO`, confirm the routing header reads `CLV0001 ACPI _DSM 0x67 (17 PRESETS · 5 LEVELS · NO HW READBACK)`, select presets (`cyan`, `red`, `white`) and discrete levels (`0..4`), click `SEND CLV0001 _DSM 0x67 PRESET (NO HW READBACK)`, and verify the status banner reports ACPI acceptance without fabricating physical readback.
+In `04 // KEYBOARD STUDIO`, confirm the banner reads `CLV0001 ACPI _DSM 0x67 (17 PRESETS · 5 LEVELS · NO HW READBACK)`, apply presets (`cyan`, `red`, `white`, `off`), confirm a non-preset hex (`#123456`) is rejected with `ERR_CLV0001_PRESET_REQUIRED` while `SNAP TO <PRESET>` restores valid preset selection, and verify the status banner never claims physical readback.
 
-### 5.5 Module Removal & Rollback Strategy
+### 5.6 Explicit Failure & Abort Conditions
+**Stop testing immediately if any condition below occurs. Do NOT issue repeated physical writes after an unexpected result.**
+
+| Condition | Observable Symptom | Immediate Operator Action |
+|---|---|---|
+| Kernel / `vermagic` or lockdown failure | `insmod` returns `Invalid module format` (`-ENOEXEC`), `Operation not permitted`, or `Key was rejected by service`. | Abort before load; inspect `uname -r`, `modinfo`, and `/sys/kernel/security/lockdown`. Rebuild against matching kernel headers or sign/enroll MOK if integrity lockdown requires signed modules. |
+| Unexpected device binding | Preflight `readlink -e /sys/bus/platform/devices/CLV0001:00/driver` already points to a non-empty driver before `insmod`. | Abort; do not load `acer_clv0001_kbd` on top of an unexpected binding. |
+| Driver probe failure | `insmod` succeeds or returns `-ENODEV`, `/sys/bus/platform/devices/CLV0001:00/driver` is absent, or `clv0001_kbd_*` sysfs files do not appear. | Abort; capture `dmesg \| tail -n 30` and DMI fields; run `sudo rmmod acer_clv0001_kbd` if module remains loaded. |
+| ACPI evaluation failure or wrong return type | `clv0001_kbd_state` shows `status=error:acpi_eval_failed` or `status=error:unexpected_return_type`. | Abort immediately (do not retry writes); capture `clv0001_kbd_state` and `dmesg`, then unload via `sudo rmmod acer_clv0001_kbd`. |
+| Unexpected kernel error / warning | Any `BUG:`, `WARNING:`, lockdep splat, or `ACPI Error:` / `AE_*` message appears in `dmesg`. | Abort immediately; capture `dmesg`, return keyboard state only if safe or unload via `sudo rmmod acer_clv0001_kbd`. |
+| Systemd / D-Bus / Polkit failure | `SetKeyboardLighting` fails with `AccessDenied` / `Read-only file system` / unknown preset error due to stale `1.0.0-1` daemon or missing `ReadWritePaths`. | Abort D-Bus/GUI step; verify `rpm -q`, `systemctl show`, and `journalctl -u acer-control-daemon.service` before retrying. |
+| Physical LED inconsistency | `status=accepted_no_hw_readback` is reported, but LEDs fail to illuminate, change to wrong color, fail to dim across levels `0..4`, or fail to turn off on `off 0`. | Stop further writes; capture machine state and visual mismatch verbatim; unload `sudo rmmod acer_clv0001_kbd` and open a firmware investigation before further testing. |
+
+### 5.7 Evidence Collection Procedure (Machine-Observed vs. Human-Observed)
+Collect machine evidence after Stage 2, Stage 3, and Stage 4 in one session:
 ```bash
-# Return keyboard LEDs to off (optional) and unload module cleanly:
+{
+  echo "=== KERNEL & MODULE ==="
+  uname -a
+  lsmod | grep acer_clv0001_kbd || true
+  modinfo build/driver-build/acer_clv0001_kbd.ko
+  echo "=== DMESG (CLV0001 / ACPI) ==="
+  dmesg | grep -iE "clv0001|acer_clv0001|dchu|acpi error" | tail -n 40
+  echo "=== SYSFS BINDING & STATE ==="
+  readlink -e /sys/bus/platform/devices/CLV0001:00/driver || true
+  ls -la /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_* || true
+  cat /sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state || true
+  echo "=== RPM, SYSTEMD & DAEMON ==="
+  rpm -q acer-control-center
+  systemctl status acer-control-daemon.service --no-pager
+  systemctl show -p ReadWritePaths,CapabilityBoundingSet acer-control-daemon.service
+  journalctl -u acer-control-daemon.service -n 30 --no-pager
+  echo "=== DIAGNOSTICS JSON ==="
+  ./build/acer-control-center --dump-telemetry-json
+} | tee clv0001-physical-validation-log.txt
+```
+*(Inspect and redact any personal paths/logs before publishing externally.)*
+
+Distinguish evidence sources strictly in the final validation record:
+
+| Evidence Category | Verification Authority | What It Establishes |
+|---|---|---|
+| Kernel release, `modinfo`, `dmesg`, `clv0001_kbd_state`, `busctl` reply, GUI status banner | **Machine-Observed** | Module vermagic, bind/probe health, sysfs permissions, input rejection (`-EINVAL`/`-EBUSY`), and ACPI `_DSM 0x67` return status (`accepted_no_hw_readback` with `physical_readback=unsupported`). |
+| Keyboard color match (`cyan 2`, `white 4`), dimming response (`0..4`), backlight turn-off (`off 0`) | **Human Visual Confirmation Only** | Physical illumination of the A715-59G keyboard LED matrix (firmware provides zero hardware readback). |
+
+### 5.8 Module Removal & Full Host Rollback Strategy
+```bash
+# 1. Optionally turn keyboard backlight off before unload (only if physical writes succeeded):
 printf 'off 0\n' | sudo tee /sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command
+
+# 2. Unload kernel module cleanly (removes clv0001_kbd_* sysfs attributes via platform remove):
 sudo rmmod acer_clv0001_kbd
 lsmod | grep acer_clv0001_kbd || echo "acer_clv0001_kbd unloaded cleanly"
+readlink -e /sys/bus/platform/devices/CLV0001:00/driver || echo "CLV0001:00 unbound cleanly"
+
+# 3. Optional RPM rollback to previous working 1.0.0-1.fc45 release:
+sudo dnf5 downgrade ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-1.fc45.x86_64.rpm
+sudo systemctl daemon-reload
+sudo systemctl restart acer-control-daemon.service
 ```
-If any failure occurs during physical testing, unloading via `sudo rmmod acer_clv0001_kbd` removes sysfs nodes immediately; standard EC/Fn keyboard hotkeys remain untouched, and no persistent boot module configuration or resume ACPI write is installed by default.
+No persistent `/etc/modules-load.d/` or DKMS entry is registered by either the RPM or manual `insmod`, so unloading returns the kernel to stock unbound posture immediately.

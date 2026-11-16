@@ -47,8 +47,8 @@ On the `Aspire A715-59G` (`Kelilu_RTH`), `/sys/bus/wmi/devices/` exposes a compl
 - `F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0-0` (`mxm_wmi` — bound)
 
 ### 2.2 Relevant ACPI Devices Observed
-- `CLV0001:00` (`\_SB_.DCHU`, status `15` — exposed keyboard ACPI `_DSM` target; no upstream Linux driver bound)
-- `CLV0002:00` (`\_SB_.DCHV`, status `15` — sibling ODM ACPI device; unbound, out of scope)
+- `CLV0001:00` (`\_SB_.DCHU`, ACPI `_STA` `status=15` = `0x0F` [Present | Enabled | UI-Visible | Functioning] — exposed keyboard ACPI `_DSM` target; no upstream Linux driver bound)
+- `CLV0002:00` (`\_SB_.DCHP` live / `\_SB_.DCHV` in mock fixture, ACPI `_STA` `status=15` — sibling ODM ACPI device; unbound, out of scope)
 - `PNP0C09:00` (`\_SB_.PC00.LPCB.EC0_` / `EC__`, bound to `acpi-ec`)
 - `PNP0C0A:00` (`\_SB_.BAT0`, bound to `acpi-battery`)
 - `ACPI0003:00` (`\_SB_.AC__`, bound to `ac`)
@@ -57,7 +57,7 @@ On the `Aspire A715-59G` (`Kelilu_RTH`), `/sys/bus/wmi/devices/` exposes a compl
 - `INT340E:00` (`\_SB_.PTID`) plus `processor_thermal_device_pci` (`00:04.0`)
 
 ### 2.3 Clean-Room `CLV0001` (`\_SB_.DCHU`) Keyboard Investigation & `alg-cli` Analysis (2026-11-16)
-Read-only sysfs inspection on the target `A715-59G` confirmed `CLV0001:00` (`hid=CLV0001`, `path=\_SB_.DCHU`, `status=15`, modalias `acpi:CLV0001:`) while `/sys/class/leds/` contains no `*kbd_backlight*` node. Hardware behavior was cross-referenced against user-confirmed physical testing on this machine and source inspection of upstream [`24kaushik/alg-cli@038d628`](https://github.com/24kaushik/alg-cli/tree/038d6289dd38f92d9c321d87ee6203fc63767143) and fork [`zethasaintlab/alg-cli@acb9d92`](https://github.com/zethasaintlab/alg-cli/tree/acb9d92f0da836d8addf69604ab13b5d9c4b2304):
+Read-only sysfs inspection on the target `A715-59G` confirmed `CLV0001:00` (`hid=CLV0001`, `path=\_SB_.DCHU`, ACPI `_STA` `status=15` [`0x0F`], modalias `acpi:CLV0001:`) while `/sys/class/leds/` contains no `*kbd_backlight*` node. Note that ACPI `_STA` `status=15` reflects BIOS ACPI namespace presence only and is distinct from `clv0001DriverBound` (`false` when unbound) and `clv0001_kbd_state` (`status=uninitialized` vs. `status=accepted_no_hw_readback`, `physical_readback=unsupported`). Hardware behavior was cross-referenced against user-confirmed physical testing on this machine and source inspection of upstream [`24kaushik/alg-cli@038d628`](https://github.com/24kaushik/alg-cli/tree/038d6289dd38f92d9c321d87ee6203fc63767143) and fork [`zethasaintlab/alg-cli@acb9d92`](https://github.com/zethasaintlab/alg-cli/tree/acb9d92f0da836d8addf69604ab13b5d9c4b2304):
 
 | Item | Evidence Status | Findings |
 |---|---|---|
