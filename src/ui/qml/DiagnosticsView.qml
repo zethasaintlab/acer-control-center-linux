@@ -18,7 +18,7 @@ Flickable {
         // 01 // PLATFORM IDENTITY & SAFE HARDWARE MODE SWITCHER
         Rectangle {
             width: parent.width
-            height: 152
+            height: 178
             color: theme.surfacePrimary
             border.width: 1
             border.color: theme.borderSubtle
@@ -39,7 +39,7 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.margins: 12
-                spacing: 10
+                spacing: 8
 
                 Text {
                     width: parent.width
@@ -60,12 +60,23 @@ Flickable {
                     color: theme.textSecondary
                 }
 
-                Row {
+                Text {
+                    width: parent.width
+                    elide: Text.ElideRight
+                    text: "KERNEL: " + (ctrl.kernelRelease.length > 0 ? ctrl.kernelRelease : "--")
+                          + "   |   DAEMON: " + (ctrl.daemonReachable ? "ACTIVE" : "UNAVAILABLE")
+                          + "   |   ACPI: " + (ctrl.acpiDevicesJoined.length > 0 ? ctrl.acpiDevicesJoined : "none")
+                    font.family: "monospace"
+                    font.pixelSize: 10
+                    color: theme.textSecondary
+                }
+
+                Flow {
                     width: parent.width
                     spacing: 8
 
                     AtelierButton {
-                        text: "PHYSICAL HARDWARE (READ-VERIFIED)"
+                        text: "PHYSICAL HARDWARE"
                         activeState: ctrl.hardwareModeIndex === 0
                         onClicked: ctrl.switchHardwareMode(0)
                     }
@@ -77,13 +88,19 @@ Flickable {
                     }
 
                     AtelierButton {
-                        text: "MOCK: FULL CAPABILITIES (RGB + PWM + BAT LIMIT)"
+                        text: "MOCK: CLV0001 BOUND"
+                        activeState: ctrl.hardwareModeIndex === 3
+                        onClicked: ctrl.switchHardwareMode(3)
+                    }
+
+                    AtelierButton {
+                        text: "MOCK: FULL CAPABILITIES"
                         activeState: ctrl.hardwareModeIndex === 2
                         onClicked: ctrl.switchHardwareMode(2)
                     }
 
                     AtelierButton {
-                        text: "EXPORT REDACTED REPORT (MD + JSON)"
+                        text: "EXPORT REDACTED REPORT"
                         primaryAccent: true
                         onClicked: ctrl.exportDiagnosticReport("")
                     }

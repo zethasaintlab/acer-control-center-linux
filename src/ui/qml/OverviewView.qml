@@ -183,8 +183,10 @@ Flickable {
                     anchors.right: parent.right
                     indexCode: "02.B"
                     title: "dGPU // " + (ctrl.gpuAvailable ? ctrl.gpuName : "NVIDIA GPU NOT DETECTED")
-                    badgeText: ctrl.gpuAvailable ? ("P-STATE " + ctrl.gpuPstate) : "UNAVAILABLE"
-                    badgeColor: ctrl.gpuAvailable ? theme.statusNominal : theme.textMuted
+                    badgeText: ctrl.gpuAvailable
+                               ? (ctrl.gpuTelemetryMeasuredByNvml ? ("P-STATE " + ctrl.gpuPstate) : ctrl.gpuPstate)
+                               : "UNAVAILABLE"
+                    badgeColor: ctrl.gpuTelemetryMeasuredByNvml ? theme.statusNominal : theme.statusWarning
                 }
 
                 Row {
@@ -205,14 +207,14 @@ Flickable {
                             color: theme.textSecondary
                         }
                         Text {
-                            text: ctrl.gpuAvailable ? (ctrl.gpuTempC.toFixed(0) + " °C") : "--"
+                            text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuTempC.toFixed(0) + " °C") : "--"
                             font.family: "monospace"
                             font.pixelSize: 26
                             font.weight: Font.Bold
-                            color: theme.textPrimary
+                            color: ctrl.gpuTelemetryMeasuredByNvml ? theme.textPrimary : theme.textMuted
                         }
                         Text {
-                            text: "CORE: " + ctrl.gpuGraphicsClockMhz + " MHz"
+                            text: ctrl.gpuTelemetryMeasuredByNvml ? ("CORE: " + ctrl.gpuGraphicsClockMhz + " MHz") : "CLOCKS: UNMEASURED"
                             font.family: "monospace"
                             font.pixelSize: 11
                             color: theme.textSecondary
@@ -229,14 +231,16 @@ Flickable {
                             color: theme.textSecondary
                         }
                         Text {
-                            text: ctrl.gpuAvailable ? (ctrl.gpuUtilizationPct + " %") : "--"
+                            text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuUtilizationPct + " %") : "--"
                             font.family: "monospace"
                             font.pixelSize: 26
                             font.weight: Font.Bold
-                            color: theme.accentReadable
+                            color: ctrl.gpuTelemetryMeasuredByNvml ? theme.accentReadable : theme.textMuted
                         }
                         Text {
-                            text: "VRAM: " + ctrl.gpuVramUsedMiB + " / " + ctrl.gpuVramTotalMiB + " MiB"
+                            text: ctrl.gpuTelemetryMeasuredByNvml
+                                  ? ("VRAM: " + ctrl.gpuVramUsedMiB + " / " + ctrl.gpuVramTotalMiB + " MiB")
+                                  : "VRAM: UNMEASURED"
                             font.family: "monospace"
                             font.pixelSize: 11
                             color: theme.textSecondary
@@ -253,14 +257,20 @@ Flickable {
                             color: theme.textSecondary
                         }
                         Text {
-                            text: ctrl.gpuPowerRailGated ? "IDLE (P8)" : (ctrl.gpuPowerDrawW.toFixed(1) + " W")
+                            text: ctrl.gpuPowerRailGated
+                                  ? "IDLE (P8)"
+                                  : (ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuPowerDrawW.toFixed(1) + " W") : "--")
                             font.family: "monospace"
                             font.pixelSize: 22
                             font.weight: Font.Bold
-                            color: ctrl.gpuPowerRailGated ? theme.statusInfo : theme.textPrimary
+                            color: ctrl.gpuPowerRailGated
+                                   ? theme.statusInfo
+                                   : (ctrl.gpuTelemetryMeasuredByNvml ? theme.textPrimary : theme.textMuted)
                         }
                         Text {
-                            text: "TGP CAP: " + ctrl.gpuDefaultLimitW.toFixed(0) + "W / " + ctrl.gpuMaxLimitW.toFixed(0) + "W"
+                            text: ctrl.gpuPowerLimitsMeasured
+                                  ? ("TGP CAP: " + ctrl.gpuDefaultLimitW.toFixed(0) + "W / " + ctrl.gpuMaxLimitW.toFixed(0) + "W")
+                                  : "TGP CAP: UNMEASURED"
                             font.family: "monospace"
                             font.pixelSize: 10
                             color: theme.textSecondary

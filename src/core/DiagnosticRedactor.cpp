@@ -40,9 +40,16 @@ void DiagnosticRedactor::clearLogs() {
 QString DiagnosticRedactor::redactSensitiveText(const QString& input) {
     QString out = input;
 
-    // 1. Redact standard UUIDs (but keep known public WMI class GUIDs ABBC0F6x, F6CB5C3C, 676AA15E, 6AF4F258, 67C3371D)
+    // 1a. Redact NVIDIA GPU UUIDs (GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+    static const QRegularExpression kGpuUuidRegex(
+        QStringLiteral("\\bGPU-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"),
+        QRegularExpression::CaseInsensitiveOption
+    );
+    out.replace(kGpuUuidRegex, QStringLiteral("<REDACTED-GPU-UUID>"));
+
+    // 1b. Redact standard UUIDs (but keep known public WMI/ACPI class GUIDs ABBC0F6x, F6CB5C3C, 676AA15E, 6AF4F258, 67C3371D, 93F224E4)
     static const QRegularExpression kUuidRegex(
-        QStringLiteral("\\b(?!ABBC0F6[A-F]-8EA1-11D1-00A0-C90629100000|F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0|676AA15E-6A47-4D9F-A2CC-1E6D18D14026|6AF4F258-B401-42FD-BE91-3D4AC2D7C0D3|67C3371D-95A3-4C37-BB61-DD47B491DAAB)[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"),
+        QStringLiteral("\\b(?!ABBC0F6[A-F]-8EA1-11D1-00A0-C90629100000|F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0|676AA15E-6A47-4D9F-A2CC-1E6D18D14026|6AF4F258-B401-42FD-BE91-3D4AC2D7C0D3|67C3371D-95A3-4C37-BB61-DD47B491DAAB|93F224E4-FBDC-4BBF-ADD6-DB71BDC0AFAD)[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b"),
         QRegularExpression::CaseInsensitiveOption
     );
     out.replace(kUuidRegex, QStringLiteral("<REDACTED-UUID>"));
@@ -73,6 +80,7 @@ QJsonObject DiagnosticRedactor::buildJsonReport(const SystemSnapshot& snapshot) 
     root.insert(QStringLiteral("generated_at_utc"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     root.insert(QStringLiteral("mock_mode_active"), snapshot.mockModeActive);
     root.insert(QStringLiteral("mock_scenario"), snapshot.mockScenarioName);
+    root.insert(QStringLiteral("daemon_reachable"), snapshot.daemonReachable);
 
     QJsonObject dmiObj;
     dmiObj.insert(QStringLiteral("sys_vendor"), snapshot.dmi.sysVendor);
@@ -83,12 +91,23 @@ QJsonObject DiagnosticRedactor::buildJsonReport(const SystemSnapshot& snapshot) 
     dmiObj.insert(QStringLiteral("bios_vendor"), snapshot.dmi.biosVendor);
     dmiObj.insert(QStringLiteral("bios_version"), snapshot.dmi.biosVersion);
     dmiObj.insert(QStringLiteral("bios_date"), snapshot.dmi.biosDate);
+    dmiObj.insert(QStringLiteral("kernel_release"), snapshot.dmi.kernelRelease);
     dmiObj.insert(QStringLiteral("acer_wmi_loaded"), snapshot.dmi.acerWmiLoaded);
     QJsonArray wmiArr;
     for (const QString& g : snapshot.dmi.wmiGuids) {
         wmiArr.append(g);
     }
     dmiObj.insert(QStringLiteral("wmi_guids"), wmiArr);
+    QJsonArray acpiArr;
+    for (const QString& a : snapshot.dmi.acpiDevices) {
+        acpiArr.append(redactSensitiveText(a));
+    }
+    dmiObj.insert(QStringLiteral("acpi_devices"), acpiArr);
+    QJsonArray drvArr;
+    for (const QString& d : snapshot.dmi.loadedDrivers) {
+        drvArr.append(d);
+    }
+    dmiObj.insert(QStringLiteral("loaded_drivers"), drvArr);
     root.insert(QStringLiteral("dmi_identity"), dmiObj);
 
     QJsonArray capArr;
@@ -128,7 +147,11 @@ QString DiagnosticRedactor::buildMarkdownReport(const SystemSnapshot& snapshot) 
     md += QStringLiteral("| Product | `%1` (`%2`) |\n").arg(snapshot.dmi.productName, snapshot.dmi.productVersion);
     md += QStringLiteral("| Board | `%1` (`%2`) |\n").arg(snapshot.dmi.boardName, snapshot.dmi.boardVendor);
     md += QStringLiteral("| BIOS | `%1` `%2` (`%3`) |\n").arg(snapshot.dmi.biosVendor, snapshot.dmi.biosVersion, snapshot.dmi.biosDate);
+    md += QStringLiteral("| Kernel Release | `%1` |\n").arg(snapshot.dmi.kernelRelease.isEmpty() ? QStringLiteral("Unknown") : snapshot.dmi.kernelRelease);
+    md += QStringLiteral("| D-Bus Privileged Daemon | `%1` |\n").arg(snapshot.daemonReachable ? QStringLiteral("Reachable") : QStringLiteral("Unavailable / Local Read-Only"));
     md += QStringLiteral("| `acer_wmi` Loaded | `%1` |\n").arg(snapshot.dmi.acerWmiLoaded ? QStringLiteral("Yes") : QStringLiteral("No"));
+    md += QStringLiteral("| Loaded Kernel Modules | `%1` |\n").arg(snapshot.dmi.loadedDrivers.join(QStringLiteral(", ")));
+    md += QStringLiteral("| ACPI Device Nodes | `%1` |\n").arg(snapshot.dmi.acpiDevices.join(QStringLiteral(", ")));
     md += QStringLiteral("| Exposed WMI GUIDs | `%1` |\n\n").arg(snapshot.dmi.wmiGuids.join(QStringLiteral(", ")));
 
     md += QStringLiteral("## 2. Hardware Capability Matrix\n\n");

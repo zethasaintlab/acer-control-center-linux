@@ -1,6 +1,6 @@
 Name:           acer-control-center
 Version:        1.0.0
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Native Hardware Telemetry & Control Center for Acer Aspire 7 A715-59G
 
 License:        GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
@@ -34,8 +34,10 @@ hardware management application engineered for the Acer Aspire 7 A715-59G
 (board RTH / Kelilu_RTH) on Fedora Linux 45 (KDE Plasma 6 & Hyprland Wayland).
 It provides real-time CPU, memory, thermal, battery, and optional NVIDIA NVML
 telemetry, verified Intel P-State and TuneD/PPD performance profiles,
-interactive fan curve visualization, an unrestricted sRGB/HSV/HSL Keyboard
-Lighting Studio independent of the application accent color, and
+interactive fan curve visualization, a three-mode Keyboard Lighting Studio
+(clean-room CLV0001 ACPI _DSM preset backend, /sys/class/leds sysfs, and an
+unrestricted sRGB/HSV/HSL Preview Studio independent of application accent),
+clean-room out-of-tree CLV0001 driver source for optional operator build, and
 privacy-redacted hardware diagnostics.
 
 %prep
@@ -74,7 +76,15 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.zethasaintl
 %{_datadir}/dbus-1/system.d/io.github.zethasaintlab.AcerControlCenter1.conf
 %{_datadir}/dbus-1/system-services/io.github.zethasaintlab.AcerControlCenter1.service
 %{_datadir}/polkit-1/actions/io.github.zethasaintlab.acercontrol.policy
+%dir %{_datadir}/acer-control-center
+%dir %{_datadir}/acer-control-center/driver
+%{_datadir}/acer-control-center/driver/acer_clv0001_kbd.c
+%{_datadir}/acer-control-center/driver/Makefile
+%{_datadir}/acer-control-center/driver/dkms.conf
 
 %changelog
+* Mon Nov 16 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-2
+- Integrate clean-room CLV0001 (\_SB_.DCHU) ACPI _DSM 0x67 keyboard preset backend and optional driver sources
+- Harden /proc/driver/nvidia telemetry non-fabrication and CPU governor/EPP rollback validation
 * Sun Nov 08 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-1
 - Initial Fedora 45 RPM release of Acer Control Center Linux Edition (v1.0.0)

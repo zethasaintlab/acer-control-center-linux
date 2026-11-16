@@ -17,14 +17,16 @@
         <p>
             It provides real-time CPU, memory, thermal, battery, and NVIDIA GeForce RTX 3050 telemetry,
             verified Intel P-State and TuneD/PPD performance profile management, interactive fan curve
-            visualization, an unrestricted sRGB/HSV/HSL Keyboard Lighting Studio independent of the
-            application theme accent color, and privacy-redacted hardware diagnostics.
+            visualization, a three-mode Keyboard Lighting Studio (clean-room CLV0001 ACPI _DSM 0x67
+            17-preset backend, /sys/class/leds sysfs backend, and unrestricted sRGB/HSV/HSL Preview
+            Studio independent of the application theme accent color), and privacy-redacted hardware diagnostics.
         </p>
     </description>
     <url type="homepage">https://github.com/zethasaintlab/acer-control-center-linux</url>
     <url type="bugtracker">https://github.com/zethasaintlab/acer-control-center-linux/issues</url>
     <content_rating type="oars-1.1"/>
     <releases>
+        <release version="1.0.0-2" date="2026-11-16"/>
         <release version="1.0.0" date="2026-11-08"/>
     </releases>
 </component>

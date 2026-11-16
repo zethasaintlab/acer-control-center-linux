@@ -5,6 +5,7 @@
 
 #include <QDateTime>
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QDBusInterface>
 #include <QDBusReply>
 #include <QDir>
@@ -526,6 +527,13 @@ core::SystemSnapshot TelemetryCollector::collectSnapshot(const QString& activePr
     snap.mockScenarioName = SysfsRoot::instance().scenarioLabel();
 
     snap.dmi = HardwareDiscovery::probeDmiAndWmi();
+    if (snap.mockModeActive) {
+        snap.daemonReachable = true;
+    } else {
+        const auto bus = QDBusConnection::systemBus();
+        snap.daemonReachable = bus.isConnected() && bus.interface() &&
+                               bus.interface()->isServiceRegistered(QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"));
+    }
     snap.cpu = readCpuTelemetry();
     snap.memory = readMemoryTelemetry();
     snap.gpu = m_nvml.readTelemetry();

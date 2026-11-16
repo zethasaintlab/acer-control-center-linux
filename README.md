@@ -49,8 +49,8 @@
 2. **Strict Readback Verification & Safe Standard-Interface Controls:**
    - Implemented control adapters target documented Linux interfaces such as `intel_pstate`, TuneD/PPD, display backlight and optional standard LED/fan/battery sysfs nodes.
    - A standard node must be detected and validated before the corresponding control can be used. The A715-59G currently has no standard hwmon fan PWM or battery charge-threshold node.
-3. **Two Independent Unrestricted Color Systems:**
-   - **Physical Keyboard Lighting Studio (`04 // KEYBOARD STUDIO`):** Full 24-bit sRGB + HSV wheel + HSL lightness + Hex (`#RRGGBB`) + 4-zone chassis visualizer + custom swatches and named profiles.
+3. **Independent Keyboard Lighting Preview and Application Theme Systems:**
+   - **Keyboard Lighting Studio:** The optional clean-room CLV0001 backend provides 17 firmware presets and five brightness levels when loaded. Unrestricted colors may be used for UI preview, but are not represented as arbitrary physical RGB support. The interface distinguishes bound, unbound and preview states.
    - **Application Theme Accent Studio (`08 // SETTINGS`):** Unrestricted sRGB/HSV/Hex accent color engine with real-time WCAG 2.1 relative luminance and contrast ratio ($\ge 4.5:1$ AA) guardrail token derivation. Changing the physical keyboard color never alters the application theme accent, and vice versa.
 4. **Optional Dynamic NVIDIA NVML Integration (`dlopen`) + `P8` Rail-Gate Spike Filter:**
    - Dynamically loads `libnvidia-ml.so.1` at runtime without compile-time hard linking; launches cleanly on Intel-only or Nouveau systems.
@@ -78,7 +78,7 @@ See [docs/HARDWARE_AUDIT_A715_59G.md](docs/HARDWARE_AUDIT_A715_59G.md) for the c
 | **Battery Telemetry & Est. Capacity Ratio** | `/sys/class/power_supply/BAT0` & `AC` | **Read-Only Supported** | Yes |
 | **Internal eDP Panel Backlight** | `/sys/class/backlight/intel_backlight` (`logind`) | **Fully Supported (48,000 steps)** | Yes |
 | **Fan Tachometer RPM & Manual PWM** | Standard hwmon fan/PWM ABI; vendor AML candidate paths | **No standard fan RPM/PWM node; static AML paths found but not runtime-verified** | **Mock support only** |
-| **Keyboard Backlight & RGB Zones** | `/sys/class/leds/*kbd_backlight*` | **Not Exposed by Default Kernel (Preview Mode)** | **Full RW in Mock Mode** |
+| **Keyboard Backlight & Firmware Presets** | `CLV0001` (`\_SB_.DCHU`, `_DSM 0x67`, clean-room `acer_clv0001_kbd`) or `/sys/class/leds/*kbd_backlight*` | **17 firmware presets + 5 brightness levels when driver is loaded; preview when unbound** | **Full RW in `clv0001` and `full` mock modes** |
 | **Battery Charge Limit Threshold** | Standard power_supply threshold ABI; vendor FlexiCharger AML candidate | **No standard threshold node; static FlexiCharger path found but not runtime-verified** | **Mock support only** |
 
 ---
@@ -97,10 +97,13 @@ ctest --test-dir build --output-on-failure
 # Launch against physical system hardware (read-verified):
 ./build/acer-control-center
 
+# Launch with simulated CLV0001 kernel driver bound (17 presets & 5 discrete levels):
+./build/acer-control-center --mock-hardware clv0001
+
 # Launch with simulated full capabilities (RGB LED sysfs + Fan PWM + Battery Threshold):
 ./build/acer-control-center --mock-hardware full
 
-# Launch with simulated A715-59G default kernel posture mirror:
+# Launch with simulated A715-59G default kernel posture mirror (CLV0001 unbound):
 ./build/acer-control-center --mock-hardware mirror
 ```
 
@@ -123,7 +126,14 @@ rpmbuild --define "_topdir $(pwd)/build/rpmbuild" -ba build/rpmbuild/SPECS/acer-
 - [Engineering Workflow & Agent Collaboration](docs/WORKFLOW.md)
 - [Industrial-Technical Design System](docs/DESIGN_SYSTEM.md)
 - [Hardware Audit & Capability Matrix (`A715-59G / Kelilu_RTH`)](docs/HARDWARE_AUDIT_A715_59G.md)
-- [Architecture Decision Record (ADR-001)](docs/ARCHITECTURE_ADR.md)
+## Project Documentation
+
+- [Project State & Hydrogen Handoff](docs/PROJECT_STATE.md)
+- [Engineering Workflow & Agent Collaboration](docs/WORKFLOW.md)
+- [Industrial-Technical Design System](docs/DESIGN_SYSTEM.md)
+- [Hardware Audit & Capability Matrix (`A715-59G / Kelilu_RTH`)](docs/HARDWARE_AUDIT_A715_59G.md)
+- [Architecture Decision Records (ADR-001 & ADR-002)](docs/ARCHITECTURE_ADR.md)
+- [Fedora Linux 45 Packaging & Privilege Guide](docs/FEDORA_45_PACKAGING.md)
 - [Fedora Linux 45 Packaging & Privilege Guide](docs/FEDORA_45_PACKAGING.md)
 
 ---

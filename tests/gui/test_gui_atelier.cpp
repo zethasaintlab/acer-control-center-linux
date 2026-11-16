@@ -17,8 +17,13 @@ using namespace acc;
 class TestGuiAtelier : public QObject {
     Q_OBJECT
 
+private:
+    QTemporaryDir m_tempConfigDir;
+
 private slots:
     void initTestCase() {
+        QVERIFY(m_tempConfigDir.isValid());
+        qputenv("ACC_CONFIG_DIR", m_tempConfigDir.path().toUtf8());
         Q_INIT_RESOURCE(resources);
         qmlRegisterType<ui::TelemetryStripChart>("AcerControl.Ui", 1, 0, "TelemetryStripChart");
         qmlRegisterType<ui::HsvColorWheelItem>("AcerControl.Ui", 1, 0, "HsvColorWheel");
@@ -105,6 +110,65 @@ private slots:
         QCOMPARE(controller.manualFanSupported(), false);
         QCOMPARE(controller.kbdHardwareConnected(), false);
         QCOMPARE(controller.batChargeLimitSupported(), false);
+
+        // Switch to MockClv0001DriverActive (CLV0001 bound via clean-room driver)
+        controller.switchHardwareMode(3);
+        QCOMPARE(controller.hardwareModeIndex(), 3);
+        QCOMPARE(controller.kbdBackendKindId(), QStringLiteral("clv0001_acpi_dsm"));
+        QCOMPARE(controller.kbdSupportsPresetColors(), true);
+        QCOMPARE(controller.kbdSupportsArbitraryRgb(), false);
+        QCOMPARE(controller.kbdPhysicalReadbackSupported(), false);
+        QCOMPARE(controller.kbdPresetsModel().size(), 17);
+
+        const QString themeBeforeClv = theme.accentHex();
+        controller.selectKbdPreset(QStringLiteral("red"));
+        controller.setKbdBrightnessLevel(2);
+        QCOMPARE(controller.kbdPresetName(), QStringLiteral("red"));
+        QCOMPARE(controller.kbdBrightnessLevel(), 2);
+        QCOMPARE(controller.kbdFirmwarePacketHex(), QStringLiteral("00 7E 00 F0"));
+        QCOMPARE(theme.accentHex(), themeBeforeClv);
+
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), false);
+        QVERIFY(controller.statusBannerText().contains(QStringLiteral("physical hardware readback not exposed")));
+
+        // Verify custom non-preset RGB color in CLV0001 mode fails cleanly instead of silently substituting
+        QVERIFY(controller.setKbdColorFromHex(QStringLiteral("#123456")));
+        QCOMPARE(controller.kbdCustomPreviewDirty(), true);
+        QCOMPARE(controller.kbdNearestPresetName(), QStringLiteral("bluish-white"));
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), true);
+        QVERIFY(controller.statusBannerText().contains(QStringLiteral("17 verified named presets")));
+
+        // Rapid second apply within 40 ms cooldown hits real rate limiter; after 50 ms cooldown preset apply succeeds
+        controller.selectKbdPreset(QStringLiteral("green"));
+        QCOMPARE(controller.kbdCustomPreviewDirty(), false);
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), true);
+        QVERIFY(controller.statusBannerText().contains(QStringLiteral("rate-limited")));
+
+        QTest::qWait(50);
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), false);
+
+        // Snap from custom RGB preview (#0000B0 -> nearest 'blue') and verify profile brightness persistence
+        QVERIFY(controller.setKbdColorFromHex(QStringLiteral("#0000B0")));
+        QCOMPARE(controller.kbdCustomPreviewDirty(), true);
+        QCOMPARE(controller.kbdNearestPresetName(), QStringLiteral("blue"));
+        controller.snapToNearestKbdPreset();
+        QCOMPARE(controller.kbdCustomPreviewDirty(), false);
+        QCOMPARE(controller.kbdPresetName(), QStringLiteral("blue"));
+        QTest::qWait(50);
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), false);
+
+        const QString prevProfId = controller.activeKbdProfileId();
+        controller.setKbdBrightnessLevel(3);
+        QCOMPARE(controller.kbdBrightnessLevel(), 3);
+        controller.selectKbdProfile(QStringLiteral("workstation_warm"));
+        QCOMPARE(controller.kbdPresetName(), QStringLiteral("white"));
+        controller.selectKbdProfile(prevProfId);
+        QCOMPARE(controller.kbdBrightnessLevel(), 3);
     }
 
     void testQmlMainWindowInstantiationOffscreen() {
@@ -129,6 +193,15 @@ private slots:
             QVERIFY(img.width() >= 1100);
             QVERIFY(img.height() >= 700);
         }
+
+        // Verify CLV0001 Keyboard Studio mode renders cleanly offscreen
+        controller.switchHardwareMode(3);
+        controller.setCurrentTabIndex(3);
+        controller.selectKbdPreset(QStringLiteral("cyan"));
+        QCoreApplication::processEvents();
+        QImage clvImg = window->grabWindow();
+        QVERIFY(!clvImg.isNull());
+        QVERIFY(clvImg.width() >= 1100);
     }
 };
 

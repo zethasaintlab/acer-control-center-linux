@@ -4,6 +4,7 @@
 #include "core/ConfigStore.h"
 #include "core/DiagnosticRedactor.h"
 #include "daemon/DaemonServiceObject.h"
+#include "hal/Clv0001KeyboardBackend.h"
 #include "hal/ControlOperations.h"
 #include "hal/HardwareDiscovery.h"
 #include "hal/NvmlDynamicLoader.h"
@@ -13,8 +14,11 @@
 #include <QFile>
 #include <QMap>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QXmlStreamReader>
 #include <QtTest/QtTest>
+#include <cmath>
+#include <limits>
 
 using namespace acc;
 
@@ -488,7 +492,7 @@ private Q_SLOTS:
         QVERIFY(!unitText.contains(QStringLiteral("CAP_DAC_OVERRIDE")));
         QVERIFY(!unitText.contains(QStringLiteral("CAP_DAC_READ_SEARCH")));
         QVERIFY(unitText.contains(QStringLiteral("UMask=0077")));
-        QVERIFY(unitText.contains(QStringLiteral("ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq")));
+        QVERIFY(unitText.contains(QStringLiteral("ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq -/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00")));
         // Never allow unrestricted ReadWritePaths=/sys, /sys/devices/platform, or /sys/class/power_supply/BAT0
         QVERIFY(!unitText.contains(QStringLiteral("ReadWritePaths=/sys\n")));
         QVERIFY(!unitText.contains(QStringLiteral("ReadWritePaths=-/sys\n")));
@@ -532,6 +536,427 @@ private Q_SLOTS:
         root.setMode(hal::HardwareMode::PhysicalSystem);
         QVERIFY(!hal::SysfsRoot::writeFileVerified(outsideFile, QStringLiteral("hacked"), nullptr, &errMsg));
         QVERIFY(errMsg.contains(QStringLiteral("Refused write to non-allowlisted physical path")));
+    }
+
+    void testClv0001PresetTableAndFirmwareEncoding() {
+        const auto& presets = hal::Clv0001KeyboardBackend::verifiedPresets();
+        QCOMPARE(presets.size(), static_cast<size_t>(17));
+
+        // Verify GRB firmware byte ordering ((channel * scale) / 0xBF, level 4 => scale 0xBF, terminator 0xF0)
+        std::array<uint8_t, 4> pkt{};
+        QString err;
+        QVERIFY(hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("red"), 4, pkt, &err));
+        QCOMPARE(hal::Clv0001KeyboardBackend::formatPayloadHex(pkt), QStringLiteral("00 FF 00 F0"));
+
+        QVERIFY(hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("green"), 4, pkt, &err));
+        QCOMPARE(hal::Clv0001KeyboardBackend::formatPayloadHex(pkt), QStringLiteral("FF 00 00 F0"));
+
+        QVERIFY(hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("blue"), 4, pkt, &err));
+        QCOMPARE(hal::Clv0001KeyboardBackend::formatPayloadHex(pkt), QStringLiteral("00 00 C8 F0"));
+
+        QVERIFY(hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("cyan"), 4, pkt, &err));
+        QCOMPARE(hal::Clv0001KeyboardBackend::formatPayloadHex(pkt), QStringLiteral("FF 00 C8 F0"));
+
+        QVERIFY(hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("off"), 4, pkt, &err));
+        QCOMPARE(hal::Clv0001KeyboardBackend::formatPayloadHex(pkt), QStringLiteral("00 00 00 F0"));
+
+        // Verify all 5 discrete brightness levels on white (scale 0x00, 0x2F, 0x5F, 0x8F, 0xBF normalized over 0xBF)
+        const std::array<QString, 5> expectedWhiteHex = {
+            QStringLiteral("00 00 00 F0"),
+            QStringLiteral("3E 3E 3E F0"),
+            QStringLiteral("7E 7E 7E F0"),
+            QStringLiteral("BE BE BE F0"),
+            QStringLiteral("FF FF FF F0")
+        };
+        for (int lvl = 0; lvl <= 4; ++lvl) {
+            QVERIFY(hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("white"), lvl, pkt, &err));
+            QCOMPARE(hal::Clv0001KeyboardBackend::formatPayloadHex(pkt), expectedWhiteHex[static_cast<size_t>(lvl)]);
+        }
+
+        // Reject invalid preset names, shell metacharacters, or out-of-range brightness
+        QVERIFY(!hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("rgb"), 4, pkt, &err));
+        QVERIFY(!hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("rainbow"), 4, pkt, &err));
+        QVERIFY(!hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("../etc/passwd"), 4, pkt, &err));
+        QVERIFY(!hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("cyan"), -1, pkt, &err));
+        QVERIFY(!hal::Clv0001KeyboardBackend::buildFirmwarePayload(QStringLiteral("cyan"), 5, pkt, &err));
+
+        // Reproduce fork alg-rgb-engine vs alg_rgb.c ABI mismatch (`"rgb 255 0 0 4"` rejected with -EINVAL)
+        QString parsedColor, parseErr;
+        int parsedBri = -1;
+        QVERIFY(!hal::Clv0001KeyboardBackend::simulateLegacyAlgWriteParser(
+            QStringLiteral("rgb 255 0 0 4\n"), &parsedColor, &parsedBri, &parseErr));
+        QCOMPARE(parsedColor, QStringLiteral("rgb"));
+        QVERIFY(parseErr.contains(QStringLiteral("-EINVAL")));
+
+        QVERIFY(hal::Clv0001KeyboardBackend::simulateLegacyAlgWriteParser(
+            QStringLiteral("cyan 3\n"), &parsedColor, &parsedBri, &parseErr));
+        QCOMPARE(parsedColor, QStringLiteral("cyan"));
+        QCOMPARE(parsedBri, 3);
+    }
+
+    void testClv0001HardwareDiscoveryAndControlPaths() {
+        auto& root = hal::SysfsRoot::instance();
+        hal::Clv0001KeyboardBackend::setMinCommandIntervalMsForTesting(0);
+        hal::Clv0001KeyboardBackend::resetRateLimiterForTesting();
+
+        // 1. MockPhysicalMirror: CLV0001 ACPI node detected, driver unbound -> preview only
+        root.setMode(hal::HardwareMode::MockPhysicalMirror);
+        const core::DmiIdentity dmi = hal::HardwareDiscovery::probeDmiAndWmi();
+        QVERIFY(!dmi.kernelRelease.isEmpty());
+        QVERIFY(dmi.acpiDevices.join(QLatin1Char(',')).contains(QStringLiteral("CLV0001:00")));
+
+        const core::KeyboardHardwareState kbdUnbound = hal::HardwareDiscovery::probeKeyboardHardware(dmi);
+        QCOMPARE(kbdUnbound.clv0001DevicePresent, true);
+        QCOMPARE(kbdUnbound.clv0001AcpiPath, QStringLiteral("\\_SB_.DCHU"));
+        QCOMPARE(kbdUnbound.clv0001DriverBound, false);
+        QCOMPARE(kbdUnbound.backendKind, core::KeyboardBackendKind::Clv0001AcpiUnbound);
+        QCOMPARE(kbdUnbound.supportsPresetColors, false);
+
+        const core::ControlResult unboundRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:cyan"), 100, QStringLiteral("cyan"));
+        QVERIFY(!unboundRes.applied);
+        QVERIFY(!unboundRes.physicalStateVerified);
+        QCOMPARE(unboundRes.errorCode, QStringLiteral("ERR_CLV0001_DRIVER_NOT_BOUND"));
+        QCOMPARE(unboundRes.verificationStatusId, QStringLiteral("rejected_before_execution"));
+
+        // 2. MockClv0001DriverActive: driver bound, 17 presets accepted WITHOUT fake physical readback
+        root.setMode(hal::HardwareMode::MockClv0001DriverActive);
+        const core::DmiIdentity clvDmi = hal::HardwareDiscovery::probeDmiAndWmi();
+        QVERIFY(clvDmi.loadedDrivers.contains(QStringLiteral("acer_clv0001_kbd")));
+
+        const core::KeyboardHardwareState kbdBound = hal::HardwareDiscovery::probeKeyboardHardware(clvDmi);
+        QCOMPARE(kbdBound.clv0001DevicePresent, true);
+        QCOMPARE(kbdBound.clv0001DriverBound, true);
+        QCOMPARE(kbdBound.backendKind, core::KeyboardBackendKind::Clv0001AcpiDsmPreset);
+        QCOMPARE(kbdBound.supportsPresetColors, true);
+        QCOMPARE(kbdBound.supportsArbitraryRgb, false);
+        QCOMPARE(kbdBound.independentHwReadback, false);
+
+        // Reject arbitrary RGB color not matching a verified preset
+        const core::ControlResult arbRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("static"), 100, QStringLiteral("#123456"));
+        QVERIFY(!arbRes.applied);
+        QCOMPARE(arbRes.errorCode, QStringLiteral("ERR_CLV0001_PRESET_REQUIRED"));
+        QCOMPARE(arbRes.verificationStatusId, QStringLiteral("rejected_before_execution"));
+
+        // Apply valid preset + brightness level
+        const core::ControlResult applyRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:red"), 100, QStringLiteral("red"));
+        QVERIFY(applyRes.applied);
+        QCOMPARE(applyRes.physicalStateVerified, false); // Write-only _DSM 0x67 cannot independently verify physical LEDs
+        QCOMPARE(applyRes.verificationStatusId, QStringLiteral("accepted_no_hw_readback"));
+        QVERIFY(applyRes.readbackSummary.contains(QStringLiteral("\"payload_grb\":\"00 FF 00 F0\"")));
+        QVERIFY(applyRes.readbackSummary.contains(QStringLiteral("\"physical_readback\":false")));
+
+        // Inject ACPI _DSM eval failure (`eval_fail`) and unexpected return type (`unexpected_return`)
+        const QString behaviorPath =
+            root.resolvePath(QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/mock_eval_behavior"));
+        {
+            QFile f(behaviorPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("eval_fail\n");
+        }
+        const core::ControlResult evalFailRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:blue"), 75, QStringLiteral("blue"));
+        QVERIFY(!evalFailRes.applied);
+        QCOMPARE(evalFailRes.errorCode, QStringLiteral("ERR_ACPI_DSM_EVAL_FAILED"));
+        QCOMPARE(evalFailRes.verificationStatusId, QStringLiteral("acpi_eval_failed"));
+
+        {
+            QFile f(behaviorPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("unexpected_return\n");
+        }
+        const core::ControlResult unexpRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:green"), 50, QStringLiteral("green"));
+        QVERIFY(!unexpRes.applied);
+        QCOMPARE(unexpRes.errorCode, QStringLiteral("ERR_ACPI_UNEXPECTED_RETURN_TYPE"));
+        QCOMPARE(unexpRes.verificationStatusId, QStringLiteral("unexpected_acpi_return_type"));
+
+        // Inject kernel rate_limited status (-EBUSY) and verify ERR_RATE_LIMITED propagation
+        {
+            QFile f(behaviorPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("rate_limited\n");
+        }
+        const core::ControlResult kRateRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:cyan"), 75, QStringLiteral("cyan"));
+        QVERIFY(!kRateRes.applied);
+        QCOMPARE(kRateRes.errorCode, QStringLiteral("ERR_RATE_LIMITED"));
+        QCOMPARE(kRateRes.verificationStatusId, QStringLiteral("rejected_before_execution"));
+
+        // Inject state mismatch (`state_mismatch`) and verify fail-closed ERR_CLV0001_STATE_MISMATCH
+        {
+            QFile f(behaviorPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("state_mismatch\n");
+        }
+        const core::ControlResult mismatchRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:cyan"), 100, QStringLiteral("cyan"));
+        QVERIFY(!mismatchRes.applied);
+        QCOMPARE(mismatchRes.errorCode, QStringLiteral("ERR_CLV0001_STATE_MISMATCH"));
+        QCOMPARE(mismatchRes.verificationStatusId, QStringLiteral("rejected_before_execution"));
+        QFile::remove(behaviorPath);
+
+        // Concurrent calls across threads must remain serialized and deterministic under clvBackendMutex
+        core::ControlResult t1Res, t2Res;
+        std::unique_ptr<QThread> th1(QThread::create([&]() {
+            t1Res = hal::Clv0001KeyboardBackend::applyPresetCommand(clvDmi, QStringLiteral("cyan"), 4);
+        }));
+        std::unique_ptr<QThread> th2(QThread::create([&]() {
+            t2Res = hal::Clv0001KeyboardBackend::applyPresetCommand(clvDmi, QStringLiteral("white"), 3);
+        }));
+        th1->start();
+        th2->start();
+        QVERIFY(th1->wait(3000));
+        QVERIFY(th2->wait(3000));
+        QVERIFY(t1Res.applied && t2Res.applied);
+
+        // Reject state mismatch when clv0001_kbd_state is corrupted/truncated to wrong preset
+        const QString cmdPath =
+            root.resolvePath(QStringLiteral("/sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_command"));
+        const QString statePath =
+            root.resolvePath(QStringLiteral("/sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_state"));
+        QString writeErr;
+        QVERIFY(!hal::SysfsRoot::writeCommandAndReadState(
+            root.resolvePath(QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_state")),
+            statePath,
+            QStringLiteral("cyan 4"),
+            nullptr,
+            &writeErr));
+        QVERIFY(writeErr.contains(QStringLiteral("outside CLV0001 allowlist")));
+
+        // Verify mock-mode symlink escape out of canonical CLV0001 device dir is blocked
+        const QString fakeCmdPath =
+            root.resolvePath(QStringLiteral("/sys/bus/acpi/devices/CLV0002:00/clv0001_kbd_command"));
+        {
+            QFile f(fakeCmdPath);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("\n");
+        }
+        QVERIFY(!hal::SysfsRoot::writeCommandAndReadState(fakeCmdPath, statePath, QStringLiteral("cyan 4"), nullptr, &writeErr));
+        QVERIFY(writeErr.contains(QStringLiteral("outside CLV0001 allowlist")));
+        Q_UNUSED(cmdPath);
+
+        // Rate-limit enforcement on rapid consecutive _DSM calls
+        hal::Clv0001KeyboardBackend::resetRateLimiterForTesting();
+        hal::Clv0001KeyboardBackend::setMinCommandIntervalMsForTesting(500);
+        const core::ControlResult firstOk =
+            hal::Clv0001KeyboardBackend::applyPresetCommand(clvDmi, QStringLiteral("cyan"), 3);
+        QVERIFY(firstOk.applied);
+        const core::ControlResult secondLimited =
+            hal::Clv0001KeyboardBackend::applyPresetCommand(clvDmi, QStringLiteral("violet"), 3);
+        QVERIFY(!secondLimited.applied);
+        QCOMPARE(secondLimited.errorCode, QStringLiteral("ERR_RATE_LIMITED"));
+        hal::Clv0001KeyboardBackend::setMinCommandIntervalMsForTesting(0);
+
+        // Strict DMI gate checks: reject empty board fields, unverified ALG model, and wrong laptop
+        core::DmiIdentity wrongDmi = clvDmi;
+        wrongDmi.productName = QStringLiteral("Nitro AN515-58");
+        wrongDmi.boardName = QStringLiteral("OTHER");
+        wrongDmi.boardVendor = QStringLiteral("OtherVendor");
+        QVERIFY(!hal::Clv0001KeyboardBackend::isDmiEligible(wrongDmi));
+
+        core::DmiIdentity missingBoardDmi = clvDmi;
+        missingBoardDmi.boardName.clear();
+        missingBoardDmi.boardVendor.clear();
+        QVERIFY(!hal::Clv0001KeyboardBackend::isDmiEligible(missingBoardDmi));
+
+        core::DmiIdentity unverifiedAlgDmi = clvDmi;
+        unverifiedAlgDmi.productName = QStringLiteral("ALG AL15G-53");
+        unverifiedAlgDmi.boardName = QStringLiteral("AL15G");
+        QVERIFY(!hal::Clv0001KeyboardBackend::isDmiEligible(unverifiedAlgDmi));
+
+        const core::ControlResult dmiFail =
+            hal::Clv0001KeyboardBackend::applyPresetCommand(wrongDmi, QStringLiteral("cyan"), 4);
+        QVERIFY(!dmiFail.applied);
+        QCOMPARE(dmiFail.errorCode, QStringLiteral("ERR_UNSUPPORTED_MODEL"));
+
+        // Verify disabled ACPI _STA ("0") and wrong HID fail topology detection closed
+        const QString clvStatusPath =
+            root.resolvePath(QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/status"));
+        {
+            QFile f(clvStatusPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("0\n");
+        }
+        QCOMPARE(hal::Clv0001KeyboardBackend::probeTopology(clvDmi).devicePresent, false);
+        {
+            QFile f(clvStatusPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("15\n");
+        }
+        const QString clvHidPath =
+            root.resolvePath(QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/hid"));
+        {
+            QFile f(clvHidPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("CLV0002\n");
+        }
+        QCOMPARE(hal::Clv0001KeyboardBackend::probeTopology(clvDmi).devicePresent, false);
+        {
+            QFile f(clvHidPath);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write("CLV0001\n");
+        }
+        QCOMPARE(hal::Clv0001KeyboardBackend::probeTopology(clvDmi).devicePresent, true);
+
+        // Daemon D-Bus object dispatch with Polkit authorization check (Deny + Allow)
+        daemon::DaemonServiceObject daemonObj;
+        bool dbusApplied = false;
+        QString dbusRb, dbusErr;
+
+        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestDenyAll);
+        daemonObj.SetKeyboardLighting(QStringLiteral("preset:magenta"), 75, QStringLiteral("magenta"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(!dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+        QVERIFY(dbusRb.contains(QStringLiteral("ERR_POLKIT_UNAUTHORIZED")));
+        QVERIFY(dbusRb.contains(QStringLiteral("rejected_before_execution")));
+
+        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestAllowAll);
+        daemonObj.SetKeyboardLighting(QStringLiteral("static"), 100, QStringLiteral("#123456"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(!dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("ERR_CLV0001_PRESET_REQUIRED"));
+        QVERIFY(dbusRb.contains(QStringLiteral("nearest preset")));
+
+        daemonObj.SetKeyboardLighting(QStringLiteral("preset:magenta"), 75, QStringLiteral("magenta"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("OK"));
+        QVERIFY(dbusRb.contains(QStringLiteral("accepted_no_hw_readback")));
+
+        // Verify default keyboard profiles map cleanly to CLV0001 presets
+        const core::AppSettings defSettings = core::ConfigStore::defaultSettings();
+        QCOMPARE(defSettings.keyboardProfiles.size(), static_cast<size_t>(3));
+        QCOMPARE(defSettings.keyboardProfiles[0].clv0001PresetName, QStringLiteral("cyan"));
+        QCOMPARE(defSettings.keyboardProfiles[1].clv0001PresetName, QStringLiteral("white"));
+        QCOMPARE(defSettings.keyboardProfiles[2].clv0001PresetName, QStringLiteral("red"));
+
+        root.setMode(hal::HardwareMode::PhysicalSystem);
+    }
+
+    void testNvmlProcFallbackNoFabricationAndRedaction() {
+        auto& root = hal::SysfsRoot::instance();
+
+        // 1. /proc/driver/nvidia fallback must not fabricate 6144 MiB VRAM or 60W/75W limits
+        QTemporaryDir procFix;
+        QVERIFY(procFix.isValid());
+        const QString r = procFix.path();
+        QDir().mkpath(r + QStringLiteral("/proc/driver/nvidia/gpus/0000:01:00.0"));
+        QDir().mkpath(r + QStringLiteral("/sys/bus/pci/devices/0000:01:00.0"));
+        {
+            QFile f(r + QStringLiteral("/proc/driver/nvidia/gpus/0000:01:00.0/information"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("Model:\t\tTest Discrete GPU\n");
+        }
+        {
+            QFile f(r + QStringLiteral("/proc/driver/nvidia/version"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("NVRM version: NVIDIA Open 620.70.06\n");
+        }
+        {
+            QFile f(r + QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/power_state"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("D3cold\n");
+        }
+        {
+            QFile f(r + QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/subsystem_vendor"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("0x1025\n");
+        }
+        {
+            QFile f(r + QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/subsystem_device"));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("0x1900\n");
+        }
+
+        root.setCustomRootPath(r, QStringLiteral("Proc Fallback Unit Fixture"));
+        const core::GpuTelemetry fallbackGpu = hal::NvmlDynamicLoader::readProcNvidiaFallback();
+        QCOMPARE(fallbackGpu.available, true);
+        QCOMPARE(fallbackGpu.telemetryMeasuredByNvml, false);
+        QCOMPARE(fallbackGpu.powerLimitsMeasured, false);
+        QCOMPARE(fallbackGpu.name, QStringLiteral("Test Discrete GPU"));
+        QCOMPARE(fallbackGpu.vramTotalMiB, static_cast<uint64_t>(0));
+        QCOMPARE(fallbackGpu.powerDefaultLimitWatts, 0.0);
+        QCOMPARE(fallbackGpu.powerMaxLimitWatts, 0.0);
+        QCOMPARE(fallbackGpu.pstate, QStringLiteral("PCI D3cold"));
+        QCOMPARE(fallbackGpu.subsystemId, QStringLiteral("1025:1900"));
+
+        // 2. P8 filterPowerReading edge cases: NaN, +Inf, negative limit, legitimate 21W in P8 (25W cap), spike
+        bool railGated = false;
+        QCOMPARE(hal::NvmlDynamicLoader::filterPowerReading(std::numeric_limits<double>::quiet_NaN(), 75.0, 8, railGated), 0.0);
+        QCOMPARE(railGated, false);
+        QCOMPARE(hal::NvmlDynamicLoader::filterPowerReading(std::numeric_limits<double>::infinity(), 75.0, 8, railGated), 0.0);
+        QCOMPARE(railGated, false);
+        QCOMPARE(hal::NvmlDynamicLoader::filterPowerReading(5.5, 0.0, 8, railGated), 5.5);
+        QCOMPARE(railGated, false);
+        QCOMPARE(hal::NvmlDynamicLoader::filterPowerReading(21.0, 25.0, 8, railGated), 21.0);
+        QCOMPARE(railGated, false);
+        QCOMPARE(hal::NvmlDynamicLoader::filterPowerReading(312.23, 75.0, 8, railGated), 0.0);
+        QCOMPARE(railGated, true);
+
+        // 3. ConfigStore sanitizes malformed/unknown clv0001_preset & mode values
+        QJsonObject badCfgObj = core::ConfigStore::serializeSettings(core::ConfigStore::defaultSettings());
+        QJsonArray kps = badCfgObj.value(QStringLiteral("keyboard_profiles")).toArray();
+        QVERIFY(!kps.isEmpty());
+        QJsonObject kp0 = kps.at(0).toObject();
+        kp0.insert(QStringLiteral("mode"), QStringLiteral("strobe_hack"));
+        kp0.insert(QStringLiteral("clv0001_preset"), QStringLiteral("../evil"));
+        kp0.insert(QStringLiteral("clv0001_brightness_level"), 99);
+        kps[0] = kp0;
+        badCfgObj.insert(QStringLiteral("keyboard_profiles"), kps);
+        core::AppSettings parsedCfg;
+        QString cfgWarn;
+        QVERIFY(core::ConfigStore::deserializeAndValidateSettings(badCfgObj, parsedCfg, &cfgWarn));
+        QCOMPARE(parsedCfg.keyboardProfiles.front().mode, QStringLiteral("static"));
+        QCOMPARE(parsedCfg.keyboardProfiles.front().clv0001PresetName, QStringLiteral("cyan"));
+        QCOMPARE(parsedCfg.keyboardProfiles.front().clv0001BrightnessLevel, 4);
+
+        // 3. Redaction keeps CLV0001 public DSM UUID while scrubbing NVIDIA GPU UUIDs
+        const QString mixed = QStringLiteral("CLV=%1 GPU=GPU-11223344-5566-7788-99aa-bbccddeeff00")
+                                  .arg(QStringLiteral("93f224e4-fbdc-4bbf-add6-db71bdc0afad"));
+        const QString redacted = core::DiagnosticRedactor::redactSensitiveText(mixed);
+        QVERIFY(redacted.contains(QStringLiteral("93f224e4-fbdc-4bbf-add6-db71bdc0afad")));
+        QVERIFY(!redacted.contains(QStringLiteral("11223344")));
+        QVERIFY(redacted.contains(QStringLiteral("<REDACTED-GPU-UUID>")));
+
+        root.setMode(hal::HardwareMode::PhysicalSystem);
+    }
+
+    void testCpuGovernorEppValidationAndRollback() {
+        auto& root = hal::SysfsRoot::instance();
+        root.setMode(hal::HardwareMode::MockPhysicalMirror);
+
+        // Reject unsupported governor even if allowlisted string vs sysfs mismatch
+        const QString availGovPath =
+            root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors"));
+        QVERIFY(hal::SysfsRoot::writeFileVerified(availGovPath, QStringLiteral("powersave")));
+        const core::ControlResult badGov =
+            hal::ControlOperations::applyCpuPerformanceTuning(QStringLiteral("performance"), QStringLiteral("performance"), true, 20, 90);
+        QVERIFY(!badGov.applied);
+        QCOMPARE(badGov.errorCode, QStringLiteral("ERR_UNSUPPORTED_GOVERNOR"));
+
+        QVERIFY(hal::SysfsRoot::writeFileVerified(availGovPath, QStringLiteral("performance powersave")));
+        const QString availEppPath =
+            root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_available_preferences"));
+        QVERIFY(hal::SysfsRoot::writeFileVerified(availEppPath, QStringLiteral("balance_performance power")));
+        const core::ControlResult badEpp =
+            hal::ControlOperations::applyCpuPerformanceTuning(QStringLiteral("powersave"), QStringLiteral("balance_power"), true, 20, 90);
+        QVERIFY(!badEpp.applied);
+        QCOMPARE(badEpp.errorCode, QStringLiteral("ERR_UNSUPPORTED_EPP"));
+
+        // Verify rollback restores min_perf_pct/max_perf_pct if cpu1 EPP becomes non-writable
+        const QString maxPerfPath = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/intel_pstate/max_perf_pct"));
+        QVERIFY(hal::SysfsRoot::writeFileVerified(availEppPath, QStringLiteral("default performance balance_performance balance_power power")));
+        const QString cpu1Epp = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu1/cpufreq/energy_performance_preference"));
+        QFile::setPermissions(cpu1Epp, QFileDevice::ReadOwner | QFileDevice::ReadGroup | QFileDevice::ReadOther);
+        const core::ControlResult rollbackRes =
+            hal::ControlOperations::applyCpuPerformanceTuning(QStringLiteral("powersave"), QStringLiteral("power"), false, 25, 70);
+        QFile::setPermissions(cpu1Epp, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup);
+        QVERIFY(!rollbackRes.applied);
+        QCOMPARE(rollbackRes.errorCode, QStringLiteral("ERR_WRITE_EPP"));
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(maxPerfPath), QStringLiteral("100"));
+
+        root.setMode(hal::HardwareMode::PhysicalSystem);
     }
 };
 

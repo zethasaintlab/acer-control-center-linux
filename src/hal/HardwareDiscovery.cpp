@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
 #include "hal/HardwareDiscovery.h"
+#include "hal/Clv0001KeyboardBackend.h"
 #include "hal/SysfsRoot.h"
 
 #include <QDir>
@@ -87,9 +88,67 @@ core::DmiIdentity HardwareDiscovery::probeDmiAndWmi() {
     dmi.acerWmiLoaded = QFileInfo::exists(root.resolvePath(QStringLiteral("/sys/module/acer_wmi")));
     if (dmi.boardVendor.contains(QLatin1String("Kelilu_RTH"), Qt::CaseInsensitive) ||
         dmi.wmiGuids.join(QLatin1Char(',')).contains(QLatin1String("ABBC0F6"), Qt::CaseInsensitive)) {
-        dmi.odmSubsystemNote = QStringLiteral("Clevo/Kapok ODM Platform (Kelilu_RTH; WMI ABBC0F6B/C/D)");
+        dmi.odmSubsystemNote = QStringLiteral("Clevo/Kapok ODM Platform (Kelilu_RTH; WMI ABBC0F6B/C/D; ACPI CLV0001 \\_SB_.DCHU)");
     } else {
         dmi.odmSubsystemNote = QStringLiteral("Standard Platform");
+    }
+
+    const QString procVersion = SysfsRoot::readFileTrimmed(root.resolvePath(QStringLiteral("/proc/version")));
+    if (!procVersion.isEmpty()) {
+        const QStringList vTokens = procVersion.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        dmi.kernelRelease = (vTokens.size() >= 3 && vTokens.at(0) == QLatin1String("Linux"))
+                                ? vTokens.at(2)
+                                : procVersion;
+    }
+
+    const QString acpiBase = root.resolvePath(QStringLiteral("/sys/bus/acpi/devices"));
+    QDir acpiDir(acpiBase);
+    if (acpiDir.exists()) {
+        const QStringList entries = acpiDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+        for (const QString& entry : entries) {
+            if (entry.startsWith(QLatin1String("CLV0001")) ||
+                entry.startsWith(QLatin1String("CLV0002")) ||
+                entry.startsWith(QLatin1String("PNP0C09")) ||
+                entry.startsWith(QLatin1String("ACPI0003")) ||
+                entry.startsWith(QLatin1String("PNP0C0A"))) {
+                const QString devDir = acpiDir.filePath(entry);
+                const QString hid = SysfsRoot::readFileTrimmed(devDir + QStringLiteral("/hid"));
+                const QString path = SysfsRoot::readFileTrimmed(devDir + QStringLiteral("/path"));
+                const QString st = SysfsRoot::readFileTrimmed(devDir + QStringLiteral("/status"));
+                dmi.acpiDevices.append(
+                    QStringLiteral("%1 (hid=%2, path=%3, status=%4)")
+                        .arg(entry,
+                             hid.isEmpty() ? QStringLiteral("?") : hid,
+                             path.isEmpty() ? QStringLiteral("?") : path,
+                             st.isEmpty() ? QStringLiteral("?") : st)
+                );
+            }
+        }
+    }
+
+    const QString modulesText = SysfsRoot::readFileTrimmed(root.resolvePath(QStringLiteral("/proc/modules")));
+    if (!modulesText.isEmpty()) {
+        const QStringList interesting = {
+            QStringLiteral("acer_clv0001_kbd"),
+            QStringLiteral("acer_wmi"),
+            QStringLiteral("nvidia"),
+            QStringLiteral("nvidia_modeset"),
+            QStringLiteral("i915"),
+            QStringLiteral("xe"),
+            QStringLiteral("coretemp"),
+            QStringLiteral("intel_rapl_msr"),
+            QStringLiteral("clevo_acpi"),
+            QStringLiteral("alg_rgb")
+        };
+        for (const QString& line : modulesText.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+            const QString modName = line.section(QLatin1Char(' '), 0, 0).trimmed();
+            if (interesting.contains(modName) && !dmi.loadedDrivers.contains(modName)) {
+                dmi.loadedDrivers.append(modName);
+            }
+        }
+        if (dmi.loadedDrivers.contains(QStringLiteral("acer_wmi"))) {
+            dmi.acerWmiLoaded = true;
+        }
     }
 
     return dmi;
@@ -97,11 +156,19 @@ core::DmiIdentity HardwareDiscovery::probeDmiAndWmi() {
 
 core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core::DmiIdentity& dmi) {
     core::KeyboardHardwareState state;
+    const Clv0001Topology clvTopo = Clv0001KeyboardBackend::probeTopology(dmi);
+    state.clv0001DevicePresent = clvTopo.devicePresent;
+    state.clv0001AcpiPath = clvTopo.acpiPath;
+    state.clv0001Status = clvTopo.status;
+    state.clv0001DriverBound = clvTopo.driverBound;
+    state.lastPayloadHex = clvTopo.lastPayloadHex;
+
     const QString ledPath = findFirstKeyboardLedPath();
 
     if (!ledPath.isEmpty()) {
         state.ledSysfsPath = ledPath;
         state.supportsBacklightBrightness = true;
+        state.independentHwReadback = true;
         bool okMax = false;
         const int maxB = SysfsRoot::readFileTrimmed(ledPath + QStringLiteral("/max_brightness"), &okMax).toInt();
         state.maxBrightness = (okMax && maxB > 0) ? maxB : 100;
@@ -114,6 +181,17 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
 
         const bool hasMultiIntensity = QFileInfo::exists(ledPath + QStringLiteral("/multi_intensity"));
         state.supportsRgbZones = hasMultiIntensity;
+        state.supportsPresetColors = hasMultiIntensity;
+        state.supportsArbitraryRgb = hasMultiIntensity;
+        state.backendKind = hasMultiIntensity
+                                ? core::KeyboardBackendKind::LinuxLedsMulticolorRgb
+                                : core::KeyboardBackendKind::LinuxLedsMonochrome;
+        state.backendKindId = hasMultiIntensity
+                                  ? QStringLiteral("linux_leds_rgb")
+                                  : QStringLiteral("linux_leds_mono");
+        state.controlModeBadge = hasMultiIntensity
+                                     ? QStringLiteral("RGB LED SYSFS (VERIFIED READBACK)")
+                                     : QStringLiteral("MONOCHROME LED SYSFS");
         state.zoneCount = hasMultiIntensity ? 4 : 1;
         state.capabilityState = hasMultiIntensity
                                     ? core::CapabilityState::FullySupported
@@ -127,23 +205,82 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
         return state;
     }
 
-    // No /sys/class/leds/*kbd_backlight* device present
+    // No /sys/class/leds/*kbd_backlight* device present — check clean-room CLV0001 ACPI _DSM backend
+    if (clvTopo.devicePresent && clvTopo.driverBound && clvTopo.dmiEligible) {
+        state.backendKind = core::KeyboardBackendKind::Clv0001AcpiDsmPreset;
+        state.backendKindId = QStringLiteral("clv0001_acpi_dsm");
+        state.controlModeBadge = QStringLiteral("CLV0001 ACPI _DSM 0x67 (17 PRESETS · 5 LEVELS · NO HW READBACK)");
+        state.ledSysfsPath = clvTopo.commandPath;
+        state.supportsBacklightBrightness = true;
+        state.supportsRgbZones = false;
+        state.supportsPresetColors = true;
+        state.supportsArbitraryRgb = false;
+        state.supportsTimeout = false;
+        state.independentHwReadback = false;
+        state.zoneCount = 1;
+        state.maxBrightness = 4;
+        state.discreteBrightnessLevels = 5;
+        state.currentPresetName = (clvTopo.lastAppliedPreset == QLatin1String("none") || clvTopo.lastAppliedPreset.isEmpty())
+                                      ? QStringLiteral("cyan")
+                                      : clvTopo.lastAppliedPreset;
+        state.currentBrightnessLevel = (clvTopo.lastAppliedStatus == QLatin1String("uninitialized"))
+                                           ? 4
+                                           : clvTopo.lastAppliedBrightnessLevel;
+        state.currentBrightnessPct = Clv0001KeyboardBackend::brightnessLevelToPct(state.currentBrightnessLevel);
+        state.capabilityState = core::CapabilityState::PartiallySupported;
+        state.hardwareRoutingBadge = QStringLiteral(
+            "CLV0001 ACPI _DSM 0x67 BOUND (%1 — 17 Presets, Levels 0..4, Accepted Without Physical Readback)"
+        ).arg(clvTopo.acpiPath);
+        state.hardwareExplanation = QStringLiteral(
+            "Bound to ACPI device CLV0001:00 (%1) via kernel module `acer_clv0001_kbd`. "
+            "Supports 17 verified named color presets and 5 discrete brightness levels (0..4 -> 0x00, 0x2F, 0x5F, 0x8F, 0xBF) "
+            "over `_DSM` UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad` rev `0` fn `0x67` (`[G, R, B, 0xF0]`). "
+            "Arbitrary 24-bit RGB, 4-zone split hardware control, and physical hardware readback are not exposed by firmware."
+        ).arg(clvTopo.acpiPath);
+        return state;
+    }
+
+    // No LED class device and CLV0001 either unbound or not detected
     state.ledSysfsPath.clear();
     state.supportsBacklightBrightness = false;
     state.supportsRgbZones = false;
+    state.supportsPresetColors = false;
+    state.supportsArbitraryRgb = false;
     state.supportsTimeout = false;
-    state.zoneCount = 4;
-    state.maxBrightness = 100;
+    state.independentHwReadback = false;
+    state.zoneCount = clvTopo.devicePresent ? 1 : 4;
+    state.maxBrightness = clvTopo.devicePresent ? 4 : 100;
     state.currentBrightnessPct = 0;
 
+    if (clvTopo.devicePresent) {
+        state.backendKind = core::KeyboardBackendKind::Clv0001AcpiUnbound;
+        state.backendKindId = QStringLiteral("clv0001_unbound");
+        state.controlModeBadge = QStringLiteral("CLV0001 DETECTED (KERNEL DRIVER UNBOUND — PREVIEW MODE)");
+        state.capabilityState = core::CapabilityState::NotDetected;
+        state.hardwareRoutingBadge = QStringLiteral(
+            "ACPI CLV0001:00 (%1) DETECTED — KERNEL DRIVER `acer_clv0001_kbd` NOT LOADED (STUDIO IN PREVIEW MODE)"
+        ).arg(clvTopo.acpiPath);
+        state.hardwareExplanation = QStringLiteral(
+            "ACPI device `CLV0001:00` (`%1`, status `%2`) is present on `%3`, but no `/sys/class/leds/*kbd_backlight*` class device "
+            "exists and clean-room kernel driver `acer_clv0001_kbd` is not currently bound (`clv0001_kbd_command` absent). "
+            "You can design presets in Preview Mode, inspect the `[G, R, B, 0xF0]` `_DSM 0x67` packet preview, "
+            "or switch to Mock Hardware Mode (`Mock: CLV0001 Bound`) in Diagnostics to test the full write pipeline."
+        ).arg(clvTopo.acpiPath,
+              clvTopo.status.isEmpty() ? QStringLiteral("15") : clvTopo.status,
+              dmi.productName.isEmpty() ? QStringLiteral("A715-59G") : dmi.productName);
+        return state;
+    }
+
     const bool hasClevoWmi = dmi.wmiGuids.join(QLatin1Char(',')).contains(QLatin1String("ABBC0F6D"), Qt::CaseInsensitive);
+    state.backendKind = core::KeyboardBackendKind::None;
+    state.backendKindId = QStringLiteral("none");
+    state.controlModeBadge = QStringLiteral("UNSUPPORTED LIGHTING");
     state.capabilityState = hasClevoWmi
                                 ? core::CapabilityState::NotDetected
                                 : core::CapabilityState::Unsupported;
     state.hardwareRoutingBadge = QStringLiteral("PHYSICAL LED NOT DETECTED IN /sys/class/leds — STUDIO IN PROFILE DESIGN & PREVIEW MODE");
     state.hardwareExplanation = QStringLiteral(
         "No `*kbd_backlight*` class device is exposed under `/sys/class/leds/` on the running kernel (`%1`). "
-        "On the Aspire A715-59G (`Kelilu_RTH`), physical keyboard illumination is controlled by EC firmware shortcuts (`Fn+F9`/`F10`) or unbound ODM WMI (`ABBC0F6D`). "
         "You can design, preview, and save unrestricted HSV/HSL/RGB/Hex lighting profiles here, or enable Mock Hardware Mode in Diagnostics to test the full D-Bus/sysfs write pipeline."
     ).arg(dmi.productName.isEmpty() ? QStringLiteral("A715-59G") : dmi.productName);
 
@@ -328,11 +465,17 @@ std::vector<core::CapabilityRecord> HardwareDiscovery::probeAllCapabilities(bool
 
     // 13. Keyboard Lighting Studio
     const core::KeyboardHardwareState kbd = probeKeyboardHardware(dmi);
+    QString kbdIfacePath = kbd.ledSysfsPath;
+    if (kbdIfacePath.isEmpty()) {
+        kbdIfacePath = kbd.clv0001DevicePresent
+                           ? QStringLiteral("/sys/bus/acpi/devices/CLV0001:00 (acer_clv0001_kbd unbound)")
+                           : QStringLiteral("/sys/class/leds/*kbd_backlight* (Absent)");
+    }
     caps.push_back(core::CapabilityRecord{
         QStringLiteral("cap.keyboard.lighting"),
-        QStringLiteral("Physical Keyboard Backlight & Zone RGB Control"),
+        QStringLiteral("Physical Keyboard Backlight & Preset / Zone Control"),
         QStringLiteral("Keyboard Studio"),
-        kbd.ledSysfsPath.isEmpty() ? QStringLiteral("/sys/class/leds/*kbd_backlight* (Absent)") : kbd.ledSysfsPath,
+        kbdIfacePath,
         kbd.capabilityState,
         kbd.supportsBacklightBrightness,
         kbd.hardwareRoutingBadge,

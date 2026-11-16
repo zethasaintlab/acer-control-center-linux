@@ -48,6 +48,8 @@ target_link_libraries(acc_core PUBLIC Qt6::Core Qt6::Gui)
 add_library(acc_hal STATIC
     src/hal/SysfsRoot.h
     src/hal/SysfsRoot.cpp
+    src/hal/Clv0001KeyboardBackend.h
+    src/hal/Clv0001KeyboardBackend.cpp
     src/hal/NvmlDynamicLoader.h
     src/hal/NvmlDynamicLoader.cpp
     src/hal/HardwareDiscovery.h
@@ -155,4 +157,10 @@ install(FILES data/polkit/io.github.zethasaintlab.acercontrol.policy
 )
 install(FILES data/systemd/acer-control-daemon.service
     DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system
+)
+install(FILES
+    driver/acer_clv0001_kbd.c
+    driver/Makefile
+    driver/dkms.conf
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/acer-control-center/driver
 )

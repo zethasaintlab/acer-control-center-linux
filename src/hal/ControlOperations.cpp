@@ -2,6 +2,7 @@
 #include "hal/ControlOperations.h"
 #include "core/ColorScience.h"
 #include "core/DiagnosticRedactor.h"
+#include "hal/Clv0001KeyboardBackend.h"
 #include "hal/HardwareDiscovery.h"
 #include "hal/SysfsRoot.h"
 
@@ -62,13 +63,40 @@ core::ControlResult ControlOperations::applyCpuPerformanceTuning(
         return res;
     }
 
-    // Snapshot previous values for rollback if any step fails
+    // Snapshot previous values and kernel capability lists before writing
     const QString prevNoTurbo = SysfsRoot::readFileTrimmed(pstateBase + QStringLiteral("/no_turbo"));
     const QString prevMinPerf = SysfsRoot::readFileTrimmed(pstateBase + QStringLiteral("/min_perf_pct"));
     const QString prevMaxPerf = SysfsRoot::readFileTrimmed(pstateBase + QStringLiteral("/max_perf_pct"));
     const QString cpu0Base = root.resolvePath(QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq"));
     const QString prevGov = SysfsRoot::readFileTrimmed(cpu0Base + QStringLiteral("/scaling_governor"));
     const QString prevEpp = SysfsRoot::readFileTrimmed(cpu0Base + QStringLiteral("/energy_performance_preference"));
+
+    const QString availGovText = SysfsRoot::readFileTrimmed(cpu0Base + QStringLiteral("/scaling_available_governors"));
+    if (!availGovText.isEmpty()) {
+        const QStringList availGovs = availGovText.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        if (!availGovs.contains(normGov)) {
+            res.errorCode = QStringLiteral("ERR_UNSUPPORTED_GOVERNOR");
+            res.verificationStatusId = QStringLiteral("rejected_before_execution");
+            res.message = QStringLiteral("Governor '%1' is not in kernel scaling_available_governors (%2).")
+                              .arg(normGov, availGovs.join(QStringLiteral(", ")));
+            return res;
+        }
+    }
+
+    if (normGov != QLatin1String("performance")) {
+        const QString availEppText =
+            SysfsRoot::readFileTrimmed(cpu0Base + QStringLiteral("/energy_performance_available_preferences"));
+        if (!availEppText.isEmpty()) {
+            const QStringList availEpps = availEppText.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            if (!availEpps.contains(normEpp)) {
+                res.errorCode = QStringLiteral("ERR_UNSUPPORTED_EPP");
+                res.verificationStatusId = QStringLiteral("rejected_before_execution");
+                res.message = QStringLiteral("EPP '%1' is not in energy_performance_available_preferences (%2).")
+                                  .arg(normEpp, availEpps.join(QStringLiteral(", ")));
+                return res;
+            }
+        }
+    }
 
     auto rollback = [&]() {
         if (!prevNoTurbo.isEmpty()) {
@@ -144,7 +172,14 @@ core::ControlResult ControlOperations::applyCpuPerformanceTuning(
         const QString effectiveEpp = (normGov == QLatin1String("performance")) ? QStringLiteral("performance") : normEpp;
         const QString eppPath = cBase + QStringLiteral("/energy_performance_preference");
         if (QFileInfo::exists(eppPath)) {
-            SysfsRoot::writeFileVerified(eppPath, effectiveEpp, &rbEpp, &err);
+            if (!SysfsRoot::writeFileVerified(eppPath, effectiveEpp, &rbEpp, &err)) {
+                if (normGov != QLatin1String("performance")) {
+                    rollback();
+                    res.errorCode = QStringLiteral("ERR_WRITE_EPP");
+                    res.message = err;
+                    return res;
+                }
+            }
         }
     }
 
@@ -156,6 +191,8 @@ core::ControlResult ControlOperations::applyCpuPerformanceTuning(
     rbObj.insert(QStringLiteral("max_perf_pct"), rbMax.toInt());
 
     res.applied = true;
+    res.physicalStateVerified = true;
+    res.verificationStatusId = QStringLiteral("verified_physical_readback");
     res.errorCode = QStringLiteral("OK");
     res.readbackSummary = QString::fromUtf8(QJsonDocument(rbObj).toJson(QJsonDocument::Compact));
     res.message = QStringLiteral("Verified CPU P-state tuning: governor=%1, epp=%2, turbo=%3, range=%4%-%5%")
@@ -227,8 +264,9 @@ core::ControlResult ControlOperations::applyKeyboardLighting(
     int brightnessPct,
     const QString& zonesHexCsv
 ) {
-    Q_UNUSED(mode);
     core::ControlResult res;
+    res.physicalStateVerified = false;
+    res.verificationStatusId = QStringLiteral("rejected_before_execution");
 
     if (brightnessPct < 0 || brightnessPct > 100) {
         res.errorCode = QStringLiteral("ERR_INVALID_BRIGHTNESS");
@@ -236,69 +274,131 @@ core::ControlResult ControlOperations::applyKeyboardLighting(
         return res;
     }
 
-    const QStringList hexParts = zonesHexCsv.split(QLatin1Char(','), Qt::SkipEmptyParts);
-    std::vector<core::RgbColor> parsedZones;
-    for (const QString& hp : hexParts) {
-        core::RgbColor c;
-        if (!core::ColorScience::parseHexToRgb(hp, c)) {
-            res.errorCode = QStringLiteral("ERR_INVALID_COLOR_HEX");
-            res.message = QStringLiteral("Malformed zone color hex '%1'.").arg(hp);
+    const QString ledPath = HardwareDiscovery::findFirstKeyboardLedPath();
+    if (!ledPath.isEmpty()) {
+        const QStringList hexParts = zonesHexCsv.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        std::vector<core::RgbColor> parsedZones;
+        for (const QString& hp : hexParts) {
+            core::RgbColor c;
+            if (!core::ColorScience::parseHexToRgb(hp, c)) {
+                res.errorCode = QStringLiteral("ERR_INVALID_COLOR_HEX");
+                res.message = QStringLiteral("Malformed zone color hex '%1'.").arg(hp);
+                return res;
+            }
+            parsedZones.push_back(c);
+        }
+        if (parsedZones.empty()) {
+            parsedZones.push_back(core::RgbColor{59, 158, 255});
+        }
+
+        bool okMax = false;
+        const int maxB = SysfsRoot::readFileTrimmed(ledPath + QStringLiteral("/max_brightness"), &okMax).toInt();
+        const int effectiveMax = (okMax && maxB > 0) ? maxB : 100;
+        const int targetRawB = std::clamp(static_cast<int>(std::lround((brightnessPct * effectiveMax) / 100.0)), 0, effectiveMax);
+
+        QString rbBrightness, err;
+        if (!SysfsRoot::writeFileVerified(ledPath + QStringLiteral("/brightness"), QString::number(targetRawB), &rbBrightness, &err)) {
+            res.errorCode = QStringLiteral("ERR_LED_BRIGHTNESS_WRITE");
+            res.message = err;
             return res;
         }
-        parsedZones.push_back(c);
-    }
-    if (parsedZones.empty()) {
-        parsedZones.push_back(core::RgbColor{59, 158, 255});
+
+        QString rbIntensity;
+        const QString multiPath = ledPath + QStringLiteral("/multi_intensity");
+        if (QFileInfo::exists(multiPath)) {
+            const core::RgbColor primary = parsedZones.front();
+            const QString rgbTriple = QStringLiteral("%1 %2 %3").arg(primary.r).arg(primary.g).arg(primary.b);
+            if (!SysfsRoot::writeFileVerified(multiPath, rgbTriple, &rbIntensity, &err)) {
+                res.errorCode = QStringLiteral("ERR_LED_RGB_WRITE");
+                res.message = err;
+                return res;
+            }
+        }
+
+        QJsonObject rbObj;
+        rbObj.insert(QStringLiteral("backend"), QStringLiteral("linux_leds"));
+        rbObj.insert(QStringLiteral("led_device"), QFileInfo(ledPath).fileName());
+        rbObj.insert(QStringLiteral("brightness_raw"), rbBrightness.toInt());
+        rbObj.insert(QStringLiteral("multi_intensity"), rbIntensity);
+
+        res.applied = true;
+        res.physicalStateVerified = true;
+        res.verificationStatusId = QStringLiteral("verified_physical_readback");
+        res.errorCode = QStringLiteral("OK");
+        res.readbackSummary = QString::fromUtf8(QJsonDocument(rbObj).toJson(QJsonDocument::Compact));
+        res.message = QStringLiteral("Applied & verified keyboard lighting on %1 (brightness=%2/%3, rgb=%4).")
+                          .arg(QFileInfo(ledPath).fileName(), rbBrightness, QString::number(effectiveMax),
+                               rbIntensity.isEmpty() ? QStringLiteral("monochrome") : rbIntensity);
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("INFO"), QStringLiteral("HAL"), res.message);
+        return res;
     }
 
-    const QString ledPath = HardwareDiscovery::findFirstKeyboardLedPath();
-    if (ledPath.isEmpty()) {
+    // Backend B: Clean-room CLV0001 ACPI _DSM 0x67 preset driver
+    const core::DmiIdentity dmi = HardwareDiscovery::probeDmiAndWmi();
+    const Clv0001Topology clvTopo = Clv0001KeyboardBackend::probeTopology(dmi);
+    if (!clvTopo.devicePresent) {
         res.applied = false;
         res.errorCode = QStringLiteral("ERR_KEYBOARD_LED_NOT_DETECTED");
         res.message = QStringLiteral(
-            "No physical keyboard LED device exists under /sys/class/leds. "
+            "No physical keyboard LED device exists under /sys/class/leds and no CLV0001 ACPI node was detected. "
             "Profile saved to Keyboard Studio Preview without performing unverified hardware writes."
         );
         return res;
     }
 
-    bool okMax = false;
-    const int maxB = SysfsRoot::readFileTrimmed(ledPath + QStringLiteral("/max_brightness"), &okMax).toInt();
-    const int effectiveMax = (okMax && maxB > 0) ? maxB : 100;
-    const int targetRawB = std::clamp(static_cast<int>(std::lround((brightnessPct * effectiveMax) / 100.0)), 0, effectiveMax);
-
-    QString rbBrightness, err;
-    if (!SysfsRoot::writeFileVerified(ledPath + QStringLiteral("/brightness"), QString::number(targetRawB), &rbBrightness, &err)) {
-        res.errorCode = QStringLiteral("ERR_LED_BRIGHTNESS_WRITE");
-        res.message = err;
-        return res;
-    }
-
-    QString rbIntensity;
-    const QString multiPath = ledPath + QStringLiteral("/multi_intensity");
-    if (QFileInfo::exists(multiPath)) {
-        const core::RgbColor primary = parsedZones.front();
-        const QString rgbTriple = QStringLiteral("%1 %2 %3").arg(primary.r).arg(primary.g).arg(primary.b);
-        if (!SysfsRoot::writeFileVerified(multiPath, rgbTriple, &rbIntensity, &err)) {
-            res.errorCode = QStringLiteral("ERR_LED_RGB_WRITE");
-            res.message = err;
+    QString presetName;
+    const QString normMode = mode.trimmed();
+    const QString trimmedCsv = zonesHexCsv.trimmed();
+    core::Clv0001PresetInfo pInfo;
+    if (normMode.startsWith(QLatin1String("preset:"), Qt::CaseInsensitive)) {
+        presetName = normMode.mid(7).trimmed().toLower();
+    } else if (!trimmedCsv.isEmpty() && Clv0001KeyboardBackend::findPreset(trimmedCsv, pInfo)) {
+        presetName = pInfo.name;
+    } else {
+        if (!clvTopo.driverBound) {
+            res.applied = false;
+            res.errorCode = QStringLiteral("ERR_KEYBOARD_LED_NOT_DETECTED");
+            res.message = QStringLiteral(
+                "No physical keyboard LED device exists under /sys/class/leds and CLV0001 kernel driver `acer_clv0001_kbd` is not bound. "
+                "Profile saved to Keyboard Studio Preview without performing unverified hardware writes."
+            );
             return res;
+        }
+        const QStringList hexParts = zonesHexCsv.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        std::vector<core::RgbColor> parsedZones;
+        for (const QString& hp : hexParts) {
+            core::RgbColor c;
+            if (!core::ColorScience::parseHexToRgb(hp, c)) {
+                res.errorCode = QStringLiteral("ERR_INVALID_COLOR_HEX");
+                res.message = QStringLiteral("Malformed zone color hex '%1'.").arg(hp);
+                return res;
+            }
+            parsedZones.push_back(c);
+        }
+        if (brightnessPct == 0) {
+            presetName = QStringLiteral("off");
+        } else {
+            const core::RgbColor primary = parsedZones.empty() ? core::RgbColor{0, 255, 255} : parsedZones.front();
+            bool exactMatch = false;
+            const QString candidate = Clv0001KeyboardBackend::findNearestPresetName(primary, &exactMatch);
+            if (!exactMatch) {
+                res.applied = false;
+                res.errorCode = QStringLiteral("ERR_CLV0001_PRESET_REQUIRED");
+                res.verificationStatusId = QStringLiteral("rejected_before_execution");
+                res.message = QStringLiteral(
+                    "CLV0001 ACPI _DSM 0x67 only accepts the 17 verified named presets "
+                    "(nearest preset to %1 is '%2'). Arbitrary 24-bit RGB is not supported by hardware."
+                ).arg(zonesHexCsv, candidate);
+                return res;
+            }
+            presetName = candidate;
         }
     }
 
-    QJsonObject rbObj;
-    rbObj.insert(QStringLiteral("led_device"), QFileInfo(ledPath).fileName());
-    rbObj.insert(QStringLiteral("brightness_raw"), rbBrightness.toInt());
-    rbObj.insert(QStringLiteral("multi_intensity"), rbIntensity);
-
-    res.applied = true;
-    res.errorCode = QStringLiteral("OK");
-    res.readbackSummary = QString::fromUtf8(QJsonDocument(rbObj).toJson(QJsonDocument::Compact));
-    res.message = QStringLiteral("Applied & verified keyboard lighting on %1 (brightness=%2/%3, rgb=%4).")
-                      .arg(QFileInfo(ledPath).fileName(), rbBrightness, QString::number(effectiveMax),
-                           rbIntensity.isEmpty() ? QStringLiteral("monochrome") : rbIntensity);
-    core::DiagnosticRedactor::instance().appendLog(QStringLiteral("INFO"), QStringLiteral("HAL"), res.message);
-    return res;
+    const int level = (presetName == QLatin1String("off"))
+                          ? 0
+                          : Clv0001KeyboardBackend::brightnessPctToLevel(brightnessPct);
+    return Clv0001KeyboardBackend::applyPresetCommand(dmi, presetName, level);
 }
 
 core::ControlResult ControlOperations::applyBatteryChargeLimit(int endThresholdPct, int& outReadbackPct) {

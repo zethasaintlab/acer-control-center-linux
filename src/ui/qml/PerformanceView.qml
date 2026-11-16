@@ -12,6 +12,33 @@ Flickable {
     property bool stagedTurbo: ctrl.cpuTurboEnabled
     property int stagedMinPerf: ctrl.cpuMinPerfPct
     property int stagedMaxPerf: ctrl.cpuMaxPerfPct
+    property bool stagedEdited: false
+
+    function syncStagedFromHardware() {
+        if (ctrl.cpuGovernor.length > 0) {
+            root.stagedGov = ctrl.cpuGovernor;
+        }
+        if (ctrl.cpuEpp.length > 0) {
+            root.stagedEpp = ctrl.cpuEpp;
+        }
+        root.stagedTurbo = ctrl.cpuTurboEnabled;
+        root.stagedMinPerf = ctrl.cpuMinPerfPct;
+        root.stagedMaxPerf = ctrl.cpuMaxPerfPct;
+    }
+
+    Connections {
+        target: ctrl
+        function onTelemetryUpdated() {
+            if (!root.stagedEdited) {
+                root.syncStagedFromHardware();
+            }
+        }
+        function onSettingsUpdated() {
+            if (!root.stagedEdited) {
+                root.syncStagedFromHardware();
+            }
+        }
+    }
 
     Column {
         id: perfCol
@@ -100,12 +127,34 @@ Flickable {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 profCard.forceActiveFocus();
+                                root.stagedGov = modelData.governor;
+                                root.stagedEpp = modelData.epp;
+                                root.stagedTurbo = modelData.turboEnabled;
+                                root.stagedMinPerf = modelData.minPerfPct;
+                                root.stagedMaxPerf = modelData.maxPerfPct;
+                                root.stagedEdited = false;
                                 ctrl.selectOperatingProfile(modelData.id);
                             }
                         }
 
-                        Keys.onReturnPressed: ctrl.selectOperatingProfile(modelData.id)
-                        Keys.onSpacePressed: ctrl.selectOperatingProfile(modelData.id)
+                        Keys.onReturnPressed: {
+                            root.stagedGov = modelData.governor;
+                            root.stagedEpp = modelData.epp;
+                            root.stagedTurbo = modelData.turboEnabled;
+                            root.stagedMinPerf = modelData.minPerfPct;
+                            root.stagedMaxPerf = modelData.maxPerfPct;
+                            root.stagedEdited = false;
+                            ctrl.selectOperatingProfile(modelData.id);
+                        }
+                        Keys.onSpacePressed: {
+                            root.stagedGov = modelData.governor;
+                            root.stagedEpp = modelData.epp;
+                            root.stagedTurbo = modelData.turboEnabled;
+                            root.stagedMinPerf = modelData.minPerfPct;
+                            root.stagedMaxPerf = modelData.maxPerfPct;
+                            root.stagedEdited = false;
+                            ctrl.selectOperatingProfile(modelData.id);
+                        }
                     }
                 }
             }
@@ -175,13 +224,19 @@ Flickable {
                     AtelierButton {
                         text: "POWERSAVE (HWP)"
                         activeState: root.stagedGov === "powersave"
-                        onClicked: root.stagedGov = "powersave"
+                        onClicked: {
+                            root.stagedEdited = true;
+                            root.stagedGov = "powersave";
+                        }
                     }
 
                     AtelierButton {
                         text: "PERFORMANCE"
                         activeState: root.stagedGov === "performance"
-                        onClicked: root.stagedGov = "performance"
+                        onClicked: {
+                            root.stagedEdited = true;
+                            root.stagedGov = "performance";
+                        }
                     }
 
                     Item { width: 16; height: 1 }
@@ -197,7 +252,10 @@ Flickable {
                     AtelierButton {
                         text: root.stagedTurbo ? "TURBO ENABLED (4.9 GHz)" : "TURBO DISABLED (2.4 GHz)"
                         activeState: root.stagedTurbo
-                        onClicked: root.stagedTurbo = !root.stagedTurbo
+                        onClicked: {
+                            root.stagedEdited = true;
+                            root.stagedTurbo = !root.stagedTurbo;
+                        }
                     }
                 }
 
@@ -219,7 +277,10 @@ Flickable {
                         delegate: AtelierButton {
                             text: modelData.toUpperCase()
                             activeState: root.stagedEpp === modelData
-                            onClicked: root.stagedEpp = modelData
+                            onClicked: {
+                                root.stagedEdited = true;
+                                root.stagedEpp = modelData;
+                            }
                         }
                     }
                 }
@@ -236,6 +297,7 @@ Flickable {
                         maxValue: 100
                         value: root.stagedMinPerf
                         onValueCommitted: function(v) {
+                            root.stagedEdited = true;
                             root.stagedMinPerf = Math.min(v, root.stagedMaxPerf);
                         }
                     }
@@ -248,6 +310,7 @@ Flickable {
                         maxValue: 100
                         value: root.stagedMaxPerf
                         onValueCommitted: function(v) {
+                            root.stagedEdited = true;
                             root.stagedMaxPerf = Math.max(v, root.stagedMinPerf);
                         }
                     }
@@ -258,13 +321,16 @@ Flickable {
                         anchors.bottom: parent.bottom
                         text: "APPLY & VERIFY P-STATE"
                         primaryAccent: true
-                        onClicked: ctrl.applyCustomCpuTuning(
-                            root.stagedGov,
-                            root.stagedEpp,
-                            root.stagedTurbo,
-                            root.stagedMinPerf,
-                            root.stagedMaxPerf
-                        )
+                        onClicked: {
+                            root.stagedEdited = false;
+                            ctrl.applyCustomCpuTuning(
+                                root.stagedGov,
+                                root.stagedEpp,
+                                root.stagedTurbo,
+                                root.stagedMinPerf,
+                                root.stagedMaxPerf
+                            );
+                        }
                     }
                 }
             }

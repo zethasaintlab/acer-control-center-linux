@@ -95,13 +95,13 @@ Object path: `/io/github/zethasaintlab/AcerControlCenter1`
 - **No Shell Execution:** `acer-control-daemon` never calls `system()`, `popen()`, or `/bin/sh`. It opens allowlisted sysfs paths using `QFile` (`O_WRONLY | O_CLOEXEC`) after verifying canonical paths (`QFileInfo::canonicalFilePath()`) under `/sys/devices/` (or the active mock root).
 - **Zero Linux Capabilities & Narrow Mount Namespace (`acer-control-daemon.service`):**
   - `CapabilityBoundingSet=` (empty) and `AmbientCapabilities=` (empty): all target sysfs files are `0400` or `0644` owned by `root:root`, so the daemon reads and writes them via standard VFS owner DAC bits with `CapEff=0`, `CapPrm=0`, `CapBnd=0`.
-  - `ProtectSystem=strict`, `ProtectKernelTunables=yes`, and `ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq` ensure the mount namespace leaves the rest of `/sys` read-only (`0.9 SAFE` score in `systemd-analyze security`).
+  - `ProtectSystem=strict`, `ProtectKernelTunables=yes`, and `ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq -/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00` ensure the mount namespace leaves the rest of `/sys` read-only.
 - **Allowlisted Arguments:**
   - `governor` $\in \{\text{"powersave"}, \text{"performance"}\}$ (verified against `scaling_available_governors`).
   - `epp` $\in \{\text{"default"}, \text{"performance"}, \text{"balance\_performance"}, \text{"balance\_power"}, \text{"power"}\}$ (verified against `energy_performance_available_preferences`).
   - `min_pct`, `max_pct` $\in [10, 100]$ with `min_pct <= max_pct`.
   - `end_threshold_pct` $\in [50, 100]$.
-- **Mandatory Readback:** After writing any sysfs attribute, the daemon re-opens and reads back the attribute immediately. Only if the readback matches the requested state does `applied` return `true`.
+- **Mandatory Readback:** Readback-capable sysfs controls are reopened and verified after a write. A successful matching readback sets `physicalStateVerified = true`. Controls without hardware readback must report their actual verification limitation; CLV0001 uses `accepted_no_hw_readback` as documented in ADR-002.
 - **Safe Rollback:** If a multi-attribute operation partially fails, the daemon restores the pre-operation snapshot captured prior to the write and returns an explicit error code.
 
 
@@ -115,4 +115,23 @@ The design direction has moved from the historical "Precision Hardware Atelier" 
 
 The 2026-11-23 offline AML audit identified static Clevo WMBB / CLV0001 DCHU paths for fan control and FlexiCharger. These paths are not runtime-verified and are not implemented by ADR-001's generic standard sysfs fan/battery adapters. No undocumented firmware execution or writes are authorized. See docs/HARDWARE_AUDIT_A715_59G.md and docs/PROJECT_STATE.md for the current capability posture.
 
-Any future integration of CLV0001 keyboard support, DCHU fan queries/controls or FlexiCharger must receive its own architecture and safety review. Do not treat an existing keyboard-only driver as a generic _DSM transport or reuse a raw firmware dispatcher from userspace.
+CLV0001 keyboard integration is documented separately in ADR-002 and remains narrowly scoped to `_DSM 0x67`. Any expansion to DCHU fan queries/controls or FlexiCharger requires its own architecture and safety review. Do not treat an existing keyboard-only driver as a generic _DSM transport or reuse a raw firmware dispatcher from userspace.
+
+---
+
+## 5. ADR-002 — Clean-Room `CLV0001` (`\_SB_.DCHU`) Keyboard Integration via `platform_driver` + Sysfs + D-Bus/Polkit (2026-11-16)
+
+- **Context:** The stock Fedora 45 Linux kernel (`7.3.3-300.fc45.x86_64`) exposes `ACPI` device `CLV0001:00` (`\_SB_.DCHU`) without binding any upstream driver, leaving `/sys/class/leds/` empty for keyboard lighting. User physical testing confirmed ACPI `_DSM` UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, rev `0`, fn `0x67`, 4-byte GRB payload `[G, R, B, 0xF0]` controls 17 presets and 5 discrete brightness steps (`0..4` → `0x00, 0x2F, 0x5F, 0x8F, 0xBF`) on the `A715-59G` (`Kelilu_RTH`).
+- **Options Considered:**
+  1. *Shell out to `alg-rgb` CLI or open `/dev/alg_rgb` (`0666`):* Rejected. Violates no-shell-execution and least-privilege Polkit boundaries, relies on third-party `install.sh` global mutations, and conflicts with `GPL-2.0`-only upstream source SPDX vs this project's `GPL-3.0-or-later`.
+  2. *Legacy `acpi_driver` (`acpi_bus_register_driver`):* Rejected / non-viable. Removed in Fedora 45 kernel `7.3.3-300.fc45.x86_64` headers.
+  3. *Clean-room kernel `platform_driver` with `.acpi_match_table` + `sysfs` on ACPI kobject + `Clv0001KeyboardBackend` via `acer-control-daemon` (Chosen):* Complies cleanly with Linux 7.3 kernel APIs, enforces strict allowlists, keeps root ACPI evaluation isolated in kernel/Polkit-daemon space, and cleanly preserves `GPL-2.0-or-later` / `GPL-3.0-or-later` license compatibility.
+- **Architectural Decisions & Invariants:**
+  1. `driver/acer_clv0001_kbd.c` validates exact DMI identity (`Acer` / `Aspire A715-59G` / `RTH` / `Kelilu_RTH` with zero override parameter), HID (`CLV0001`), ACPI path (`\_SB.DCHU` / `\_SB_.DCHU`), `_DSM` existence, performs no automatic `_DSM` writes on resume, and exposes `0600`/`0444` sysfs attributes (`clv0001_kbd_command`, `clv0001_kbd_state`, `clv0001_kbd_presets`) on `&adev->dev.kobj` so canonical paths remain confined under `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/`.
+  2. Only `_DSM` function `0x67` is callable; unverified functions (`0x68`, `0x69`, `0x6A`) are prohibited. Both kernel and userspace enforce strict 17-preset + `0..4` level allowlists and rate-limiting (`40 ms` minimum interval / `25 Hz` ceiling in kernel & default HAL).
+  3. Because `_DSM 0x67` does not expose hardware readback, `ControlResult` explicitly records `physicalStateVerified = false` and `verificationStatusId = "accepted_no_hw_readback"`, distinguished in diagnostics and UI from `verified_physical_readback`.
+  4. Arbitrary 24-bit RGB is never falsely claimed to succeed on `CLV0001`; non-preset hex inputs are rejected with `ERR_CLV0001_PRESET_REQUIRED` while preview colors remain decoupled from `ThemeEngine`.
+- **Non-Destructive Physical Operator Verification Procedure (After Explicit Approval):**
+  1. Build module in `build/driver-build/` (`make -C /lib/modules/$(uname -r)/build M=$PWD/build/driver-build modules`) — already verified cleanly on `7.3.3-300.fc45.x86_64`.
+  2. Operator loads module explicitly (`sudo insmod build/driver-build/acer_clv0001_kbd.ko`) and restarts/installs updated `acer-control-daemon`.
+  3. Launch unprivileged `./build/acer-control-center` as normal user, switch to `04 // KEYBOARD STUDIO`, select presets (`red`, `cyan`, `white`) and brightness levels (`1..4`, `0`), and confirm physical LED response and `clv0001_kbd_state` status transitions.

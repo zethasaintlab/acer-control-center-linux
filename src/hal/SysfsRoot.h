@@ -10,9 +10,10 @@ namespace acc::hal {
 
 enum class HardwareMode {
     PhysicalSystem,
-    MockPhysicalMirror,   // Mirrors exact observed A715-59G / Kelilu_RTH sysfs
-    MockFullCapabilities, // Adds simulated RGB LED, PWM fan, and charge threshold sysfs
-    CustomRootPath        // Driven by ACC_SYSFS_ROOT or unit test fixture path
+    MockPhysicalMirror,      // Mirrors exact observed A715-59G / Kelilu_RTH sysfs (CLV0001 unbound)
+    MockClv0001DriverActive, // Mirrors A715-59G with acer_clv0001_kbd sysfs nodes bound
+    MockFullCapabilities,    // Adds simulated RGB LED, PWM fan, and charge threshold sysfs
+    CustomRootPath           // Driven by ACC_SYSFS_ROOT or unit test fixture path
 };
 
 class SysfsRoot {
@@ -33,9 +34,16 @@ public:
     // Helper for reading/writing text files safely
     static QString readFileTrimmed(const QString& fullPath, bool* outOk = nullptr);
     static bool writeFileVerified(const QString& fullPath, const QString& value, QString* outReadback = nullptr, QString* outError = nullptr);
+    static bool writeCommandAndReadState(
+        const QString& commandPath,
+        const QString& statePath,
+        const QString& commandValue,
+        QString* outStateText = nullptr,
+        QString* outError = nullptr
+    );
 
     // Populates a directory with mock sysfs/procfs trees
-    static bool populateMockTree(const QString& rootPath, bool includeOptionalControls);
+    static bool populateMockTree(const QString& rootPath, bool includeOptionalControls, bool includeClv0001Driver = false);
 
 private:
     SysfsRoot();

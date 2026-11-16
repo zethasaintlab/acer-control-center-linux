@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
 #include "app/ControlCenterController.h"
 #include "app/ThemeEngine.h"
+#include "hal/Clv0001KeyboardBackend.h"
+#include "hal/HardwareDiscovery.h"
 #include "hal/SysfsRoot.h"
 #include "ui/FanCurveEditorItem.h"
 #include "ui/HsvColorWheelItem.h"
@@ -53,7 +55,7 @@ int main(int argc, char* argv[]) {
 
     QCommandLineOption mockModeOpt(
         QStringLiteral("mock-hardware"),
-        QStringLiteral("Launch with simulated hardware fixtures (mirror or full)."),
+        QStringLiteral("Launch with simulated hardware fixtures (mirror, clv0001, or full)."),
         QStringLiteral("scenario"),
         QStringLiteral("mirror")
     );
@@ -86,6 +88,8 @@ int main(int argc, char* argv[]) {
         const QString scen = parser.value(mockModeOpt).trimmed().toLower();
         if (scen == QLatin1String("full")) {
             acc::hal::SysfsRoot::instance().setMode(acc::hal::HardwareMode::MockFullCapabilities);
+        } else if (scen == QLatin1String("clv0001")) {
+            acc::hal::SysfsRoot::instance().setMode(acc::hal::HardwareMode::MockClv0001DriverActive);
         } else {
             acc::hal::SysfsRoot::instance().setMode(acc::hal::HardwareMode::MockPhysicalMirror);
         }
@@ -111,6 +115,10 @@ int main(int argc, char* argv[]) {
         root.insert(QStringLiteral("biosTitle"), controller.biosTitle());
         root.insert(QStringLiteral("odmPlatformNote"), controller.odmPlatformNote());
         root.insert(QStringLiteral("wmiGuids"), controller.wmiGuidsJoined());
+        root.insert(QStringLiteral("kernelRelease"), controller.kernelRelease());
+        root.insert(QStringLiteral("acpiDevices"), controller.acpiDevicesJoined());
+        root.insert(QStringLiteral("loadedDrivers"), controller.loadedDriversJoined());
+        root.insert(QStringLiteral("daemonReachable"), controller.daemonReachable());
         root.insert(QStringLiteral("activeTunedProfile"), controller.activeTunedProfile());
 
         QJsonObject cpuObj;
@@ -143,6 +151,8 @@ int main(int argc, char* argv[]) {
 
         QJsonObject gpuObj;
         gpuObj.insert(QStringLiteral("available"), controller.gpuAvailable());
+        gpuObj.insert(QStringLiteral("telemetryMeasuredByNvml"), controller.gpuTelemetryMeasuredByNvml());
+        gpuObj.insert(QStringLiteral("powerLimitsMeasured"), controller.gpuPowerLimitsMeasured());
         gpuObj.insert(QStringLiteral("sourceLabel"), controller.gpuSourceLabel());
         gpuObj.insert(QStringLiteral("name"), controller.gpuName());
         gpuObj.insert(QStringLiteral("driverVersion"), controller.gpuDriverVersion());
@@ -190,6 +200,28 @@ int main(int argc, char* argv[]) {
         dispObj.insert(QStringLiteral("brightnessSupported"), controller.displayBrightnessSupported());
         dispObj.insert(QStringLiteral("brightnessPct"), controller.displayBrightnessPct());
         root.insert(QStringLiteral("display"), dispObj);
+
+        QJsonObject kbdObj;
+        const auto clvTopo = acc::hal::Clv0001KeyboardBackend::probeTopology(
+            acc::hal::HardwareDiscovery::probeDmiAndWmi()
+        );
+        kbdObj.insert(QStringLiteral("backendKind"), controller.kbdBackendKindId());
+        kbdObj.insert(QStringLiteral("controlModeBadge"), controller.kbdControlModeBadge());
+        kbdObj.insert(QStringLiteral("hardwareConnected"), controller.kbdHardwareConnected());
+        kbdObj.insert(QStringLiteral("supportsPresetColors"), controller.kbdSupportsPresetColors());
+        kbdObj.insert(QStringLiteral("supportsArbitraryRgb"), controller.kbdSupportsArbitraryRgb());
+        kbdObj.insert(QStringLiteral("physicalReadbackSupported"), controller.kbdPhysicalReadbackSupported());
+        kbdObj.insert(QStringLiteral("presetName"), controller.kbdPresetName());
+        kbdObj.insert(QStringLiteral("brightnessLevel"), controller.kbdBrightnessLevel());
+        kbdObj.insert(QStringLiteral("packetHex"), controller.kbdFirmwarePacketHex());
+        kbdObj.insert(QStringLiteral("clv0001DevicePresent"), clvTopo.devicePresent);
+        kbdObj.insert(QStringLiteral("clv0001AcpiPath"), clvTopo.acpiPath);
+        kbdObj.insert(QStringLiteral("clv0001Status"), clvTopo.status);
+        kbdObj.insert(QStringLiteral("clv0001DriverBound"), clvTopo.driverBound);
+        kbdObj.insert(QStringLiteral("clv0001DmiEligible"), clvTopo.dmiEligible);
+        kbdObj.insert(QStringLiteral("clv0001LastStatus"), clvTopo.lastAppliedStatus);
+        kbdObj.insert(QStringLiteral("clv0001LastAcpiReturnType"), clvTopo.lastAcpiReturnType);
+        root.insert(QStringLiteral("keyboard"), kbdObj);
 
         root.insert(QStringLiteral("capabilities"), QJsonArray::fromVariantList(controller.capabilitiesModel()));
 

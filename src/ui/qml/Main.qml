@@ -110,7 +110,11 @@ Window {
                 Text {
                     id: gpuTopText
                     anchors.centerIn: parent
-                    text: ctrl.gpuAvailable ? ("RTX 3050 " + ctrl.gpuTempC.toFixed(0) + "°C / " + ctrl.gpuPstate) : "GPU N/A"
+                    text: ctrl.gpuAvailable
+                          ? (ctrl.gpuTelemetryMeasuredByNvml
+                                 ? ("RTX 3050 " + ctrl.gpuTempC.toFixed(0) + "°C / " + ctrl.gpuPstate)
+                                 : ("dGPU " + ctrl.gpuPstate))
+                          : "GPU N/A"
                     font.family: "monospace"
                     font.pixelSize: 11
                     font.weight: Font.Bold

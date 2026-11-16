@@ -20,7 +20,7 @@ Flickable {
         // 01 // HARDWARE CAPABILITY & SEPARATION NOTICE
         Rectangle {
             width: parent.width
-            height: 88
+            height: 98
             color: theme.surfacePrimary
             border.width: 1
             border.color: theme.borderSubtle
@@ -31,7 +31,7 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "01"
-                title: "PHYSICAL KEYBOARD LIGHTING ROUTING  //  SEPARATE FROM APP ACCENT COLOR"
+                title: "KEYBOARD LIGHTING ROUTING // " + ctrl.kbdControlModeBadge
                 badgeText: ctrl.kbdCapabilityBadge
                 badgeColor: ctrl.kbdHardwareConnected ? theme.statusNominal : theme.statusWarning
             }
@@ -107,27 +107,166 @@ Flickable {
                 AtelierButton {
                     text: "ZONE 1 (WASD)"
                     activeState: ctrl.kbdSelectedZone === 0
+                    enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 0
                 }
                 AtelierButton {
                     text: "ZONE 2 (ALPHA)"
                     activeState: ctrl.kbdSelectedZone === 1
+                    enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 1
                 }
                 AtelierButton {
                     text: "ZONE 3 (NAV)"
                     activeState: ctrl.kbdSelectedZone === 2
+                    enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 2
                 }
                 AtelierButton {
                     text: "ZONE 4 (NUMPAD)"
                     activeState: ctrl.kbdSelectedZone === 3
+                    enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 3
                 }
             }
         }
 
-        // 03 // MANDATORY UNRESTRICTED COLOR PICKER & PROFILE STUDIO
+        // 02.B // VERIFIED CLV0001 HARDWARE PRESETS & 5-LEVEL BRIGHTNESS MATRIX
+        Rectangle {
+            width: parent.width
+            height: clvHdr.height + clvBodyCol.implicitHeight + 22
+            color: theme.surfacePrimary
+            border.width: 1
+            border.color: theme.borderSubtle
+
+            SectionHeader {
+                id: clvHdr
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                indexCode: "02.B"
+                title: "VERIFIED CLV0001 PRESETS (17) & DISCRETE LEVELS (ACPI _DSM 0x67)"
+                badgeText: ctrl.kbdCustomPreviewDirty
+                           ? ("CUSTOM RGB PREVIEW (NEAREST: " + ctrl.kbdNearestPresetName.toUpperCase() + ")")
+                           : ("GRB [" + ctrl.kbdFirmwarePacketHex + "]")
+                badgeColor: ctrl.kbdCustomPreviewDirty
+                            ? theme.statusWarning
+                            : (ctrl.kbdSupportsPresetColors ? theme.statusNominal : theme.statusWarning)
+            }
+
+            Column {
+                id: clvBodyCol
+                anchors.top: clvHdr.bottom
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.margins: 10
+                spacing: 10
+
+                Flow {
+                    width: parent.width
+                    spacing: 6
+
+                    Repeater {
+                        model: ctrl.kbdPresetsModel
+                        delegate: Rectangle {
+                            id: presetChip
+                            width: chipRow.implicitWidth + 16
+                            height: 26
+                            radius: 2
+                            activeFocusOnTab: true
+                            color: modelData.selected ? theme.surfaceElevated : theme.surfaceHeader
+                            border.width: (presetChip.activeFocus || modelData.selected) ? 2 : 1
+                            border.color: presetChip.activeFocus
+                                              ? theme.accentBorder
+                                              : (modelData.selected ? theme.accentReadable : theme.borderSubtle)
+
+                            Row {
+                                id: chipRow
+                                anchors.centerIn: parent
+                                spacing: 6
+
+                                Rectangle {
+                                    width: 10
+                                    height: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    color: modelData.previewHex
+                                    border.width: 1
+                                    border.color: theme.borderSubtle
+                                }
+
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: modelData.name.toUpperCase()
+                                    font.family: "monospace"
+                                    font.pixelSize: 10
+                                    font.weight: modelData.selected ? Font.Bold : Font.Normal
+                                    color: modelData.selected ? theme.textPrimary : theme.textSecondary
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    presetChip.forceActiveFocus();
+                                    ctrl.selectKbdPreset(modelData.name);
+                                }
+                            }
+
+                            Keys.onReturnPressed: ctrl.selectKbdPreset(modelData.name)
+                            Keys.onSpacePressed: ctrl.selectKbdPreset(modelData.name)
+                        }
+                    }
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 6
+
+                    Repeater {
+                        model: [
+                            "0: OFF (0x00)",
+                            "1: 25% (0x2F)",
+                            "2: 50% (0x5F)",
+                            "3: 75% (0x8F)",
+                            "4: 100% (0xBF)"
+                        ]
+                        delegate: AtelierButton {
+                            height: 28
+                            text: modelData
+                            activeState: ctrl.kbdBrightnessLevel === index
+                            onClicked: ctrl.setKbdBrightnessLevel(index)
+                        }
+                    }
+
+                    AtelierButton {
+                        visible: ctrl.kbdCustomPreviewDirty
+                        height: 28
+                        text: "SNAP TO " + ctrl.kbdNearestPresetName.toUpperCase()
+                        primaryAccent: true
+                        onClicked: ctrl.snapToNearestKbdPreset()
+                    }
+
+                    Text {
+                        height: 28
+                        verticalAlignment: Text.AlignVCenter
+                        leftPadding: 8
+                        text: ctrl.kbdBackendKindId === "clv0001_acpi_dsm"
+                              ? "CLV0001 BOUND // WRITE-ONLY (_DSM 0x67 — NO HW READBACK)"
+                              : (ctrl.kbdPhysicalReadbackSupported
+                                     ? "SYSFS LED ACTIVE (VERIFIED READBACK)"
+                                     : "CLV0001 PROTOCOL PREVIEW (_DSM 0x67 — WRITE-ONLY)")
+                        font.family: "monospace"
+                        font.pixelSize: 10
+                        color: ctrl.kbdPhysicalReadbackSupported
+                               ? theme.statusNominal
+                               : (ctrl.kbdBackendKindId === "clv0001_acpi_dsm" ? theme.statusInfo : theme.textSecondary)
+                    }
+                }
+            }
+        }
+
+        // 03 // STUDIO PREVIEW & SYSFS LED COLOR PICKER
         Grid {
             width: parent.width
             columns: width >= 960 ? 3 : 1
@@ -376,7 +515,8 @@ Flickable {
 
                         AtelierButton {
                             width: (parent.width - 8) * 0.5
-                            text: "MODE: " + ctrl.kbdMode.toUpperCase()
+                            text: ctrl.kbdRgbSupported ? ("MODE: " + ctrl.kbdMode.toUpperCase()) : "MODE: STATIC ONLY"
+                            enabledState: ctrl.kbdRgbSupported
                             onClicked: {
                                 if (ctrl.kbdMode === "static") ctrl.kbdMode = "breathing";
                                 else if (ctrl.kbdMode === "breathing") ctrl.kbdMode = "wave";
@@ -445,9 +585,15 @@ Flickable {
                     AtelierButton {
                         width: parent.width
                         height: 36
-                        text: ctrl.kbdHardwareConnected
-                              ? "APPLY TO HARDWARE & VERIFY READBACK"
-                              : "PHYSICAL KEYBOARD LED NOT DETECTED (PREVIEW ONLY)"
+                        text: {
+                            if (ctrl.kbdBackendKindId === "clv0001_acpi_dsm")
+                                return "SEND CLV0001 _DSM 0x67 PRESET (NO HW READBACK)";
+                            if (ctrl.kbdHardwareConnected)
+                                return "APPLY TO HARDWARE & VERIFY READBACK";
+                            if (ctrl.kbdBackendKindId === "clv0001_unbound")
+                                return "CLV0001 KERNEL DRIVER UNBOUND (PREVIEW ONLY)";
+                            return "PHYSICAL KEYBOARD LED NOT DETECTED (PREVIEW ONLY)";
+                        }
                         enabledState: ctrl.kbdHardwareConnected
                         primaryAccent: ctrl.kbdHardwareConnected
                         onClicked: ctrl.applyKeyboardLightingToHardware()

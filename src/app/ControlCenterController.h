@@ -34,6 +34,10 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(QString biosTitle READ biosTitle NOTIFY telemetryUpdated)
     Q_PROPERTY(QString odmPlatformNote READ odmPlatformNote NOTIFY telemetryUpdated)
     Q_PROPERTY(QString wmiGuidsJoined READ wmiGuidsJoined NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kernelRelease READ kernelRelease NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString acpiDevicesJoined READ acpiDevicesJoined NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString loadedDriversJoined READ loadedDriversJoined NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool daemonReachable READ daemonReachable NOTIFY telemetryUpdated)
 
     // 01 // OVERVIEW & 02 // PERFORMANCE (CPU & Memory)
     Q_PROPERTY(QString cpuModelName READ cpuModelName NOTIFY telemetryUpdated)
@@ -90,8 +94,19 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(QString kbdCapabilityBadge READ kbdCapabilityBadge NOTIFY telemetryUpdated)
     Q_PROPERTY(QString kbdRoutingBadge READ kbdRoutingBadge NOTIFY telemetryUpdated)
     Q_PROPERTY(QString kbdHardwareExplanation READ kbdHardwareExplanation NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdBackendKindId READ kbdBackendKindId NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdControlModeBadge READ kbdControlModeBadge NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdHardwareConnected READ kbdHardwareConnected NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdRgbSupported READ kbdRgbSupported NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool kbdSupportsPresetColors READ kbdSupportsPresetColors NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool kbdSupportsArbitraryRgb READ kbdSupportsArbitraryRgb NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool kbdPhysicalReadbackSupported READ kbdPhysicalReadbackSupported NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdPresetName READ kbdPresetName NOTIFY keyboardStudioChanged)
+    Q_PROPERTY(int kbdBrightnessLevel READ kbdBrightnessLevel NOTIFY keyboardStudioChanged)
+    Q_PROPERTY(QString kbdFirmwarePacketHex READ kbdFirmwarePacketHex NOTIFY keyboardStudioChanged)
+    Q_PROPERTY(bool kbdCustomPreviewDirty READ kbdCustomPreviewDirty NOTIFY keyboardStudioChanged)
+    Q_PROPERTY(QString kbdNearestPresetName READ kbdNearestPresetName NOTIFY keyboardStudioChanged)
+    Q_PROPERTY(QVariantList kbdPresetsModel READ kbdPresetsModel NOTIFY keyboardStudioChanged)
     Q_PROPERTY(bool kbdEnabled READ kbdEnabled WRITE setKbdEnabled NOTIFY keyboardStudioChanged)
     Q_PROPERTY(QString kbdMode READ kbdMode WRITE setKbdMode NOTIFY keyboardStudioChanged)
     Q_PROPERTY(int kbdBrightnessPct READ kbdBrightnessPct WRITE setKbdBrightnessPct NOTIFY keyboardStudioChanged)
@@ -131,6 +146,8 @@ class ControlCenterController : public QObject {
 
     // 06 // NVIDIA GPU CENTER
     Q_PROPERTY(bool gpuAvailable READ gpuAvailable NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool gpuTelemetryMeasuredByNvml READ gpuTelemetryMeasuredByNvml NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool gpuPowerLimitsMeasured READ gpuPowerLimitsMeasured NOTIFY telemetryUpdated)
     Q_PROPERTY(QString gpuSourceLabel READ gpuSourceLabel NOTIFY telemetryUpdated)
     Q_PROPERTY(QString gpuName READ gpuName NOTIFY telemetryUpdated)
     Q_PROPERTY(QString gpuDriverVersion READ gpuDriverVersion NOTIFY telemetryUpdated)
@@ -180,6 +197,10 @@ public:
     QString biosTitle() const;
     QString odmPlatformNote() const { return m_snapshot.dmi.odmSubsystemNote; }
     QString wmiGuidsJoined() const { return m_snapshot.dmi.wmiGuids.join(QStringLiteral("  |  ")); }
+    QString kernelRelease() const { return m_snapshot.dmi.kernelRelease; }
+    QString acpiDevicesJoined() const { return m_snapshot.dmi.acpiDevices.join(QStringLiteral("  |  ")); }
+    QString loadedDriversJoined() const { return m_snapshot.dmi.loadedDrivers.join(QStringLiteral(", ")); }
+    bool daemonReachable() const { return m_snapshot.daemonReachable; }
 
     // CPU & Memory
     QString cpuModelName() const { return m_snapshot.cpu.modelName; }
@@ -238,8 +259,19 @@ public:
     QString kbdCapabilityBadge() const;
     QString kbdRoutingBadge() const { return m_snapshot.keyboardHw.hardwareRoutingBadge; }
     QString kbdHardwareExplanation() const { return m_snapshot.keyboardHw.hardwareExplanation; }
+    QString kbdBackendKindId() const { return m_snapshot.keyboardHw.backendKindId; }
+    QString kbdControlModeBadge() const { return m_snapshot.keyboardHw.controlModeBadge; }
     bool kbdHardwareConnected() const { return m_snapshot.keyboardHw.supportsBacklightBrightness; }
     bool kbdRgbSupported() const { return m_snapshot.keyboardHw.supportsRgbZones; }
+    bool kbdSupportsPresetColors() const { return m_snapshot.keyboardHw.supportsPresetColors; }
+    bool kbdSupportsArbitraryRgb() const { return m_snapshot.keyboardHw.supportsArbitraryRgb; }
+    bool kbdPhysicalReadbackSupported() const { return m_snapshot.keyboardHw.independentHwReadback; }
+    QString kbdPresetName() const { return m_currentKbdProfile.clv0001PresetName; }
+    int kbdBrightnessLevel() const { return m_currentKbdProfile.clv0001BrightnessLevel; }
+    QString kbdFirmwarePacketHex() const;
+    bool kbdCustomPreviewDirty() const { return m_kbdCustomPreviewDirty; }
+    QString kbdNearestPresetName() const;
+    QVariantList kbdPresetsModel() const;
     bool kbdEnabled() const { return m_currentKbdProfile.enabled; }
     void setKbdEnabled(bool e);
     QString kbdMode() const { return m_currentKbdProfile.mode; }
@@ -284,6 +316,8 @@ public:
 
     // GPU
     bool gpuAvailable() const { return m_snapshot.gpu.available; }
+    bool gpuTelemetryMeasuredByNvml() const { return m_snapshot.gpu.telemetryMeasuredByNvml; }
+    bool gpuPowerLimitsMeasured() const { return m_snapshot.gpu.powerLimitsMeasured; }
     QString gpuSourceLabel() const { return m_snapshot.gpu.sourceLabel; }
     QString gpuName() const { return m_snapshot.gpu.name; }
     QString gpuDriverVersion() const { return m_snapshot.gpu.driverVersion; }
@@ -324,6 +358,9 @@ public:
     Q_INVOKABLE void saveCurrentKbdColorToSwatches();
     Q_INVOKABLE void selectKbdProfile(const QString& profileId);
     Q_INVOKABLE void saveNewKbdProfile(const QString& profileName);
+    Q_INVOKABLE void selectKbdPreset(const QString& presetName);
+    Q_INVOKABLE void snapToNearestKbdPreset();
+    Q_INVOKABLE void setKbdBrightnessLevel(int level);
     Q_INVOKABLE void applyKeyboardLightingToHardware();
 
     // Thermal & Fan Actions
@@ -353,6 +390,8 @@ Q_SIGNALS:
 
 private:
     void syncThemeToSettings();
+    void syncCurrentKbdProfileToSettings();
+    void loadActiveKeyboardProfileFromSettings();
     void applySelectedKbdColorToActiveZones();
     void setStatusBanner(const QString& text, bool isError);
     void persistSettings();
@@ -386,6 +425,7 @@ private:
     core::HsvColor m_kbdHsv{210.0, 0.77, 1.0};
     core::HslColor m_kbdHsl{210.0, 1.0, 0.62};
     QString m_kbdPickerHex = QStringLiteral("#3B9EFF");
+    bool m_kbdCustomPreviewDirty = false;
 
     std::unique_ptr<QSystemTrayIcon> m_trayIcon;
 };

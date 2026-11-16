@@ -1,7 +1,8 @@
 # Hardware Reconnaissance & Capability Audit — Acer Aspire 7 A715-59G (`Kelilu_RTH`)
 
-**Audit Date:** 2026-11-08  
-**Target Platform:** Fedora Linux 45 (`7.2.15-300.fc45.x86_64`)  
+**Initial Audit Date:** 2026-11-08
+**CLV0001 & Linux 7.3 Re-Audit Date:** 2026-11-16
+**Target Platform:** Fedora Linux 45 (verified live on `7.3.3-300.fc45.x86_64`; initial baseline `7.2.15-300.fc45.x86_64`)
 **Target Machine:** Acer Aspire 7 `A715-59G` (`board_name: RTH`, `board_vendor: Kelilu_RTH`, BIOS `INSYDE Corp. V1.17` `06/30/2026`)
 
 ---
@@ -25,7 +26,7 @@ All hardware discovery was conducted strictly in read-only mode without capturin
 | `chassis_type` | `10` (Notebook) | `/sys/class/dmi/id/chassis_type` |
 | CPU | `13th Gen Intel(R) Core(TM) i7-13620H` (10C/16T: 6P + 4E, max 4900 MHz) | `/proc/cpuinfo`, `lscpu` |
 | Integrated GPU | Intel Raptor Lake-P `[UHD Graphics] [8086:a7a8]` (`i915` bound) | `lspci -nnk` |
-| Discrete GPU | NVIDIA GeForce RTX 3050 6GB Laptop GPU `GA107BM [10de:25ac]` (`Subsys 1025:1900`, `nvidia 615.78.08`) | `lspci -nnk`, `nvidia-smi` |
+| Discrete GPU | NVIDIA GeForce RTX 3050 6GB Laptop GPU `GA107BM [10de:25ac]` (`Subsys 1025:1900`, observed live `nvidia 620.70.06` / `P8 6W/25W`; earlier `615.78.08`) | `lspci -nnk`, `nvidia-smi`, `/proc/driver/nvidia` |
 | Storage | 2× Phison Electronics PS5019-E19 PCIe4 NVMe (`nvme0`, `nvme1`) | `lspci -nnk`, `/sys/class/hwmon` |
 | ODM Board Footprint | O2 Micro SD Host Controller `[1217:8621]` carries subsystem `CLEVO/KAPOK Computer Device [1558:a554]` | `lspci -nnk` |
 
@@ -46,12 +47,26 @@ On the `Aspire A715-59G` (`Kelilu_RTH`), `/sys/bus/wmi/devices/` exposes a compl
 - `F6CB5C3C-9CAE-4EBD-B577-931EA32A2CC0-0` (`mxm_wmi` — bound)
 
 ### 2.2 Relevant ACPI Devices Observed
-- `PNP0C09:00` (`\_SB_.PC00.LPCB.EC__`, bound to `acpi-ec`)
+- `CLV0001:00` (`\_SB_.DCHU`, status `15` — exposed keyboard ACPI `_DSM` target; no upstream Linux driver bound)
+- `CLV0002:00` (`\_SB_.DCHV`, status `15` — sibling ODM ACPI device; unbound, out of scope)
+- `PNP0C09:00` (`\_SB_.PC00.LPCB.EC0_` / `EC__`, bound to `acpi-ec`)
 - `PNP0C0A:00` (`\_SB_.BAT0`, bound to `acpi-battery`)
 - `ACPI0003:00` (`\_SB_.AC__`, bound to `ac`)
 - `PNP0C14:00` (`\_SB_.PC00.WMI1`, bound to `acpi-wmi`)
 - `PNP0C14:01` (`\_SB_.WMI_`, bound to `acpi-wmi`)
 - `INT340E:00` (`\_SB_.PTID`) plus `processor_thermal_device_pci` (`00:04.0`)
+
+### 2.3 Clean-Room `CLV0001` (`\_SB_.DCHU`) Keyboard Investigation & `alg-cli` Analysis (2026-11-16)
+Read-only sysfs inspection on the target `A715-59G` confirmed `CLV0001:00` (`hid=CLV0001`, `path=\_SB_.DCHU`, `status=15`, modalias `acpi:CLV0001:`) while `/sys/class/leds/` contains no `*kbd_backlight*` node. Hardware behavior was cross-referenced against user-confirmed physical testing on this machine and source inspection of upstream [`24kaushik/alg-cli@038d628`](https://github.com/24kaushik/alg-cli/tree/038d6289dd38f92d9c321d87ee6203fc63767143) and fork [`zethasaintlab/alg-cli@acb9d92`](https://github.com/zethasaintlab/alg-cli/tree/acb9d92f0da836d8addf69604ab13b5d9c4b2304):
+
+| Item | Evidence Status | Findings |
+|---|---|---|
+| ACPI `_DSM` UUID, Revision & Static Color Function | **User-Confirmed Physical Behavior** + Source Evidence | UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, rev `0`, fn `0x67`, 4-byte GRB payload `[G, R, B, 0xF0]` controls backlight on/off, 17 named presets (`off`, `red`, `orange`, `yellow`, `lime`, `light-green`, `green`, `green-cyan`, `cyan`, `light-blue`, `blue`, `violet`, `magenta`, `pink`, `flesh`, `bluish-white`, `white`), and 5 discrete brightness scales (`0..4` → `0x00, 0x2F, 0x5F, 0x8F, 0xBF` normalized over `0xBF`). |
+| Hardware Readback | **Source Evidence + Physical Posture** | `_DSM 0x67` is write-only (`accepted_no_hw_readback`); firmware exposes no readback getter for currently lit keyboard color/brightness. |
+| Secondary Functions (`0x68`, `0x69`, `0x6A`) | **Unverified Hypothesis (Prohibited)** | Appear in `alg_rgb.c` / `cli/alg-rgb.c`; not physically verified on `A715-59G` and permanently excluded from this repository. |
+| Fork `alg-rgb-engine` ABI Mismatch | **Source-Code Evidence** (`zethasaintlab/alg-cli`) | `engine/alg-rgb-engine` writes `"rgb {r} {g} {b} {brightness}\n"`, while `kernel/alg_rgb.c` parses `"%31s %d"` against the 17-preset table and returns `-EINVAL` for `"rgb"`. Reproduced in unit tests. |
+| Third-Party Licensing & Packaging | **Source-Code Evidence** | `alg-cli` `LICENSE` prose states GPLv2-or-later while `alg_rgb.c`/`alg-rgb.c` declare `SPDX-License-Identifier: GPL-2.0`, and `install.sh` creates `0666` `/dev/alg_rgb` and alters `/etc/modules-load.d/`. Resolved by authoring our own clean-room `GPL-2.0-or-later` module (`driver/acer_clv0001_kbd.c`). |
+| Linux `7.3` Kernel API Adaptation | **Local Observation** (`/usr/src/kernels/7.3.3-300.fc45.x86_64`) | `struct acpi_driver` / `acpi_bus_register_driver` are removed in Linux 7.3; clean-room driver binds via `struct platform_driver` + `.acpi_match_table`, enforces exact `Acer`/`Aspire A715-59G`/`RTH`/`Kelilu_RTH` DMI matching and 40 ms (`25 Hz`) rate limit without automatic resume `_DSM` writes, and attaches `0600`/`0444` sysfs attributes (`clv0001_kbd_{command,state,presets}`) to `&adev->dev.kobj` under `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/`. |
 
 ---
 
@@ -62,7 +77,7 @@ On the `Aspire A715-59G` (`Kelilu_RTH`), `/sys/bus/wmi/devices/` exposes a compl
 | **System Telemetry Overview** (Acer Control Center / AcerSense) | Real-time CPU, GPU, memory, storage, thermal & battery overview | **Yes** | **Fully Supported** (`coretemp`, `/proc`, `nvme`, `BAT0`, `powercap`, NVML) | **Implemented (Read-Only + RAPL via Daemon)** |
 | **Performance Profiles** (Silent / Normal / Performance) | Coordinate system thermal/power profile and CPU P-state policy | **Yes** | **Fully Supported** via Fedora `tuned` / `tuned-ppd` (`net.hadess.PowerProfiles`) and `intel_pstate` (`scaling_governor`, `energy_performance_preference`, `no_turbo`, `min/max_perf_pct`) | **Implemented (Full Read/Write with Readback)** |
 | **Thermal & Fan Control** (NitroSense / PredatorSense inspiration) | Monitor sensor temperatures, fan RPM, and configure fan curves | **Thermal sensors Yes**; EC (`PNP0C09:00`) controls dual cooling fans automatically | **Thermal Sensors Read-Only Supported** (`hwmon1..6`, `thermal_zone0..7`); **Fan RPM & PWM Not Detected** in `/sys/class/hwmon` | **Thermal Monitoring + Safe Fan Curve Studio:** Live thermal tracking + curve editor that binds to `hwmon/pwm*` when present/mocked and clearly reports `Firmware Auto (No kernel PWM bound)` on physical `Kelilu_RTH` |
-| **Keyboard Lighting Studio** | Control backlight brightness, timeout, or zone RGB colors | **SKU-Dependent** (`A715-59G` commonly ships with single-color backlight controlled by EC/`Fn` shortcuts; some Clevo ODM boards use `ABBC0F6D`) | **Not Detected in `/sys/class/leds/`** (`no *kbd_backlight*` class device exposed by default kernel) | **Full Unrestricted Color Picker + Hardware-Aware Routing:** Full HSV/HSL/RGB/Hex Studio and multi-zone profile persistence; routes to `/sys/class/leds/*kbd_backlight*` when detected/mocked and displays explicit `Not Detected` hardware badge when absent |
+| **Keyboard Lighting Studio** | Control backlight brightness, timeout, or zone RGB colors | **Firmware-Dependent Presets on `CLV0001`** (`\_SB_.DCHU` via `_DSM 0x67` accepts 17 presets & 5 brightness levels; arbitrary 24-bit RGB & readback unsupported) | **No `*kbd_backlight*` in `/sys/class/leds/`**; clean-room `driver/acer_clv0001_kbd.c` compiles against Linux `7.3.3-300.fc45.x86_64` (unloaded until operator opts in) | **Three-State Routing:** (1) `/sys/class/leds/*kbd_backlight*` RW with readback, (2) Clean-room `CLV0001` 17 presets & levels `0..4` (`accepted_no_hw_readback`), or (3) Unrestricted HSV/HSL/RGB Studio Preview when unbound |
 | **Battery Care & Charge Threshold** (80% Charge Limit) | Prevent battery wear by capping charge at 80% and tracking capacity ratio | **Telemetry Yes**; Charge limit depends on ODM EC driver | **Telemetry & Capacity Ratio Read-Only Supported** (`BAT0` capacity, voltage, current, full-vs-design capacity ratio); `charge_control_end_threshold` **Not Detected** | **Telemetry/History Implemented + Conditional Charge Limit:** Charge limit slider binds to standard `charge_control_end_threshold` and remains safely disabled with explanation when absent; fuel-gauge capacity ratio (`charge_full / charge_full_design`) is presented with its estimation limitations and never prescribes forced discharge calibration |
 | **NVIDIA GPU Center** | Monitor RTX 3050 clocks, VRAM, utilization, temperature, P-state, throttling | **Yes** (`RTX 3050 6GB Laptop GPU`) | **Read-Only Supported** via `libnvidia-ml.so.1` & `nvidia-powerd` | **Implemented via Clean-Room Dynamic NVML Loader** with `P8` rail-gating anomaly detection |
 | **Hardware Diagnostics** | Inspect live capabilities, driver bindings, WMI GUIDs, and export redacted logs | **Yes** | **Fully Supported** | **Implemented** |
@@ -86,11 +101,11 @@ On the `Aspire A715-59G` (`Kelilu_RTH`), `/sys/bus/wmi/devices/` exposes a compl
 | `cap.mem.telemetry` | RAM Usage, Available Memory & Linux PSI Pressure | `/proc/meminfo`, `/proc/pressure/{cpu,memory,io}` | `0444` / `0666` | `ReadOnly` | Verified (`16040568 kB` total; PSI `some`/`full` averages). |
 | `cap.thermal.sensors` | NVMe0, NVMe1, Wi-Fi & ACPI Board Thermal Zones | `hwmon3` (`nvme1`), `hwmon4` (`nvme0`), `hwmon6` (`iwlwifi_1`), `thermal_zone0..7` (`acpitz`, `SEN2`, `SEN3`, `TCPU`, `x86_pkg_temp`) | `0444` | `ReadOnly` | Verified across all 7 hwmon devices and 8 thermal zones. |
 | `cap.thermal.fans` | Physical Fan RPM & Manual/Curve PWM Override | `/sys/class/hwmon/*/fan*_input`, `/sys/class/hwmon/*/pwm*` | Absent | `NotDetected` | Firmware EC manages fans automatically. UI shows live thermal telemetry + clearly labeled Curve Preview/Simulation mode unless a verified `hwmon` PWM device is present or mocked. |
-| `cap.gpu.nvidia` | NVIDIA RTX 3050 6GB Telemetry, Clocks, P-State & Throttling | Dynamic `dlopen("libnvidia-ml.so.1")` (`0000:01:00.0`) | User RO | `ReadOnly` | Verified (`driver 615.78.08`, `6144 MiB`, `60W` default / `75W` max). Includes `P8` idle power rail-gate anomaly detection (`>1.5x max_limit` in `P8` flagged as `Rail Gated`). |
+| `cap.gpu.nvidia` | NVIDIA RTX 3050 6GB Telemetry, Clocks, P-State & Throttling | Dynamic `dlopen("libnvidia-ml.so.1")` (`0000:01:00.0`) & `/proc/driver/nvidia` | User RO | `ReadOnly` | Verified live (`nvidia 620.70.06`, `P8`, `6W/25W`, `6144 MiB`; previously `615.78.08`). When NVML is unavailable, `/proc/driver/nvidia` fallback reports `telemetryMeasuredByNvml=false` and `powerLimitsMeasured=false` without fabricating VRAM or TGP values. |
 | `cap.battery.telemetry` | Battery Charge %, Voltage, Current, Wattage & Est. Capacity Ratio | `/sys/class/power_supply/BAT0/*`, `/sys/class/power_supply/AC/online` | `0444` | `ReadOnly` | Verified (`charge_full 1956000` / `charge_full_design 3410000` → `57.4%` fuel-gauge capacity ratio; serial redacted). |
 | `cap.battery.limit` | Battery Charge End Threshold (e.g. 80% Care Mode) | `/sys/class/power_supply/BAT0/charge_control_end_threshold` | Absent | `NotDetected` | Supported in HAL & daemon when sysfs node exists; disabled with clear hardware explanation on `Kelilu_RTH`. |
 | `cap.backlight.display` | Internal eDP Panel Brightness | `/sys/class/backlight/intel_backlight` (`max_brightness: 48000`) & `org.freedesktop.login1.Session.SetBrightness` | `0644` / D-Bus | `FullySupported` | Verified (`intel_backlight` on `card1-eDP-1`). |
-| `cap.keyboard.lighting` | Physical Keyboard Backlight & RGB Zones | `/sys/class/leds/*kbd_backlight*` (`brightness`, `max_brightness`, `multi_intensity`) | Absent (`ABBC0F6D` unverified) | `NotDetected` | Full unrestricted HSV/HSL/RGB/Hex Color Picker & Profile Studio implemented; binds to `/sys/class/leds/*kbd_backlight*` when present/mocked and never fabricates physical hardware writes when absent. |
+| `cap.keyboard.lighting` | Physical Keyboard Backlight, CLV0001 Firmware Presets & Preview Studio | `/sys/class/leds/*kbd_backlight*` or `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command` | `0600` (root, daemon-mediated) / unbound on stock kernel | `PartiallySupported` when driver is loaded / `NotDetected` when unbound | Clean-room `CLV0001` backend supports 17 firmware presets and 5 brightness levels over `_DSM 0x67`; hardware readback is unavailable and status is explicitly `accepted_no_hw_readback`. Preview remains available when the driver is unbound. |
 
 
 ---

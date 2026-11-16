@@ -28,7 +28,7 @@
     </action>
 
     <action id="io.github.zethasaintlab.acercontrol.set-keyboard-lighting">
-        <description>Configure keyboard backlight brightness and zone RGB illumination</description>
+        <description>Configure keyboard backlight presets, brightness, and zone illumination</description>
         <message>Authorization is required to change keyboard backlight illumination.</message>
         <defaults>
             <allow_any>no</allow_any>

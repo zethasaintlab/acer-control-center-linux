@@ -17,6 +17,7 @@ public:
 
     bool isLoaded() const;
     core::GpuTelemetry readTelemetry() const;
+    static core::GpuTelemetry readProcNvidiaFallback();
 
     // Pure helper for filtering bogus NVML power readouts when the dGPU power rail is gated in P8
     static double filterPowerReading(double rawWatts, double maxLimitWatts, int pstateNumber, bool& outRailGated);

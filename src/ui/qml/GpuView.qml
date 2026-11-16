@@ -55,7 +55,7 @@ Flickable {
                     width: parent.width * 0.25
                     spacing: 4
                     Text { text: "DIE TEMPERATURE"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.gpuAvailable ? (ctrl.gpuTempC.toFixed(0) + " °C") : "--"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: theme.textPrimary }
+                    Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuTempC.toFixed(0) + " °C") : "--"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: ctrl.gpuTelemetryMeasuredByNvml ? theme.textPrimary : theme.textMuted }
                     Text { text: "PCI BUS: " + ctrl.gpuPciBusId; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
                 }
 
@@ -63,8 +63,8 @@ Flickable {
                     width: parent.width * 0.25
                     spacing: 4
                     Text { text: "CORE / MEMORY LOAD"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.gpuAvailable ? (ctrl.gpuUtilizationPct + "% / " + ctrl.gpuMemUtilizationPct + "%") : "--"; font.family: "monospace"; font.pixelSize: 26; font.weight: Font.Bold; color: theme.textPrimary }
-                    Text { text: "SUBSYS: " + ctrl.gpuSubsystemId; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
+                    Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuUtilizationPct + "% / " + ctrl.gpuMemUtilizationPct + "%") : "--"; font.family: "monospace"; font.pixelSize: 26; font.weight: Font.Bold; color: ctrl.gpuTelemetryMeasuredByNvml ? theme.textPrimary : theme.textMuted }
+                    Text { text: "SUBSYS: " + (ctrl.gpuSubsystemId.length > 0 ? ctrl.gpuSubsystemId : "--"); font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
                 }
 
                 Column {
@@ -72,14 +72,20 @@ Flickable {
                     spacing: 4
                     Text { text: "TGP BOARD POWER"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
                     Text {
-                        text: ctrl.gpuPowerRailGated ? "RAIL GATED (P8)" : (ctrl.gpuPowerDrawW.toFixed(1) + " W")
+                        text: ctrl.gpuPowerRailGated
+                              ? "RAIL GATED (P8)"
+                              : (ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuPowerDrawW.toFixed(1) + " W") : "UNMEASURED")
                         font.family: "monospace"
-                        font.pixelSize: 22
+                        font.pixelSize: 20
                         font.weight: Font.Bold
-                        color: ctrl.gpuPowerRailGated ? theme.statusInfo : theme.statusNominal
+                        color: ctrl.gpuPowerRailGated
+                               ? theme.statusInfo
+                               : (ctrl.gpuTelemetryMeasuredByNvml ? theme.statusNominal : theme.textMuted)
                     }
                     Text {
-                        text: "DEFAULT " + ctrl.gpuDefaultLimitW.toFixed(0) + "W / MAX " + ctrl.gpuMaxLimitW.toFixed(0) + "W"
+                        text: ctrl.gpuPowerLimitsMeasured
+                              ? ("DEFAULT " + ctrl.gpuDefaultLimitW.toFixed(0) + "W / MAX " + ctrl.gpuMaxLimitW.toFixed(0) + "W")
+                              : "LIMITS: UNMEASURED"
                         font.family: "monospace"
                         font.pixelSize: 10
                         color: theme.textSecondary
@@ -108,8 +114,8 @@ Flickable {
                     anchors.right: parent.right
                     indexCode: "02.A"
                     title: "CLOCK DOMAINS & GDDR6 VRAM ALLOCATION"
-                    badgeText: ctrl.gpuVramTotalMiB + " MiB GDDR6"
-                    badgeColor: theme.accentReadable
+                    badgeText: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuVramTotalMiB + " MiB GDDR6") : "UNMEASURED (NVML REQUIRED)"
+                    badgeColor: ctrl.gpuTelemetryMeasuredByNvml ? theme.accentReadable : theme.statusWarning
                 }
 
                 Column {
@@ -126,12 +132,12 @@ Flickable {
                         Row {
                             width: parent.width
                             Text { text: "GRAPHICS / SM CLOCK"; width: parent.width * 0.5; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                            Text { text: ctrl.gpuGraphicsClockMhz + " / " + ctrl.gpuMaxGraphicsClockMhz + " MHz"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
+                            Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuGraphicsClockMhz + " / " + ctrl.gpuMaxGraphicsClockMhz + " MHz") : "UNMEASURED"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
                         }
                         Rectangle {
                             width: parent.width; height: 8; color: theme.surfaceHeader
                             Rectangle {
-                                width: parent.width * Math.min(1.0, ctrl.gpuGraphicsClockMhz / Math.max(1, ctrl.gpuMaxGraphicsClockMhz))
+                                width: ctrl.gpuTelemetryMeasuredByNvml ? (parent.width * Math.min(1.0, ctrl.gpuGraphicsClockMhz / Math.max(1, ctrl.gpuMaxGraphicsClockMhz))) : 0
                                 height: parent.height; color: theme.accentPrimary
                             }
                         }
@@ -144,12 +150,12 @@ Flickable {
                         Row {
                             width: parent.width
                             Text { text: "GDDR6 MEMORY CLOCK"; width: parent.width * 0.5; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                            Text { text: ctrl.gpuMemClockMhz + " / " + ctrl.gpuMaxMemClockMhz + " MHz"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
+                            Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuMemClockMhz + " / " + ctrl.gpuMaxMemClockMhz + " MHz") : "UNMEASURED"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
                         }
                         Rectangle {
                             width: parent.width; height: 8; color: theme.surfaceHeader
                             Rectangle {
-                                width: parent.width * Math.min(1.0, ctrl.gpuMemClockMhz / Math.max(1, ctrl.gpuMaxMemClockMhz))
+                                width: ctrl.gpuTelemetryMeasuredByNvml ? (parent.width * Math.min(1.0, ctrl.gpuMemClockMhz / Math.max(1, ctrl.gpuMaxMemClockMhz))) : 0
                                 height: parent.height; color: theme.statusNominal
                             }
                         }
@@ -162,12 +168,12 @@ Flickable {
                         Row {
                             width: parent.width
                             Text { text: "VRAM ALLOCATED"; width: parent.width * 0.5; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                            Text { text: ctrl.gpuVramUsedMiB + " / " + ctrl.gpuVramTotalMiB + " MiB"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
+                            Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuVramUsedMiB + " / " + ctrl.gpuVramTotalMiB + " MiB") : "UNMEASURED"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
                         }
                         Rectangle {
                             width: parent.width; height: 8; color: theme.surfaceHeader
                             Rectangle {
-                                width: parent.width * Math.min(1.0, ctrl.gpuVramUsedMiB / Math.max(1, ctrl.gpuVramTotalMiB))
+                                width: ctrl.gpuTelemetryMeasuredByNvml ? (parent.width * Math.min(1.0, ctrl.gpuVramUsedMiB / Math.max(1, ctrl.gpuVramTotalMiB))) : 0
                                 height: parent.height; color: theme.statusWarning
                             }
                         }

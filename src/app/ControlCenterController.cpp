@@ -2,6 +2,7 @@
 #include "app/ControlCenterController.h"
 #include "core/ColorScience.h"
 #include "core/DiagnosticRedactor.h"
+#include "hal/Clv0001KeyboardBackend.h"
 #include "hal/ControlOperations.h"
 #include "hal/SysfsRoot.h"
 
@@ -10,6 +11,8 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QMenu>
 #include <QPainter>
 #include <QPixmap>
@@ -26,6 +29,18 @@ void appendHistorySample(QVariantList& list, double value) {
     while (list.size() > kMaxHistorySamples) {
         list.removeFirst();
     }
+}
+
+QString formatDaemonRejection(const QString& errCode, const QString& readbackJson) {
+    QJsonParseError parseErr{};
+    const QJsonDocument doc = QJsonDocument::fromJson(readbackJson.toUtf8(), &parseErr);
+    if (parseErr.error == QJsonParseError::NoError && doc.isObject()) {
+        const QString msg = doc.object().value(QStringLiteral("message")).toString().trimmed();
+        if (!msg.isEmpty()) {
+            return QStringLiteral("%1 — %2").arg(errCode, msg);
+        }
+    }
+    return errCode;
 }
 } // namespace
 
@@ -51,19 +66,7 @@ ControlCenterController::ControlCenterController(ThemeEngine* themeEngine, QObje
         connect(m_theme, &ThemeEngine::swatchesChanged, this, &ControlCenterController::syncThemeToSettings);
     }
 
-    if (!m_settings.keyboardProfiles.empty()) {
-        m_currentKbdProfile = m_settings.keyboardProfiles.front();
-        for (const auto& kp : m_settings.keyboardProfiles) {
-            if (kp.id == m_settings.activeKeyboardProfileId) {
-                m_currentKbdProfile = kp;
-                break;
-            }
-        }
-        if (!m_currentKbdProfile.zones.empty()) {
-            const auto& z0 = m_currentKbdProfile.zones.front();
-            setKbdColorFromRgb(z0.r, z0.g, z0.b);
-        }
-    }
+    loadActiveKeyboardProfileFromSettings();
 
     // Subscribe to systemd-logind PrepareForSleep(bool) for suspend/resume recovery
     QDBusConnection::systemBus().connect(
@@ -154,6 +157,8 @@ int ControlCenterController::hardwareModeIndex() const {
             return 1;
         case hal::HardwareMode::MockFullCapabilities:
             return 2;
+        case hal::HardwareMode::MockClv0001DriverActive:
+            return 3;
         case hal::HardwareMode::CustomRootPath:
             return 1;
     }
@@ -239,12 +244,14 @@ void ControlCenterController::refreshNow() {
     }
 
     if (m_trayIcon) {
+        const QString gpuTip = m_snapshot.gpu.telemetryMeasuredByNvml
+                                   ? QStringLiteral("%1°C").arg(m_snapshot.gpu.tempC, 0, 'f', 0)
+                                   : (m_snapshot.gpu.available ? m_snapshot.gpu.pstate : QStringLiteral("N/A"));
         m_trayIcon->setToolTip(
-            QStringLiteral("Acer Aspire A715-59G  |  CPU: %1°C (%2%)  |  GPU: %3°C  |  Profile: %4")
+            QStringLiteral("Acer Aspire A715-59G  |  CPU: %1°C (%2%)  |  GPU: %3  |  Profile: %4")
                 .arg(m_snapshot.cpu.packageTempC, 0, 'f', 0)
                 .arg(m_snapshot.cpu.totalUtilizationPct, 0, 'f', 0)
-                .arg(m_snapshot.gpu.tempC, 0, 'f', 0)
-                .arg(m_settings.activeOperatingProfileId.toUpper())
+                .arg(gpuTip, m_settings.activeOperatingProfileId.toUpper())
         );
     }
 
@@ -368,9 +375,52 @@ QString ControlCenterController::kbdCapabilityBadge() const {
     return core::capabilityStateToBadge(m_snapshot.keyboardHw.capabilityState);
 }
 
+void ControlCenterController::syncCurrentKbdProfileToSettings() {
+    for (auto& kp : m_settings.keyboardProfiles) {
+        if (kp.id == m_currentKbdProfile.id) {
+            kp = m_currentKbdProfile;
+            break;
+        }
+    }
+    persistSettings();
+}
+
+void ControlCenterController::loadActiveKeyboardProfileFromSettings() {
+    if (m_settings.keyboardProfiles.empty()) {
+        return;
+    }
+    m_currentKbdProfile = m_settings.keyboardProfiles.front();
+    for (const auto& kp : m_settings.keyboardProfiles) {
+        if (kp.id == m_settings.activeKeyboardProfileId) {
+            m_currentKbdProfile = kp;
+            break;
+        }
+    }
+    if (!m_currentKbdProfile.zones.empty()) {
+        const auto& z0 = m_currentKbdProfile.zones.front();
+        m_kbdRgb = core::ColorScience::clampRgb(z0.r, z0.g, z0.b);
+        m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
+        m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
+        m_kbdPickerHex = core::ColorScience::rgbToHex(m_kbdRgb);
+    }
+    m_kbdCustomPreviewDirty = false;
+}
+
 void ControlCenterController::setKbdEnabled(bool e) {
     if (m_currentKbdProfile.enabled != e) {
         m_currentKbdProfile.enabled = e;
+        if (e) {
+            if (m_currentKbdProfile.clv0001PresetName == QLatin1String("off")) {
+                m_currentKbdProfile.clv0001PresetName = QStringLiteral("cyan");
+            }
+            if (m_currentKbdProfile.clv0001BrightnessLevel <= 0) {
+                m_currentKbdProfile.clv0001BrightnessLevel = 4;
+            }
+            if (m_currentKbdProfile.brightnessPct <= 0) {
+                m_currentKbdProfile.brightnessPct = 100;
+            }
+        }
+        syncCurrentKbdProfileToSettings();
         Q_EMIT keyboardStudioChanged();
     }
 }
@@ -378,22 +428,104 @@ void ControlCenterController::setKbdEnabled(bool e) {
 void ControlCenterController::setKbdMode(const QString& m) {
     if (m_currentKbdProfile.mode != m) {
         m_currentKbdProfile.mode = m;
+        syncCurrentKbdProfileToSettings();
         Q_EMIT keyboardStudioChanged();
     }
 }
 
 void ControlCenterController::setKbdBrightnessPct(int b) {
     const int clamped = std::clamp(b, 0, 100);
-    if (m_currentKbdProfile.brightnessPct != clamped) {
+    const int lvl = hal::Clv0001KeyboardBackend::brightnessPctToLevel(clamped);
+    if (m_currentKbdProfile.brightnessPct != clamped || m_currentKbdProfile.clv0001BrightnessLevel != lvl) {
         m_currentKbdProfile.brightnessPct = clamped;
+        m_currentKbdProfile.clv0001BrightnessLevel = lvl;
+        syncCurrentKbdProfileToSettings();
         Q_EMIT keyboardStudioChanged();
     }
+}
+
+QString ControlCenterController::kbdFirmwarePacketHex() const {
+    const QString preset = m_currentKbdProfile.enabled
+                               ? m_currentKbdProfile.clv0001PresetName
+                               : QStringLiteral("off");
+    const int lvl = m_currentKbdProfile.enabled ? m_currentKbdProfile.clv0001BrightnessLevel : 0;
+    std::array<uint8_t, 4> payload{};
+    if (hal::Clv0001KeyboardBackend::buildFirmwarePayload(preset, lvl, payload)) {
+        return hal::Clv0001KeyboardBackend::formatPayloadHex(payload);
+    }
+    return QStringLiteral("00 00 00 F0");
+}
+
+QString ControlCenterController::kbdNearestPresetName() const {
+    return hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb);
+}
+
+QVariantList ControlCenterController::kbdPresetsModel() const {
+    QVariantList list;
+    for (const auto& p : hal::Clv0001KeyboardBackend::verifiedPresets()) {
+        QVariantMap m;
+        m.insert(QStringLiteral("name"), p.name);
+        m.insert(QStringLiteral("previewHex"), p.previewHex);
+        m.insert(QStringLiteral("r"), static_cast<int>(p.r));
+        m.insert(QStringLiteral("g"), static_cast<int>(p.g));
+        m.insert(QStringLiteral("b"), static_cast<int>(p.b));
+        m.insert(QStringLiteral("selected"),
+                 !m_kbdCustomPreviewDirty && (p.name == m_currentKbdProfile.clv0001PresetName));
+        list.append(m);
+    }
+    return list;
+}
+
+void ControlCenterController::selectKbdPreset(const QString& presetName) {
+    core::Clv0001PresetInfo pInfo;
+    if (!hal::Clv0001KeyboardBackend::findPreset(presetName, pInfo)) {
+        setStatusBanner(QStringLiteral("Unknown CLV0001 preset '%1'.").arg(presetName), true);
+        return;
+    }
+    m_currentKbdProfile.clv0001PresetName = pInfo.name;
+    if (pInfo.name == QLatin1String("off")) {
+        m_currentKbdProfile.enabled = false;
+        m_currentKbdProfile.clv0001BrightnessLevel = 0;
+        m_currentKbdProfile.brightnessPct = 0;
+    } else {
+        m_currentKbdProfile.enabled = true;
+        if (m_currentKbdProfile.clv0001BrightnessLevel == 0) {
+            m_currentKbdProfile.clv0001BrightnessLevel = 4;
+            m_currentKbdProfile.brightnessPct = 100;
+        }
+    }
+    m_kbdRgb = core::RgbColor{static_cast<int>(pInfo.r), static_cast<int>(pInfo.g), static_cast<int>(pInfo.b)};
+    m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
+    m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
+    m_kbdPickerHex = core::ColorScience::rgbToHex(m_kbdRgb);
+    m_kbdSelectedZone = -1;
+    m_kbdCustomPreviewDirty = false;
+    applySelectedKbdColorToActiveZones();
+    setStatusBanner(
+        QStringLiteral("Selected CLV0001 preset '%1' (GRB packet %2).")
+            .arg(pInfo.name, kbdFirmwarePacketHex()),
+        false
+    );
+}
+
+void ControlCenterController::snapToNearestKbdPreset() {
+    selectKbdPreset(kbdNearestPresetName());
+}
+
+void ControlCenterController::setKbdBrightnessLevel(int level) {
+    const int clamped = std::clamp(level, 0, 4);
+    m_currentKbdProfile.clv0001BrightnessLevel = clamped;
+    m_currentKbdProfile.brightnessPct = hal::Clv0001KeyboardBackend::brightnessLevelToPct(clamped);
+    m_currentKbdProfile.enabled = (clamped > 0 && m_currentKbdProfile.clv0001PresetName != QLatin1String("off"));
+    syncCurrentKbdProfileToSettings();
+    Q_EMIT keyboardStudioChanged();
 }
 
 void ControlCenterController::setKbdTimeoutSec(int sec) {
     const int clamped = std::clamp(sec, 0, 3600);
     if (m_currentKbdProfile.timeoutSeconds != clamped) {
         m_currentKbdProfile.timeoutSeconds = clamped;
+        syncCurrentKbdProfileToSettings();
         Q_EMIT keyboardStudioChanged();
     }
 }
@@ -452,14 +584,8 @@ void ControlCenterController::applySelectedKbdColorToActiveZones() {
             m_currentKbdProfile.zones[static_cast<size_t>(i)].hex = m_kbdPickerHex;
         }
     }
-    // Sync back into settings profile vector
-    for (auto& kp : m_settings.keyboardProfiles) {
-        if (kp.id == m_currentKbdProfile.id) {
-            kp = m_currentKbdProfile;
-            break;
-        }
-    }
-    persistSettings();
+    // Sync back into settings profile vector and persist
+    syncCurrentKbdProfileToSettings();
     Q_EMIT keyboardStudioChanged();
 }
 
@@ -471,6 +597,14 @@ bool ControlCenterController::setKbdColorFromHex(const QString& hexStr) {
     m_kbdRgb = parsed;
     m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
     m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
+    bool exactMatch = false;
+    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
+    if (exactMatch) {
+        m_currentKbdProfile.clv0001PresetName = matchedPreset;
+        m_kbdCustomPreviewDirty = false;
+    } else {
+        m_kbdCustomPreviewDirty = true;
+    }
     applySelectedKbdColorToActiveZones();
     return true;
 }
@@ -479,6 +613,14 @@ void ControlCenterController::setKbdColorFromRgb(int r, int g, int b) {
     m_kbdRgb = core::ColorScience::clampRgb(r, g, b);
     m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
     m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
+    bool exactMatch = false;
+    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
+    if (exactMatch) {
+        m_currentKbdProfile.clv0001PresetName = matchedPreset;
+        m_kbdCustomPreviewDirty = false;
+    } else {
+        m_kbdCustomPreviewDirty = true;
+    }
     applySelectedKbdColorToActiveZones();
 }
 
@@ -486,6 +628,14 @@ void ControlCenterController::setKbdColorFromHsv(double h, double s, double v) {
     m_kbdHsv = core::HsvColor{h, s, v};
     m_kbdRgb = core::ColorScience::hsvToRgb(m_kbdHsv);
     m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
+    bool exactMatch = false;
+    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
+    if (exactMatch) {
+        m_currentKbdProfile.clv0001PresetName = matchedPreset;
+        m_kbdCustomPreviewDirty = false;
+    } else {
+        m_kbdCustomPreviewDirty = true;
+    }
     applySelectedKbdColorToActiveZones();
 }
 
@@ -493,6 +643,14 @@ void ControlCenterController::setKbdColorFromHsl(double h, double s, double l) {
     m_kbdHsl = core::HslColor{h, s, l};
     m_kbdRgb = core::ColorScience::hslToRgb(m_kbdHsl);
     m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
+    bool exactMatch = false;
+    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
+    if (exactMatch) {
+        m_currentKbdProfile.clv0001PresetName = matchedPreset;
+        m_kbdCustomPreviewDirty = false;
+    } else {
+        m_kbdCustomPreviewDirty = true;
+    }
     applySelectedKbdColorToActiveZones();
 }
 
@@ -519,6 +677,7 @@ void ControlCenterController::selectKbdProfile(const QString& profileId) {
                 m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
                 m_kbdPickerHex = core::ColorScience::rgbToHex(m_kbdRgb);
             }
+            m_kbdCustomPreviewDirty = false;
             persistSettings();
             Q_EMIT keyboardStudioChanged();
             setStatusBanner(QStringLiteral("Loaded Keyboard Studio profile '%1'.").arg(kp.name), false);
@@ -549,8 +708,31 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
     for (const auto& z : m_currentKbdProfile.zones) {
         hexes.append(z.hex);
     }
-    const int effectiveBri = m_currentKbdProfile.enabled ? m_currentKbdProfile.brightnessPct : 0;
-    const QString zonesCsv = hexes.join(QLatin1Char(','));
+
+    const bool useClvPresetProtocol =
+        (m_snapshot.keyboardHw.backendKind == core::KeyboardBackendKind::Clv0001AcpiDsmPreset ||
+         m_snapshot.keyboardHw.backendKind == core::KeyboardBackendKind::Clv0001AcpiUnbound);
+
+    QString hwMode = m_currentKbdProfile.mode;
+    int effectiveBri = m_currentKbdProfile.enabled ? m_currentKbdProfile.brightnessPct : 0;
+    QString zonesCsv = hexes.join(QLatin1Char(','));
+
+    if (useClvPresetProtocol) {
+        if (m_currentKbdProfile.enabled && m_kbdCustomPreviewDirty) {
+            hwMode = m_currentKbdProfile.mode;
+            effectiveBri = hal::Clv0001KeyboardBackend::brightnessLevelToPct(m_currentKbdProfile.clv0001BrightnessLevel);
+            zonesCsv = m_kbdPickerHex;
+        } else {
+            const QString activePreset = m_currentKbdProfile.enabled
+                                             ? m_currentKbdProfile.clv0001PresetName
+                                             : QStringLiteral("off");
+            hwMode = QStringLiteral("preset:%1").arg(activePreset);
+            effectiveBri = (activePreset == QLatin1String("off"))
+                               ? 0
+                               : hal::Clv0001KeyboardBackend::brightnessLevelToPct(m_currentKbdProfile.clv0001BrightnessLevel);
+            zonesCsv = activePreset;
+        }
+    }
 
     if (!hal::SysfsRoot::instance().isMockActive()) {
         QDBusMessage call = QDBusMessage::createMethodCall(
@@ -559,7 +741,7 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
             QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
             QStringLiteral("SetKeyboardLighting")
         );
-        call << m_currentKbdProfile.mode << static_cast<uint>(effectiveBri) << zonesCsv;
+        call << hwMode << static_cast<uint>(effectiveBri) << zonesCsv;
         const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
         if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
             const bool ok = reply.arguments().at(0).toBool();
@@ -567,8 +749,10 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
             const QString errCode = reply.arguments().at(2).toString();
             refreshNow();
             setStatusBanner(
-                ok ? QStringLiteral("Daemon applied & verified keyboard lighting (%1).").arg(rb)
-                   : QStringLiteral("Daemon rejected keyboard lighting (%1).").arg(errCode),
+                ok ? (useClvPresetProtocol
+                          ? QStringLiteral("Daemon sent CLV0001 _DSM 0x67 command (%1; no hardware readback).").arg(rb)
+                          : QStringLiteral("Daemon applied & verified keyboard lighting (%1).").arg(rb))
+                   : QStringLiteral("Daemon rejected keyboard lighting (%1).").arg(formatDaemonRejection(errCode, rb)),
                 !ok
             );
             return;
@@ -586,7 +770,7 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
     }
 
     const core::ControlResult res = hal::ControlOperations::applyKeyboardLighting(
-        m_currentKbdProfile.mode,
+        hwMode,
         effectiveBri,
         zonesCsv
     );
@@ -650,7 +834,7 @@ void ControlCenterController::applyCustomCpuTuning(
             refreshNow();
             setStatusBanner(
                 ok ? QStringLiteral("Daemon applied & verified CPU P-state tuning (%1).").arg(rb)
-                   : QStringLiteral("Daemon rejected CPU tuning (%1).").arg(errCode),
+                   : QStringLiteral("Daemon rejected CPU tuning (%1).").arg(formatDaemonRejection(errCode, rb)),
                 !ok
             );
             return;
@@ -711,7 +895,7 @@ void ControlCenterController::setFanMode(const QString& mode, int manualDutyPct)
             refreshNow();
             setStatusBanner(
                 ok ? QStringLiteral("Daemon applied & verified fan PWM mode (%1).").arg(rb)
-                   : QStringLiteral("Daemon rejected fan mode (%1).").arg(errCode),
+                   : QStringLiteral("Daemon rejected fan mode (%1).").arg(formatDaemonRejection(errCode, rb)),
                 !ok
             );
             return;
@@ -815,6 +999,8 @@ void ControlCenterController::switchHardwareMode(int modeIndex) {
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::MockPhysicalMirror);
     } else if (modeIndex == 2) {
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::MockFullCapabilities);
+    } else if (modeIndex == 3) {
+        hal::SysfsRoot::instance().setMode(hal::HardwareMode::MockClv0001DriverActive);
     } else {
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
     }
@@ -883,6 +1069,7 @@ bool ControlCenterController::importProfileBundle(const QString& filePath) {
             m_theme->setCompactNavigation(m_settings.compactNavigation);
             m_theme->setAccentFromHex(m_settings.accentColorHex);
         }
+        loadActiveKeyboardProfileFromSettings();
         persistSettings();
         Q_EMIT settingsUpdated();
         Q_EMIT keyboardStudioChanged();
