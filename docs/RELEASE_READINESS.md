@@ -72,4 +72,4 @@ The package remains an **unsigned, locally built, unpublished** RPM candidate (n
 
 1. Review Stage 32 working-tree changes (`COPYING.GPL-2.0`, `docs/HOST_INTEGRATION_A715_59G.md`, `docs/PROJECT_STATE.md`, `docs/RELEASE_READINESS.md`, `packaging/fedora/acer-control-center.spec`) and authorize the single local commit (`docs(release): close host integration and release readiness`).
 2. Keep `backup/pre-hydrogen-20261123-100354`, `stash@{0}`, and `stash@{1}` intact until remote publication policy is decided.
-3. Preserve external diagnostic probes (`/home/zeth/acpi-audit-a715-59g-WcgNEm/`) outside the source repository; do not ship or invoke `PK04 0x08` or unverified `ECMD` setters.
+3. Preserve external diagnostic probes in the private external ACPI audit workspace outside the source repository; do not ship or invoke `PK04 0x08` or unverified `ECMD` setters.

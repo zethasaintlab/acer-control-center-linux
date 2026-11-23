@@ -17,7 +17,7 @@
 - **Candidate SHA-256:** `8fe0351a566c0a3a098a9ebdbf9ffa3e9b999fa81811de52841a667a662ea7ae`
 - **Verified Rollback Artifact (Unused):** `build/rpmbuild-stage18/RPMS/x86_64/acer-control-center-1.0.0-3.fc45.x86_64.rpm` (`SHA-256`: `8e47940ff3adb594b249a4d78d5f6527793ee91036956fa9a1bd47a79c2b7f1d`)
 - **DNF5 Transaction ID:** `66` (`Status: Ok`)
-- **Transaction Command & Timestamp:** `dnf5 install /shared/Projects/Active/acer-control-center-linux/build/release-stage30-3/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-6.fc45.x86_64.rpm` executed by `User: 1000 Zeth Astraea Saint <zeth>` from `2026-11-23 13:38:48` to `13:38:50 UTC` (`20:38:48–20:38:50 WIB`)
+- **Transaction Command & Timestamp:** `dnf5 install build/release-stage30-3/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-6.fc45.x86_64.rpm` *(workstation path prefix redacted)* executed by `UID 1000` (`[username redacted]`) from `2026-11-23 13:38:48` to `13:38:50 UTC` (`20:38:48–20:38:50 WIB`)
 - **Package Action:** Upgraded `acer-control-center-0:1.0.0-3.fc45.x86_64` (`@System`) to `acer-control-center-0:1.0.0-6.fc45.x86_64` (`@commandline`)
 - **Provenance Distinction:** The DNF5 upgrade transaction was initiated directly by the user (`UID 1000`) prior to Stage 31 execution, **not** by the Stage 31/31.1 validation agent. Stage 31 stopped at its `1.0.0-3.fc45` baseline gate, and Stage 31.1 validated the resulting live `1.0.0-6.fc45` installation without executing another package transaction.
 
@@ -71,7 +71,7 @@
 
 ## F. User Configuration Integrity
 
-- `/home/zeth/.config/acer-control-center/settings.json` remained completely untouched and byte-identical before and after validation:
+- `$XDG_CONFIG_HOME/acer-control-center/settings.json` *(standard user config directory)* remained completely untouched and byte-identical before and after validation:
   - **Size:** `8434` bytes (`mode 644`, `mtime 2026-11-16 09:59:36 +0700`)
   - **SHA-256:** `dc6b1d7c98c4232739730347e79511e40c2032dcfd0b54922c72564fda99691b`
 

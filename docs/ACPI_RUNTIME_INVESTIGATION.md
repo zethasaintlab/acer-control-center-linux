@@ -66,20 +66,20 @@ To avoid conflating ACPI transport return values with live physical hardware enf
   - Pure-C parser self-test (`test_pk04_1e_response`) passed `8/8` cases before build; `23/23` external kernel symbols audited clean.
 
 ### Runtime Outcome (**Runtime Verified — Verbatim Kernel Log Captured**)
-Captured verbatim from `journalctl -k` on `Nov 23 18:55:47` under `7.3.3-300.fc45.x86_64`:
+Captured from `journalctl -k` on `Nov 23 18:55:47` under `7.3.3-300.fc45.x86_64` *(local workstation hostname redacted)*:
 
 ```text
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: exact 6-field DMI identity verified: sys_vendor='Acer' product_name='Aspire A715-59G' board_name='RTH' board_vendor='Kelilu_RTH' bios_vendor='INSYDE Corp.' bios_version='V1.17'
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: metadata preflight passed: target=\_SB.DCHU hid=CLV0001 dynamic_status=1 cached_status={present=1,enabled=1,ui=1,func=1}
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: fresh _STA passed: raw_sta=0x000000000000000f (15) required_bits=0x0f
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: acpi_eval_status=AE_OK (0x00000000) return_type=buffer length=256
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000000: 01 46 50 00 00 00 00 00 00 00 00 00 00 00 00 00  .FP.............
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000010: 28 32 3c 46 50 5a 00 00 00 00 00 00 00 00 00 00  (2<FPZ..........
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000020: 3c 46 50 5a 64 00 00 00 00 00 00 00 00 00 00 00  <FPZd...........
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000030: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: exact 6-field DMI identity verified: sys_vendor='Acer' product_name='Aspire A715-59G' board_name='RTH' board_vendor='Kelilu_RTH' bios_vendor='INSYDE Corp.' bios_version='V1.17'
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: metadata preflight passed: target=\_SB.DCHU hid=CLV0001 dynamic_status=1 cached_status={present=1,enabled=1,ui=1,func=1}
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: fresh _STA passed: raw_sta=0x000000000000000f (15) required_bits=0x0f
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: acpi_eval_status=AE_OK (0x00000000) return_type=buffer length=256
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000000: 01 46 50 00 00 00 00 00 00 00 00 00 00 00 00 00  .FP.............
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000010: 28 32 3c 46 50 5a 00 00 00 00 00 00 00 00 00 00  (2<FPZ..........
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000020: 3c 46 50 5a 64 00 00 00 00 00 00 00 00 00 00 00  <FPZd...........
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: raw_buf: 00000030: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
 ... (offsets 0x0040–0x00f0 all zero: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00) ...
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: classification=POPULATED_CASE_1E ogns_nvs_shadow={baee_shr1=0x01 (1), bscp=70 (0x46), btcp=80 (0x50)} fcsc_const_0x10_0x1f=[28 32 3c 46 50 5a 00 00 00 00 00 00 00 00 00 00] fctc_const_0x20_0x2f=[3c 46 50 5a 64 00 00 00 00 00 00 00 00 00 00 00] unassigned_nonzero={0x03_0x0f=0, 0x30_0xff=0} note="OGNS ACPI NVS shadow and firmware-defined constant arrays only; live EC state unverified"
-Nov 23 18:55:47 nonexist kernel: stage23a2_pk04_1e_probe_v2: unloaded standalone Stage 23A.2.2 PK04(0x1E) probe v2
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: classification=POPULATED_CASE_1E ogns_nvs_shadow={baee_shr1=0x01 (1), bscp=70 (0x46), btcp=80 (0x50)} fcsc_const_0x10_0x1f=[28 32 3c 46 50 5a 00 00 00 00 00 00 00 00 00 00] fctc_const_0x20_0x2f=[3c 46 50 5a 64 00 00 00 00 00 00 00 00 00 00 00] unassigned_nonzero={0x03_0x0f=0, 0x30_0xff=0} note="OGNS ACPI NVS shadow and firmware-defined constant arrays only; live EC state unverified"
+Nov 23 18:55:47 [hostname redacted] kernel: stage23a2_pk04_1e_probe_v2: unloaded standalone Stage 23A.2.2 PK04(0x1E) probe v2
 ```
 
 - **Decoded buffer summary (`POPULATED_CASE_1E`):**
