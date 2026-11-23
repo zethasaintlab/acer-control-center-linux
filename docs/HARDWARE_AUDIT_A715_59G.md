@@ -6,6 +6,8 @@
 
 ---
 
+> **Evidence freshness note (2026-11-23):** This document's initial reconnaissance was captured on 2026-11-08 using kernel 7.2.15. The later offline ACPI/AML findings in Section 5 supersede the original "no firmware path" inference for fan and charge control. They do not establish runtime support or physical operation.
+
 ## 1. Non-Sensitive DMI & Platform Identity
 
 All hardware discovery was conducted strictly in read-only mode without capturing serial numbers, UUIDs, or asset tags.
@@ -89,3 +91,94 @@ On the `Aspire A715-59G` (`Kelilu_RTH`), `/sys/bus/wmi/devices/` exposes a compl
 | `cap.battery.limit` | Battery Charge End Threshold (e.g. 80% Care Mode) | `/sys/class/power_supply/BAT0/charge_control_end_threshold` | Absent | `NotDetected` | Supported in HAL & daemon when sysfs node exists; disabled with clear hardware explanation on `Kelilu_RTH`. |
 | `cap.backlight.display` | Internal eDP Panel Brightness | `/sys/class/backlight/intel_backlight` (`max_brightness: 48000`) & `org.freedesktop.login1.Session.SetBrightness` | `0644` / D-Bus | `FullySupported` | Verified (`intel_backlight` on `card1-eDP-1`). |
 | `cap.keyboard.lighting` | Physical Keyboard Backlight & RGB Zones | `/sys/class/leds/*kbd_backlight*` (`brightness`, `max_brightness`, `multi_intensity`) | Absent (`ABBC0F6D` unverified) | `NotDetected` | Full unrestricted HSV/HSL/RGB/Hex Color Picker & Profile Studio implemented; binds to `/sys/class/leds/*kbd_backlight*` when present/mocked and never fabricates physical hardware writes when absent. |
+
+
+---
+
+## 5. Addendum — Stage 22 / 22.1 Offline AML Findings
+
+**Audit date:** 2026-11-23  
+**Target:** Acer Aspire A715-59G / Kelilu_RTH / RTH / INSYDE V1.17  
+**Kernel reported by the operator:** 7.3.3-300.fc45.x86_64  
+**Method:** Offline static disassembly of DSDT plus SSDT1–SSDT17 using ACPICA. No AML method, _DSM, WMI command, EC register or mailbox operation was executed during these stages.
+
+### 5.1 Corrected conclusion
+
+The absence of standard Linux fan and battery-threshold sysfs interfaces remains true. However, the original assumption that no vendor firmware path exists was too strong.
+
+Stage 22 identified vendor-specific AML control and query paths behind:
+- Clevo WMBB: ABBC0F6D-8EA1-11D1-00A0-C90629100000, object ID BB.
+- CLV0001 / DCHU: _DSM UUID 93f224e4-fbdc-4bbf-add6-db71bdc0afad.
+- EC mailbox helper ECMD using EC81 FCMD/FDAT/FBUF/FBF1–FBF3.
+- SystemMemory EC.RAM and EC.RAM3 regions.
+
+These are static findings only. The embedded EC firmware's acceptance, response encoding, fan channel mapping and physical effects remain unverified.
+
+### 5.2 Fan findings
+
+Static AML paths include:
+- Manual duty request: SCMD 0x68 -> ECMD 0xC1 for channels 0x01–0x04.
+- Automatic restore request: SCMD 0x69 -> ECMD 0xC1 with 0xFF and selected channel IDs.
+- Fan mode: SCMD 0x79 subcommand 0x01 -> ECMD 0xD7.
+- Dynamic curve/slope parameters: SCMD 0x79 subcommand 0x07 -> ECMD 0xCC.
+- Curve table access: PK0D / PK0E and EC.RAM3 fields for three declared fan groups.
+- RPM/thermal paths: PK0C and GCMD 0x63, 0x64, 0x6E–0x71.
+
+Important Stage 22.1 corrections:
+- WMI.PK0D performs direct SystemMemory reads and sets its response field to zero; DCHU.PK0D also performs an ECMD 0xD7 mailbox query and leaves the command uncleared.
+- WMI.PK0C and DCHU.PK0C are active mailbox-query transactions, not passive reads. Their ECMD call counts and response fields differ.
+- GCMD 0x63/0x64/0x6E–0x71 write EC mailbox command/data registers even when their purpose is telemetry.
+- SCMD 0x68 sends four channel writes from one packed argument, has no AML readback and defines no watchdog. A partial or incorrectly packed request is not a safe single-fan control.
+- SCMD 0x69 requests automatic restore, but AML cannot prove the private EC firmware's restore semantics.
+- SCMD 0x79 contains side-effecting profile/SMI paths; subcommand 0x07 has a division-by-zero edge case for certain inputs.
+- Direct EC.RAM/RAM3 accesses bypass the same PATM mailbox-lock scope used by ECMD and can race with firmware updates.
+
+**Product posture:** firmware automatic. Do not expose physical manual fan control or invoke telemetry mailbox methods until the exact path, concurrency behavior, readback and recovery strategy are separately verified and authorized.
+
+### 5.3 Battery / FlexiCharger findings
+
+Static AML paths include:
+- Getter GCMD 0x77, which returns BAEE, BSCP and BTCP from GNVS/OGNS NVS.
+- DCHU.PK04 subcommand 0x1E, which returns the current NVS values and static preset arrays.
+- Setter DCHU.PK04 subcommand 0x1F and SCMD 0x76 paths, which update NVS and may send ECMD 0xCB.
+
+Static preset arrays reported:
+- Start-charge values (FCSC): 40, 50, 60, 70, 80, 90 percent.
+- Stop-charge values (FCTC): 60, 70, 80, 90, 100 percent.
+
+Important limitations:
+- GCMD 0x77 reads NVS shadow state, not direct live EC readback.
+- PK04 0x1F writes NVS before or independently of successful EC command completion and lacks threshold-order/range validation and rollback.
+- DCHU.SCMD and WMI.SCMD have materially different conditional behavior.
+- BAT0 does not expose the standard charge-threshold node on the reported physical system.
+- The standard _BST charge-limiting status bit is not a threshold-setting interface.
+- Stage 22.1 found BAT0._BTP is an empty stub in this BIOS build; do not treat it as a FlexiCharger control.
+
+**Product posture:** battery telemetry only. Do not expose or invoke a charge-limit setter until runtime behavior, EC acceptance, constraints, readback and rollback are proven.
+
+### 5.4 Candidate zero-mailbox queries and pending safety review
+
+Stage 22.1 identified these as candidates for a separate, explicitly authorized runtime review:
+- DCHU GCMD 0x77.
+- DCHU PK04 0x1E.
+- DCHU PK04 0x08.
+- Optionally PK07 if its BMD0 value is needed.
+
+PK04 0x08 may conditionally read EC.RINF. PK04 0x1E is gated by ECOK; Stage 22.2 must resolve the exact ECOK object/access type. DCHU._DSM serialization and the interaction with driver-local keyboard locks and WMBB/PATM must also be reviewed.
+
+PK0C, DCHU.PK0D, GCMD 0x63/0x64/0x6E, all fan setters, PK0E and FlexiCharger setters are not zero-write candidates.
+
+### 5.5 Pending work and authorization
+
+Stage 22.2 was not completed in the reported workflow. It must:
+1. Correct the ACPI 6.6 battery method inventory.
+2. Resolve ECOK's declaration and hardware-access semantics.
+3. Verify Serialized method semantics and synchronization boundaries.
+4. Validate exact DCHU function/package contracts and output types.
+5. Finalize the zero-mailbox candidate matrix.
+
+Stage 23 runtime queries are not authorized by this static audit. A separate user authorization is required before evaluating any DCHU _DSM function.
+
+### 5.6 Evidence location
+
+The operator's private offline audit directory is outside this repository. It contains the extracted DSDT/SSDT binaries, disassembly outputs and reports. Do not assume those binary artifacts are committed here. Exact AML line references should be taken from the operator's Stage 22/22.1 report and rechecked against the current private audit files before implementation.

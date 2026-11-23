@@ -1,58 +1,44 @@
 ---
 name: native-desktop-architecture
-description: Designs and implements maintainable native Linux desktop applications with Wayland support, KDE/Hyprland compatibility, hardware backends, D-Bus, Polkit, settings, and service boundaries. Use for architecture or implementation decisions in this repository.
+description: Maintains the approved Qt/C++ native Linux desktop architecture, including QML, D-Bus, Polkit, capability discovery, telemetry, control boundaries and Fedora packaging.
 ---
 
-# Native Linux Desktop Architecture
+# Native Desktop Architecture
 
-## First decision: choose technology from evidence
-Before selecting a toolkit, compare at least Qt 6/QML, GTK 4/libadwaita, and a justified Rust-native option against:
-- KDE Plasma integration and visual consistency.
-- Hyprland and Wayland behavior.
-- Fedora 45 packaging and dependency availability.
-- Sensor visualization and custom controls.
-- Accessibility, localization, testing, maintainability, and contributor familiarity.
-- Separation between UI and low-level hardware operations.
+## Approved baseline
 
-Do not assume Qt is selected merely because it was mentioned as a candidate. Record a short Architecture Decision Record (ADR), including alternatives and trade-offs.
+ADR-001 already selects C++23, Qt 6 / QtQuick-QML, QtDBus, CMake and Fedora RPM packaging. Do not reopen a toolkit bake-off or migrate to GTK, Avalonia, Electron, Tauri or a webview without a concrete requirement and a new Architecture Decision Record.
+
+The application must remain a native Linux desktop application with KDE Plasma and Hyprland Wayland support.
 
 ## Architectural boundaries
-Keep these responsibilities separate:
-1. Presentation/UI.
+
+Keep responsibilities explicit:
+1. QML presentation and reusable visual components.
 2. Application/domain state and use cases.
 3. Hardware capability discovery.
 4. Read-only telemetry adapters.
-5. State-changing control adapters.
-6. Privileged service boundary.
-7. Settings/profiles.
-8. Diagnostics/logging.
+5. Typed state-changing control adapters.
+6. Privileged D-Bus/Polkit service.
+7. Settings and profile persistence.
+8. Diagnostics and redacted logging.
 
-The UI must consume typed domain models and must not read arbitrary sysfs files or invoke hardware commands directly.
+The UI must not read arbitrary sysfs files or invoke hardware commands directly. Keep the UI responsive; sensor polling, process execution and D-Bus calls must not block the GUI thread.
 
-## Runtime behavior
-- Do not block the UI thread with sensor polling, process execution, or D-Bus calls.
-- Use asynchronous I/O or worker tasks with bounded concurrency and timeouts.
-- Poll only sensors that exist; handle missing, stale, unavailable, and invalid readings explicitly.
-- Avoid excessive polling. Use configurable intervals and suspend-aware lifecycle handling.
-- Keep monitoring and controls independently degradable.
-- Make service availability and hardware capability visible in the domain state.
+## Capability-first operation
+
+Keep monitoring independent from control. Model available, read-only, partial, unsupported, not-detected and requires-verification states honestly. Distinguish stale data, preview/mock data, permission errors and failed hardware operations.
+
+Never expose an operation just because a control exists in QML or a method name exists in AML. The backend owns capability gates and argument validation.
 
 ## Linux integration
-Prefer documented kernel interfaces and existing system services. Check whether power-profiles-daemon, tuned, UPower, NVIDIA services, or firmware already own a control. Do not create competing daemons or duplicate policy engines.
 
-Use D-Bus and Polkit only where their boundaries are justified. Keep the GUI unprivileged. Design typed, versioned service methods and explicit error codes.
+Prefer documented kernel interfaces and existing system services. Avoid competing power-policy daemons. Use D-Bus and Polkit only where the privilege boundary requires them. Version service contracts and return explicit errors/readback.
 
-## Persistence
-- Use a documented, versioned configuration schema.
-- Validate imported/exported profiles.
-- Never store credentials or secrets in project settings.
-- Make migrations backward-compatible where practical.
-- Preserve user settings through package upgrades and uninstall unless the user explicitly asks to remove them.
+## Persistence and reliability
 
-## Engineering quality
-- Prefer explicit types and small modules.
-- Avoid hidden global state and broad exception swallowing.
-- Document public backend interfaces.
-- Add unit and integration tests around adapters and domain logic.
-- Use mocks for hardware-dependent tests.
-- Write an ADR before introducing a new runtime, service, or dependency with significant operational impact.
+Use versioned configuration schemas and validate imports. Preserve user settings through upgrades and uninstall. Handle missing devices, service restart, sleep/resume, timeouts and malformed sysfs values explicitly.
+
+## Changes that need an ADR
+
+Create or amend an ADR before introducing a new runtime, privilege boundary, long-lived service, kernel driver dependency, public hardware protocol or architecture-level dependency.

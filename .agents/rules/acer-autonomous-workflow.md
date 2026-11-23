@@ -1,51 +1,43 @@
 ---
 trigger: always_on
-description: "Project-scoped autonomy, safety, and approval boundaries for Acer Control Center Linux development."
+description: "Outcome-oriented autonomy and approval boundaries for Acer Control Center engineering."
 ---
 
-# Acer Control Center — Autonomous Workflow Policy
+# Autonomous Engineering Workflow
 
-## Operating mode
-- Use Antigravity's **Auto** permission preset for this project when the Terminal Sandbox is available.
-- Do not switch to Turbo, disable the sandbox, bypass the permission engine, or request blanket access.
-- This file is project guidance, not an enforcement boundary. The Antigravity permission engine and OS permissions remain authoritative.
+## Operating principle
+Own the engineering outcome, not a prescribed command sequence. Understand the task, inspect the relevant source of truth, choose an efficient approach, and use appropriate tools. Do not wait for the user to specify routine investigation steps or implementation details.
 
-## Work that should proceed autonomously
-- Inspect and edit files inside this repository.
-- Create tests, fixtures, mock hardware backends, documentation, and design assets inside the repository.
-- Run read-only inspection commands and project-local lint, formatting, build, and test commands inside the sandbox.
-- Research official documentation on domains explicitly allowed in the permission lists.
-- Diagnose failures, revise project code, and repeat safe project-local tests.
-- Use mock interfaces for hardware development until the physical interface has been verified.
+Prefer a short, direct follow-up for incremental work. Use a fuller engineering brief for a new stage, major architecture/design work, or safety-critical operation. Avoid repeating instructions already established in AGENTS.md, project docs or the current task.
 
-## Operations requiring explicit approval
-- Any command requiring `sudo`, `pkexec`, root privileges, Polkit authorization, or access outside the sandbox.
-- Installing/removing system packages, changing system services, udev rules, kernel modules, boot settings, or global configuration.
-- Writing to `/sys`, `/proc/sys`, `/dev`, ACPI/WMI, Embedded Controller, firmware, fan, battery, or keyboard hardware interfaces.
-- Reading or writing credentials, private keys, browser profiles, tokens, or unrelated personal files.
-- Destructive file operations, recursive deletion, changing permissions/ownership/capabilities, or modifying partitions/filesystems.
-- Git commits, pushes, resets, cleans, rebases, merges, checkout/switch operations that could discard work, and release/tag operations.
-- Opening browser pages that can perform authenticated actions, and any MCP operation not explicitly trusted.
+## Proceed autonomously
+- Inspect repository files, Git state, history and existing architecture.
+- Investigate relevant upstream documentation and source.
+- Edit repository code, tests, documentation and design assets within the authorized task.
+- Run project-local, non-destructive build, test, formatting and analysis commands.
+- Use mocks and fixtures for hardware development.
+- Make reasonable implementation decisions and explain material trade-offs in the completion report.
 
-## Hard safety invariants
-1. Start hardware discovery in read-only mode. No undocumented EC register writes, `/dev/mem`, `/dev/port`, or arbitrary ACPI/WMI writes.
-2. Never run the GUI or ordinary application components as root.
-3. Never execute hardware writes as part of automated tests against the physical laptop. Use mocks.
-4. Preserve firmware thermal protections and automatic fan fallback.
-5. Never claim physical hardware support based only on mocks, another Acer model, or a similarly named SKU.
-6. Do not report an operation successful until verified through a supported readback or a clear status response.
-7. Never use shell tricks, encoded payloads, command substitution, `eval`, or indirect execution to bypass permission prompts.
-8. If an operation is blocked or requires approval, continue independent safe work and explain exactly what is waiting and why.
-9. Never broaden a permission grant merely to avoid a prompt. Request the narrowest required action and target.
-10. Do not access data outside the project unless it is necessary, explicitly authorized, and limited to the required path.
+## Approval remains required
+- Any root, sudo, pkexec, Polkit-authorized or outside-sandbox operation.
+- Installing/removing system packages or changing services, udev, kernel modules, boot configuration or global system settings.
+- Any write to hardware, firmware, ACPI, WMI, EC, fan, battery, keyboard LED, CPU/GPU control or other physical device.
+- Any runtime ACPI/WMI/_DSM/WMBB/EC method execution not separately authorized.
+- Destructive operations, permission/ownership changes, partition/filesystem operations, credential access, or unrelated personal-data access.
+- Git commits, pushes, merges, rebases, resets, cleans, branch changes that could discard work, releases and tags.
+- Changes that broaden project permission rules or weaken system security.
 
-## Git and user data
-- Inspect `git status` and existing diffs before editing.
-- Never overwrite uncommitted user changes.
-- Do not rewrite history or force-push.
-- Keep generated build output inside the project build directory or temporary directory.
-- Do not read `.env`, private keys, tokens, or unrelated secret files.
+## Hardware and evidence invariants
+1. Read-only discovery is the default.
+2. Separate AML static evidence, kernel interface discovery, runtime readback and physical verification.
+3. A query that writes an EC mailbox is not a passive read, even if it returns telemetry.
+4. A method or interface discovered on a related laptop is not proof of A715-59G compatibility.
+5. Unsupported or unverified controls must fail closed and explain the reason.
+6. Keep automatic firmware thermal control intact unless a narrowly verified interface and fallback are established.
+7. Automated tests must never write to physical hardware.
 
-## Completion reporting
-- Distinguish implemented, mock-tested, physically tested, unverified, and unsupported behavior.
-- Report commands and tests actually run. Never fabricate successful builds, tests, hardware validation, or CI results.
+## Git and workspace integrity
+Inspect status and diffs before editing. Preserve uncommitted work. Do not reset, force-push, rewrite history or overwrite user changes. Keep unrelated files untouched. A requested repository edit does not imply permission to mutate system state.
+
+## Completion
+State the outcome, important design/engineering decisions, files changed, verification actually performed, remaining risks and recommended next step. Distinguish implemented, mock-tested, runtime-verified and physically verified behavior.

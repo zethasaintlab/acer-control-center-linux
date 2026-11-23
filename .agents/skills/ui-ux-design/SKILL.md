@@ -1,60 +1,91 @@
 ---
 name: ui-ux-design
-description: Creates and critiques high-quality desktop UX and visual systems for a native Linux hardware-control application, with strict anti-template and anti-AI-slop criteria. Use when designing screens, components, typography, colors, layout, interaction, or visual reviews.
+description: Designs and critiques the Acer Control Center's industrial-technical desktop experience, from information architecture and navigation through components, interactions and visual system.
 ---
 
-# Desktop UI/UX Design Skill
+# Desktop Product Design Skill
 
-## Design intent
-Design a premium, original hardware instrument for a technically literate user. It should feel deliberate, calm, precise, and native to a desktop—not like a generic SaaS admin panel or AI-generated dashboard.
+## Product objective
 
-## Research before styling
-Consult current and relevant primary guidance:
-- KDE Human Interface Guidelines: `https://develop.kde.org/hig/`
-- GNOME Human Interface Guidelines: `https://developer.gnome.org/hig/`
-- Nielsen Norman Group usability heuristics: `https://www.nngroup.com/articles/ten-usability-heuristics/`
-- WCAG: `https://www.w3.org/WAI/standards-guidelines/wcag/`
+Create a native Linux hardware command center for the Acer Aspire 7 A715-59G. Its interface should feel like a deliberate technical instrument: clear operational hierarchy, purposeful information density, precise controls and a coherent industrial identity.
 
-Extract applicable principles and turn them into concrete design decisions. Do not merely name-drop these references.
+The visual reference is the project's Endfield research repository:
+https://github.com/zethasaintlab/Endfield-Design-System
 
-## Anti-AI-slop rejection checklist
-Reject:
-- Purple/blue gradients used by default or without meaning.
-- Excessive glassmorphism, blur, glow, neon, and ornamental borders.
-- Cards nested in cards or card-based layouts without information-architecture justification.
-- Huge decorative headings, excessive pills/badges, arbitrary icon styles, emoji navigation.
-- Fake charts, fake telemetry, ornamental gauges, random percentages, and ungrounded status indicators.
-- Excessive rounded corners, generic dashboard templates, inconsistent spacing, and meaningless animation.
-- UI that looks like disconnected components assembled from a template library.
+Use its bimodal industrial-technical language:
+- Dark mode: tactical HUD, instrument bays, restrained contrast, technical status and operational focus.
+- Light mode: clean CAD/engineering surfaces, precise dividers, calm workspace and readable annotations.
+- Industrial geometry: mostly sharp structural edges, disciplined panel boundaries, selective pill-shaped actions.
+- Technical motifs: indexed section labels, topological/contour references, registration marks and restrained hazard striping where they communicate hierarchy or caution.
 
-## Required design process
-1. Identify user tasks and information priority for each screen.
-2. Define navigation and a consistent layout grid before adding decorative styling.
-3. Define typography roles, spacing tokens, neutral surfaces, semantic colors, and one customizable accent system.
-4. Design real states: loading, unavailable, unsupported, stale, permission denied, error, and success.
-5. Design keyboard and pointer interactions; ensure visible focus and sensible tab order.
-6. Check contrast, text scaling, localization length, reduced motion, and small-window behavior.
-7. Use a consistent icon family and restrained motion.
-8. Review every screen at 1920×1080 and at a smaller practical window size.
-9. Show actual telemetry as data; use preview labels for mock/design-only content.
-10. Capture screenshots and review alignment, density, clipping, typography, and contrast before calling a screen complete.
+The reference informs design decisions; it is not a screen template. Do not copy Endfield artwork, logos, character assets, proprietary screenshots or exact game UI compositions.
 
-## Color requirements
-- Application theme accent is always freely customizable using RGB/HSV/HSL/HEX values.
-- Prevent custom accent choices from making text or controls inaccessible; provide contrast-aware variants or a warning.
-- Physical keyboard LED color is a separate feature and is shown only when verified hardware support exists.
-- Never imply that changing application accent changes physical keyboard LEDs.
-- Dark and light themes must both be intentionally designed, not simple inversion.
+## Functional reference
 
-## Visual direction
-A restrained “Precision Hardware Atelier” direction is a starting point, not a rigid template: neutral foundation, precise typography, purposeful density, subtle surface differentiation, strong alignment, readable numeric telemetry, and minimal ornament.
+Study Div Acer Manager Max for workspace responsibilities, dashboard content, hardware-setting workflows and capability-aware presentation:
+https://github.com/PXDiv/Div-Acer-Manager-Max
 
-## Review output
-For each proposed screen, provide:
-- User task and information hierarchy.
-- Layout rationale.
-- Component inventory.
-- Interaction states.
-- Accessibility checks.
-- Anti-AI-slop checklist results.
-- Screenshots or a precise description of unresolved visual issues.
+DAMX is not a visual target, driver dependency or proof of A715-59G compatibility. Its Linuwu-Sense backend targets different Acer WMI interfaces and must not be installed or reused as a hardware authority for this machine.
+
+## Redesign before styling
+
+A color-only reskin is not an acceptable redesign. Work in this order:
+
+1. Understand user tasks and the existing implementation.
+2. Reconcile workspace ownership and information architecture.
+3. Design navigation, global status context and screen-level composition.
+4. Define interaction flows and all important UI states.
+5. Establish reusable components and design tokens.
+6. Apply the visual language and refine motion/decoration.
+7. Validate actual screens at realistic sizes and with real/empty/error data.
+
+The current eight workspace responsibilities are a starting point, not a requirement to retain their exact names or layout:
+- Command Deck / overview.
+- Performance.
+- Thermal Management.
+- Keyboard Studio.
+- Power & Battery.
+- GPU Center.
+- Diagnostics.
+- System Configuration.
+
+Combine or split workspaces only when user tasks and information ownership justify it. Avoid navigation bloat and duplicate controls.
+
+## Design language
+
+Use the palette in docs/DESIGN_SYSTEM.md as a reference-derived starting point. Semantic roles must drive color meaning; a status must not be communicated by hue alone. Suggested reference colors include Endfield yellow, amber and lime accents, technical cyan, industrial dark/light surfaces, and explicit warning/error semantics. Recheck every token for contrast in both themes.
+
+Typography should have clear roles:
+- Extended/display face for rare high-level identity moments.
+- Technical sans for workspace and section headings.
+- Neutral sans for labels and explanatory copy.
+- Tabular numerals for telemetry that changes over time.
+- Monospace for units, paths, firmware identifiers and metadata.
+
+Prefer the installed system families Inter Display, Inter and JetBrains Mono when available. Keep fallback behavior deterministic.
+
+Structural surfaces should be disciplined and readable. Use decorative marks only when they establish grouping, orientation, warning or technical context. Do not place a technical motif in every empty area.
+
+## Interaction and capability states
+
+Design and test:
+- Initial loading and service connection.
+- Available and verified hardware capability.
+- Read-only capability.
+- Unavailable or unsupported hardware.
+- Static firmware candidate / unverified capability.
+- Preview or mock-only interaction.
+- Stale telemetry.
+- Permission denied, failed operation and verified success.
+
+Never imply that a preview changed physical hardware. Never show simulated readings as live telemetry. Fan controls remain preview-only while the physical actuator is unverified. Battery charge-limit controls remain disabled while the physical interface is unverified.
+
+Keyboard RGB and application theme accent are independent systems.
+
+## Accessibility and desktop behavior
+
+Support keyboard navigation, visible focus, logical tab order, accessible names, contrast, text scaling, localization growth, reduced motion and useful error text. Design both dark and light themes intentionally. Validate at the project's practical tiled-window sizes as well as 1920×1080; avoid fixed layouts that only work at the design screenshot size.
+
+## Review standard
+
+A screen is not complete because it looks attractive in a screenshot. Check task completion, information hierarchy, truthful hardware state, empty/loading/error states, accessibility, responsive behavior and consistency with the reusable component system.

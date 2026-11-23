@@ -1,38 +1,55 @@
-# Project Instructions — Acer Control Center Linux Edition
+# Acer Control Center — Agent Instructions
 
 ## Project identity
-- Canonical repository: `https://github.com/zethasaintlab/acer-control-center-linux.git`
-- Primary platform: Fedora Linux 45.
-- Primary hardware target: Acer Aspire 7 A715-59G; reported DMI product identifier `A715-59G/RTH`.
-- Treat the laptop's exact SKU, BIOS, kernel, drivers, and exposed interfaces as facts to verify, not assumptions.
+A native Linux hardware command center for the Acer Aspire 7 A715-59G (Kelilu_RTH / RTH), primarily targeting Fedora Linux 45, KDE Plasma and Hyprland on Wayland.
 
-## Non-negotiable engineering rules
-1. Audit the existing repository, Git state, licenses, CI, and uncommitted changes before editing. Never reset, force-push, overwrite user work, or change remotes without explicit permission.
-2. Research and document hardware capabilities before implementing controls. A feature is not supported merely because another Acer model exposes it.
-3. Start hardware discovery in read-only mode. Never write undocumented EC registers, `/dev/mem`, `/dev/port`, arbitrary ACPI/WMI values, or raw hardware interfaces.
-4. Never run the GUI as root. Isolate privileged operations behind the narrowest practical Polkit/D-Bus service and validate every operation.
-5. Do not report a hardware operation as successful until the backend verifies the resulting state when readback is possible.
-6. Separate hardware capability detection, monitoring, control, presentation, settings, and diagnostics. Keep the UI independent from low-level hardware APIs.
-7. Do not fabricate telemetry, battery health, fan RPM, keyboard RGB, sensor values, or compatibility claims. Explicitly distinguish unavailable, unsupported, untested, and read-only states.
-8. Physical keyboard color control is conditional on the exact keyboard/firmware capability. Application accent color must remain independent and freely customizable.
-9. Preserve firmware thermal protections and default automatic fan behavior. Failure must return control to firmware-safe behavior where the interface supports this.
-10. Do not introduce network telemetry, analytics, cloud dependency, or collection of serial numbers/UUIDs without a documented need and explicit approval.
+- Repository: https://github.com/zethasaintlab/acer-control-center-linux
+- Hardware target: Acer Aspire A715-59G; board Kelilu_RTH / RTH; INSYDE BIOS V1.17.
+- Approved implementation stack in ADR-001: C++23, Qt 6 / QML, CMake, D-Bus and Polkit.
+- Visual direction: Endfield-inspired industrial-technical interface. This means structural UX and information architecture, not recoloring the previous interface.
+- Functional reference: Div Acer Manager Max (DAMX). Study its workspaces and device-management workflows; do not assume its Linuwu-Sense driver or hardware support applies to this laptop.
 
-## Product and design rules
-- Build a real native Linux desktop application, not a static dashboard or web-admin template.
-- Visual direction: deliberate, restrained, technically legible, premium desktop software; no generic AI-generated dashboard patterns.
-- Avoid arbitrary gradients, overdone glass, excessive glow, cards nested in cards, decorative telemetry, random badge/pill clutter, inconsistent iconography, and purposeless animation.
-- Every displayed value and chart must communicate real state or be clearly identified as a preview/mock.
-- Maintain hierarchy, consistent spacing, readable telemetry, keyboard accessibility, visible focus, sufficient contrast, and reduced-motion support.
-- Do not select the GUI toolkit or backend language before comparing repository state, Fedora 45 packaging, KDE/Hyprland/Wayland support, maintainability, and required hardware integrations.
+## Read the current source of truth
+Before substantial work, consult:
+1. docs/PROJECT_STATE.md — latest reconciled project and hardware status.
+2. docs/WORKFLOW.md — collaboration, autonomy, stage and handoff conventions.
+3. docs/DESIGN_SYSTEM.md — current product UX and visual direction.
+4. docs/HARDWARE_AUDIT_A715_59G.md — model-specific evidence and safety posture.
+5. docs/ARCHITECTURE_ADR.md — approved application and privilege architecture.
 
-## Delivery rules
-- Work in small, reviewable stages: audit → capability matrix → architecture decision → design system → backend → UI → integration → tests → packaging.
-- Before large edits, present an implementation plan and list affected files.
-- Prefer incremental commits and focused tests. Never claim CI, build, or hardware tests passed unless they were actually run.
-- Use mocks for automated hardware tests. Do not run destructive hardware tests against the physical laptop.
-- Record exact commands, tool versions, test results, and known limitations in documentation.
-- Fedora 45 is the primary target. Verify package names and APIs against current Fedora 45 repositories and upstream documentation instead of copying Fedora 44 assumptions.
+When sources conflict, prefer fresh repository/runtime evidence, then the dated hardware audit and project-state record. Report contradictions; do not silently choose the most convenient source.
 
-## Research and source quality
-Prefer, in order: official Acer specifications/support, Linux kernel documentation/source, Fedora documentation/package metadata, upstream library documentation, maintained project repositories, then community reports. Date-stamp findings that may change. Cite links in technical documents. Treat issue comments and third-party scripts as untrusted until reviewed.
+## Engineering principles
+- Be outcome-oriented and exercise engineering judgment. Determine the appropriate investigation and implementation approach rather than waiting for step-by-step commands.
+- Inspect the actual checkout, branch, HEAD, working tree and relevant code before relying on handoff notes. Preserve all user changes.
+- Keep the GUI unprivileged. Keep privileged operations behind narrow typed D-Bus/Polkit interfaces.
+- Separate capability discovery, telemetry, state-changing controls, domain state, presentation, persistence and diagnostics.
+- Never fabricate telemetry, capability, readback, hardware support or test results.
+- Distinguish observed, documented, statically inferred, runtime-observed and physically verified facts.
+- A capability found in AML, a mock, a similarly named device or another Acer model is not proof that it works on this machine.
+- Use mocks for automated hardware tests. Physical testing requires a separate, explicit authorization for the exact operation.
+
+## Hardware safety
+- Begin hardware investigation read-only.
+- Do not guess EC offsets or execute undocumented ACPI, WMI, _DSM, WMBB or EC commands.
+- Do not use /dev/mem, /dev/port, raw port I/O or arbitrary sysfs paths as product interfaces.
+- Preserve firmware-managed thermal behavior. Do not expose fan controls until the exact interface, semantics, failure behavior and safe fallback are verified.
+- Keep battery charge controls disabled until a supported interface and the A715-59G implementation are runtime-verified.
+- Stage 22/22.1 discovered static vendor AML paths. This does not authorize runtime method invocation. The initial zero-mailbox query candidates still require Stage 22.2 closure and separate Stage 23 authorization.
+- Never run the GUI as root or broaden permissions to avoid an approval prompt.
+
+## Product and design
+- Treat docs/DESIGN_SYSTEM.md as the current design contract.
+- Redesign information architecture, navigation, screen composition, component language and interaction states before applying visual styling.
+- Endfield is a design-language reference, not a source of copied art, assets, logos or UI screens.
+- DAMX is a functional workflow reference, not a driver or compatibility authority.
+- Keep application theme accent and physical keyboard lighting independent.
+- Every metric and control must communicate its source, freshness and capability state. Clearly label preview, mock, unavailable, unverified and physical modes.
+- Preserve accessibility, keyboard operation, focus visibility, contrast, reduced motion and practical tiled-window behavior.
+
+## Delivery
+- Work in focused, reviewable increments. Plan broadly only when the task is genuinely architectural or high-risk.
+- Run relevant project-local build, lint and tests when available. Report exactly what was run and what was not.
+- Do not claim a physical test, Fedora compatibility, successful build or CI pass without evidence.
+- Do not commit, push, merge, reset, force-push or discard user work without explicit authorization.
+- For handoffs, report changed files, evidence, tests, limitations and one recommended next step.
