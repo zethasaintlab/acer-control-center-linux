@@ -1,6 +1,6 @@
 # Acer Control Center — Linux Edition
 
-**A Precision Hardware Atelier for the Acer Aspire 7 A715-59G on Fedora Linux 45**
+**An Industrial-Technical Hardware Command Center for the Acer Aspire 7 A715-59G on Fedora Linux 45**
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Platform: Fedora 45](https://img.shields.io/badge/Platform-Fedora%20Linux%2045-3B9EFF.svg)](docs/FEDORA_45_PACKAGING.md)
@@ -10,7 +10,11 @@
 
 ---
 
-## Visual Tour — Precision Hardware Atelier
+> **Design and hardware status note (2026-11-23):** This public-main snapshot predates the local Stage 17/18 CLV0001 integration and Stage 22 AML investigation described in docs/PROJECT_STATE.md. The screenshots are a historical UI baseline. Reconcile the active checkout before assuming local engineering results are already present in this branch.
+
+## Legacy UI Baseline — Before the Structural Redesign
+
+> The screenshots below document the former Precision Hardware Atelier implementation. They are retained as historical implementation evidence, not as the approved target for the next UI phase. The next redesign must revisit information architecture, navigation, screen composition, component behavior and interaction states; changing colors alone does not satisfy the design brief.
 
 ### Dark Theme ("Graphite Instrument" — Default)
 | 01 // Overview | 02 // Performance |
@@ -39,12 +43,12 @@
 ## Key Engineering Highlights
 
 1. **Evidence-Based Hardware Honesty:**
-   - Dynamically probes DMI, WMI GUIDs, `hwmon`, `thermal_zone`, `intel_pstate`, `intel-rapl`, `BAT0`/`AC`, `intel_backlight`, `tuned-ppd`, and NVIDIA NVML (`libnvidia-ml.so.1`).
-   - Every capability is explicitly classified (`FULL RW`, `READ-ONLY`, `POLKIT GATED`, `NOT DETECTED`, `REQUIRES VERIFICATION`).
-   - Zero undocumented Embedded Controller (`PNP0C09:00`) register writes, zero `/dev/mem` or `/dev/port` access, and zero arbitrary WMI method execution on the `Kelilu_RTH` Clevo/Kapok ODM board.
-2. **Strict Readback Verification & Automatic Thermal Fallback:**
-   - Every supported hardware write (`intel_pstate`, `tuned-ppd`, `intel_backlight`, and verified/mock `pwm1`, `leds`, `charge_control_end_threshold`) is verified via immediate sysfs/D-Bus readback before reporting success.
-   - Any failure during CPU P-state or fan PWM writes rolls back to prior state or restores firmware automatic fan mode (`pwm1_enable = 2`).
+   - Discovers DMI, WMI/ACPI topology, `hwmon`, `thermal_zone`, `intel_pstate`, `intel-rapl`, `BAT0`/`AC`, `intel_backlight`, TuneD/PPD and optional NVIDIA NVML (`libnvidia-ml.so.1`).
+   - Capability states distinguish standard Linux interfaces from static firmware candidates, runtime queries, previews and physical verification.
+   - The offline AML audit found vendor-specific Clevo/INSYDE fan and FlexiCharger paths. Those paths remain runtime-unverified; no fan or charge-limit firmware method is enabled by this public-main implementation.
+2. **Strict Readback Verification & Safe Standard-Interface Controls:**
+   - Implemented control adapters target documented Linux interfaces such as `intel_pstate`, TuneD/PPD, display backlight and optional standard LED/fan/battery sysfs nodes.
+   - A standard node must be detected and validated before the corresponding control can be used. The A715-59G currently has no standard hwmon fan PWM or battery charge-threshold node.
 3. **Two Independent Unrestricted Color Systems:**
    - **Physical Keyboard Lighting Studio (`04 // KEYBOARD STUDIO`):** Full 24-bit sRGB + HSV wheel + HSL lightness + Hex (`#RRGGBB`) + 4-zone chassis visualizer + custom swatches and named profiles.
    - **Application Theme Accent Studio (`08 // SETTINGS`):** Unrestricted sRGB/HSV/Hex accent color engine with real-time WCAG 2.1 relative luminance and contrast ratio ($\ge 4.5:1$ AA) guardrail token derivation. Changing the physical keyboard color never alters the application theme accent, and vice versa.
@@ -73,9 +77,9 @@ See [docs/HARDWARE_AUDIT_A715_59G.md](docs/HARDWARE_AUDIT_A715_59G.md) for the c
 | **NVIDIA RTX 3050 6GB Telemetry** | `libnvidia-ml.so.1` (`dlopen` + `P8` filter) | **Read-Only Supported** | Yes |
 | **Battery Telemetry & Est. Capacity Ratio** | `/sys/class/power_supply/BAT0` & `AC` | **Read-Only Supported** | Yes |
 | **Internal eDP Panel Backlight** | `/sys/class/backlight/intel_backlight` (`logind`) | **Fully Supported (48,000 steps)** | Yes |
-| **Fan Tachometer RPM & Manual PWM** | `/sys/class/hwmon/*/fan*_input`, `pwm1` | **Not Exposed by Default Kernel (EC Auto)** | **Full RW in Mock Mode** |
+| **Fan Tachometer RPM & Manual PWM** | Standard hwmon fan/PWM ABI; vendor AML candidate paths | **No standard fan RPM/PWM node; static AML paths found but not runtime-verified** | **Mock support only** |
 | **Keyboard Backlight & RGB Zones** | `/sys/class/leds/*kbd_backlight*` | **Not Exposed by Default Kernel (Preview Mode)** | **Full RW in Mock Mode** |
-| **Battery Charge Limit Threshold** | `BAT0/charge_control_end_threshold` | **Not Exposed by Default Kernel** | **Full RW in Mock Mode** |
+| **Battery Charge Limit Threshold** | Standard power_supply threshold ABI; vendor FlexiCharger AML candidate | **No standard threshold node; static FlexiCharger path found but not runtime-verified** | **Mock support only** |
 
 ---
 
@@ -113,11 +117,13 @@ rpmbuild --define "_topdir $(pwd)/build/rpmbuild" -ba build/rpmbuild/SPECS/acer-
 
 ---
 
-## Documentation Index
+## Project Documentation
 
+- [Project State & Hydrogen Handoff](docs/PROJECT_STATE.md)
+- [Engineering Workflow & Agent Collaboration](docs/WORKFLOW.md)
+- [Industrial-Technical Design System](docs/DESIGN_SYSTEM.md)
 - [Hardware Audit & Capability Matrix (`A715-59G / Kelilu_RTH`)](docs/HARDWARE_AUDIT_A715_59G.md)
 - [Architecture Decision Record (ADR-001)](docs/ARCHITECTURE_ADR.md)
-- [Precision Hardware Atelier Design System](docs/DESIGN_SYSTEM.md)
 - [Fedora Linux 45 Packaging & Privilege Guide](docs/FEDORA_45_PACKAGING.md)
 
 ---

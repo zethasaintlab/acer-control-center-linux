@@ -1,113 +1,173 @@
-# Visual Design System — "Precision Hardware Atelier"
+# Product Design System — Industrial Technical / Endfield-Inspired
 
-**Project:** Acer Control Center — Linux Edition  
-**Design Direction:** Precision Hardware Atelier  
-**Primary Display Target:** `1920×1080` @ `144Hz` (scaled cleanly down to `1120×720` minimum window size)
+**Status:** Current design direction approved for the next structural redesign  
+**Product:** Acer Control Center — Linux Edition  
+**Reference research:** https://github.com/zethasaintlab/Endfield-Design-System  
+**Functional reference:** https://github.com/PXDiv/Div-Acer-Manager-Max
 
----
+## 1. Design objective
 
-## 1. Research Foundation & Translated Design Rules
+Acer Control Center should feel like a native industrial hardware command center: operational, technical, information-dense, precise and coherent. The design language is informed by Arknights: Endfield's industrial/tactical HUD and engineering/CAD surfaces.
 
-Our visual language synthesizes five authoritative sources into concrete, testable rules:
+This is a product redesign, not a palette replacement. The next design must reconsider information architecture, navigation, screen composition, component behavior, interaction states and information hierarchy before applying the visual language.
 
-1. **Nielsen Norman Group (10 Usability Heuristics):**
-   - **Visibility of System Status:** Every metric tile and control displays its live hardware provenance (`coretemp`, `NVML 01:00.0`, `BAT0`, `tuned-ppd`) and capability badge (`LIVE`, `READ-ONLY`, `RAIL GATED (P8)`, `NOT DETECTED`, `MOCK PREVIEW`).
-   - **Error Prevention & Recovery:** Unavailable hardware writes (`Fan Curve Override`, `80% Charge Limit`, `Physical Keyboard LED` on `Kelilu_RTH`) never fail silently; controls explain *why* the kernel interface is unavailable and separate preview/profile editing from physical writes.
-2. **KDE Human Interface Guidelines:**
-   - Persistent left navigation rail (`220px` standard / `64px` compact mode) with 8 top-level workspaces and direct keyboard shortcuts (`Alt+1` .. `Alt+8`).
-   - Native system tray integration (`QSystemTrayIcon` / StatusNotifierItem) for quick profile switching and thermal readout.
-3. **GNOME Human Interface Guidelines:**
-   - Strict visual hierarchy: maximum 3 data points per summary cell; progressive disclosure for per-core/per-zone details.
-4. **Apple Human Interface Guidelines:**
-   - Tabular monospace numerals (`tabular-nums`) for all live counters, frequencies, temperatures, and voltages so digits never jitter horizontally during `500 ms` updates.
-   - Restrained, purposeful transitions (`140 ms` cubic-bezier) that automatically collapse to `0 ms` when `reducedMotion` is enabled.
-5. **WCAG 2.2 AA/AAA Accessibility:**
-   - Automated relative luminance ($L$) and contrast ratio ($CR = \frac{L_1 + 0.05}{L_2 + 0.05}$) computation on every custom Application Accent Color selection, ensuring $\ge 4.5:1$ text contrast and $\ge 3.0:1$ non-text control contrast across both Dark and Light themes.
-   - High-visibility `2px` keyboard focus outlines (`focusRingColor`) on all interactive controls, including custom canvas widgets.
+Do not copy Endfield's proprietary screens, artwork, logos, characters, textures or exact compositions. The research repository documents design patterns and visual properties; translate those principles into an original desktop product.
 
----
+DAMX is a functional reference for workspace responsibilities and device-management workflows. Its Avalonia visuals and Linuwu-Sense driver are not the visual or hardware implementation target for this project.
 
-## 2. Anti-AI-Slop Rejection Checklist
+## 2. Product experience principles
 
-Every screen and component is audited against these strict prohibitions:
-- **No purple-blue or random gradients:** All structural surfaces are flat, matte architectural planes.
-- **No glassmorphism, neon glow, or drop-shadow soup:** Depth is communicated through crisp `1px` structural hairlines (`borderSubtle`, `borderStrong`) and luminance steps.
-- **No cards nested inside cards:** Workspaces use an architectural instrument-bay grid divided by `1px` hairlines and indexed technical headers (`01 // CPU & PLATFORM`, `02 // DISCRETE GPU`).
-- **No emoji icons or mixed icon weights:** Custom `1.5px` stroke vector iconography rendered via QML `Canvas` / SVG paths.
-- **No fabricated telemetry or ornamental gauges:** Every chart plots real time-series ring buffers with labeled axes (`°C`, `W`, `%`, `MHz`).
+1. **Operational clarity:** Users should understand platform state, capability, current mode and the next meaningful action at a glance.
+2. **Instrument-first information:** Real measurements, units, freshness and provenance take priority over decorative cards or abstract gauges.
+3. **Progressive density:** Show the most important status first, then make subsystem detail discoverable without hiding critical controls.
+4. **One source of truth:** A control's visible state must come from domain/backend state, not a local visual assumption.
+5. **Capability honesty:** Available, read-only, unsupported, not detected, statically discovered, runtime-unverified, preview and mock states are visibly distinct.
+6. **Purposeful industrial character:** Use section indexing, measured alignment, technical annotation and disciplined geometry to make the interface recognizable without visual noise.
+7. **Native desktop behavior:** Respect desktop windowing, keyboard navigation, focus, system theme, scaling and reduced motion.
 
----
+## 3. Endfield design language — translated, not copied
 
-## 3. Color System & Dual Color Architecture
+### 3.1 Bimodal surfaces
 
-### 3.1 Surface & Semantic Palette
-| Token Role | Dark Theme ("Graphite Instrument") | Light Theme ("Anodized Aluminum") | Usage |
-|---|---|---|---|
-| `canvasBg` | `#0D0F12` | `#F3F5F8` | Primary window background |
-| `surfacePrimary` | `#13161B` | `#FFFFFF` | Primary instrument bay surface |
-| `surfaceElevated` | `#191D24` | `#EAEEF4` | Interactive control / input background |
-| `surfaceHeader` | `#101318` | `#E3E8F0` | Section header bar & navigation rail |
-| `borderSubtle` | `#232832` | `#D2D9E4` | `1px` structural grid hairline |
-| `borderStrong` | `#343C4A` | `#B4BFCE` | Active control / input boundary |
-| `textPrimary` | `#ECEFF4` | `#12161F` | Primary headings & numeric readouts |
-| `textSecondary` | `#9AA4B5` | `#4A5568` | Technical labels, units & provenance |
-| `textMuted` | `#646E80` | `#718096` | Disabled / unsupported explanation text |
-| `statusNominal` | `#2EBE7E` | `#168A56` | Normal thermal/power state (`< 75°C`) |
-| `statusWarning` | `#E5A024` | `#B87503` | Elevated thermal/power state (`75–87°C`) |
-| `statusCritical` | `#E04F5F` | `#C5283D` | Thermal/power throttling or critical alert (`>= 88°C`) |
-| `statusInfo` | `#3B9EFF` | `#0066CC` | Read-only / informational state badge |
+- **Dark / Tactical HUD:** deep graphite surfaces, clear instrument grouping, restrained contrast, strong active-selection signals and legible telemetry.
+- **Light / Engineering CAD:** cool neutral surfaces, precise dividers, quiet panels, high legibility and technical annotation.
+- Both modes must be designed intentionally. Light mode is not a color inversion of dark mode.
 
-### 3.2 Dual Color System (Strict Separation)
-1. **Application Theme Accent (`SettingsViewModel.accentColor`):**
-   - Freely customizable across the entire sRGB gamut via HSV/HSL wheel, RGB sliders, Hex input, and saved swatches.
-   - `ThemeEngine` computes WCAG relative luminance and derives:
-     - `accentPrimary`: User's selected color.
-     - `accentAccessibleText`: Contrast-safe foreground (`#0D0F12` or `#FFFFFF`) guaranteed $\ge 4.5:1$ against `accentPrimary`.
-     - `accentSurfaceTint`: Low-opacity (`14%` Dark / `10%` Light) tint for active navigation items and chart area fills.
-     - `accentReadableOnSurface`: Luminance-clamped variant guaranteed $\ge 4.5:1$ against `surfacePrimary` for inline text/numbers.
-2. **Physical Keyboard Lighting Color (`KeyboardStudioViewModel`):**
-   - Controls the lighting profile for the physical keyboard (1-zone or 4-zone sRGB + brightness + mode).
-   - **Never coupled to the Application Theme Accent** (though a user may explicitly click "Copy App Accent Swatch" if desired).
-   - Displays a permanent hardware routing indicator showing whether changes are written to `/sys/class/leds/*kbd_backlight*`, routed to `Mock Hardware Test Mode`, or held in `Profile Design & Preview Mode (Hardware LED Not Detected)`.
+### 3.2 Reference palette
 
----
+The following colors are research-derived reference values, not immutable application tokens. Validate all tokens in actual UI contexts and derive accessible variants.
 
-## 4. Typography & Spatial Grid
+| Role | Reference value | Intended use |
+|---|---:|---|
+| Active selection / primary signal | #FFEA00 | Current workspace, selected mode, primary focus |
+| Amber | #F5D328 | Caution, elevated state, attention |
+| Lime | #A4E61D | Positive/active system signal when semantically appropriate |
+| Technical cyan | #2596FF | Informational telemetry and technical links |
+| Dark structural surface | #222524 | Deep tactical base |
+| Dark raised surface | #333736 | Secondary instrument surface |
+| Light engineering surface | #D8DCDF | CAD-like neutral plane |
+| Light control surface | #F2F4F5 | Inputs and raised light surfaces |
+| Dark-theme primary text | #F0F2F2 | Main readable content |
+| Light-theme primary text | #23272A | Main readable content |
+| Muted text | #8C9398 | Metadata and secondary labels, subject to contrast checks |
+| Error | #E06C65 | Failure and critical error |
 
-### Typography Scale
-- **Primary UI Font:** System sans-serif (`Inter`, `Noto Sans`, or `Cantarell`)
-- **Technical / Telemetry Font:** System monospace (`JetBrains Mono`, `IBM Plex Mono`, or `monospace`) with `font.features: { "tnum": 1 }`
-- **Roles:**
-  - `Hero Metric` (`28px` Mono Bold): Primary temperature, wattage, or percentage readout.
-  - `Section Index` (`11px` Mono SemiBold, uppercase, `0.08em` tracking): e.g., `01 // PROCESSOR TELEMETRY`.
-  - `Workspace Title` (`18px` Sans SemiBold): Screen header title.
-  - `Control Label` (`13px` Sans Medium): Setting and control title.
-  - `Body / Explanation` (`12px` Sans Regular): Hardware capability notes and descriptions.
-  - `Caption / Provenance` (`11px` Mono Regular): Sensor sysfs path, polling interval, or unit label.
+Do not use yellow, amber or lime indiscriminately. Semantic state colors must be consistent and accompanied by text, iconography or shape. The user-customizable application accent remains supported, but semantic warning/error colors must not be overridden by it.
 
-### Spatial System (`8px` Base Unit)
-- Window minimum dimensions: `1120×720`; default target: `1360×860` (fits comfortably inside `1920×1080` floating or tiled in Hyprland/KDE).
-- Navigation Rail: `220px` width (`64px` collapsed).
-- Top Status Bar: `48px` height (shows DMI model `Aspire A715-59G // Kelilu_RTH`, active profile badge, CPU/GPU live pills, polling rate indicator, and Mock/Physical mode badge).
-- Section Padding: `16px`; Grid Gap: `1px` hairline structural borders or `12px` control spacing.
+### 3.3 Typography
 
----
+Use a clear technical hierarchy:
+- **Display/identity:** an extended display face used sparingly for product identity or major numeric emphasis.
+- **Section headings:** technical sans with deliberate weight and tracking.
+- **Body and controls:** neutral sans with high readability.
+- **Telemetry:** tabular numerals so changing values do not jitter.
+- **Metadata:** monospace for units, device paths, firmware IDs, timestamps and diagnostic provenance.
 
-## 5. Complete Navigation & Screen Inventory
+Preferred available families on the development system: Inter Display, Inter and JetBrains Mono. Provide robust system fallbacks and do not bundle font files without license review.
 
-1. **`01 // OVERVIEW` (Main Dashboard):**
-   - 4-quadrant live telemetry bay (CPU Package & Cores, NVIDIA RTX 3050 GPU, Memory & PSI Pressure, Thermal & Power Summary) + dual 60-second synchronized strip charts + quick Operating Profile selector.
-2. **`02 // PERFORMANCE` (Performance Center):**
-   - Operating Profile switcher (`Quiet`, `Balanced`, `Performance`, `Custom`) wired to `tuned-ppd` + `intel_pstate` (`governor`, `EPP`, `Turbo Boost`, `Min/Max Perf %`) + AC/Battery automatic switching rules + per-core frequency bar rack.
-3. **`03 // THERMAL` (Thermal & Fan Center):**
-   - Live multi-sensor temperature matrix (`coretemp`, `TCPU`, `SEN2`, `SEN3`, `nvme0`, `nvme1`, `iwlwifi_1`, `GPU`) + interactive 2D piecewise Fan Curve Editor (`°C` vs `PWM %`) with explicit `Firmware Auto / Preview Mode` vs `Hardware PWM` status banner.
-4. **`04 // KEYBOARD STUDIO` (Keyboard Lighting Studio):**
-   - Interactive scale vector visualizer of the Acer Aspire 7 15.6" keyboard (with numpad & 4-zone segmentation) + **Unrestricted Color Picker** (2D HSV/HSL wheel, RGB `0–255` sliders & spinboxes, `#RRGGBB` hex input, live sRGB preview, saved custom swatches) + lighting profile manager (`Save`, `Load`, `Rename`, `Delete`).
-5. **`05 // BATTERY & POWER` (Battery & Power Center):**
-   - Real-time charge state, discharge/charge wattage (`V × I`), estimated capacity ratio (`charge_full / charge_full_design` with explicit fuel-gauge estimation notes), rolling charge/power history chart, AC adapter status, battery notifications, and conditional Charge Limit (`80% Care Mode`) control.
-6. **`06 // GPU` (NVIDIA GPU Center):**
-   - Dedicated RTX 3050 6GB instrument panel: Graphics/SM/Memory clock gauges, VRAM allocation bar, P-state indicator (`P0`–`P8`), power limits (`60W` default / `75W` max) with P8 rail-gate detection, and decoded NVML throttle reason flags.
-7. **`07 // DIAGNOSTICS` (Hardware Diagnostics):**
-   - Full Capability Matrix table with live state badges, DMI/WMI/driver inspector, live switches for **Physical Hardware Mode** vs **Mock Hardware Test Mode** (for safe verification of unsupported/unverified controls), application log viewer, and **Export Redacted Diagnostic Report** (Markdown/JSON).
-8. **`08 // SETTINGS` (Personalization & System Preferences):**
-   - Dark / Light theme toggle, **Unrestricted Application Theme Accent Color Picker** with live WCAG 2.2 contrast ratio meter, telemetry polling rate selector (`500 ms` – `5000 ms`), reduced-motion toggle, compact navigation toggle, system tray preferences, and profile import/export.
+### 3.4 Geometry and technical motifs
+
+- Structural panels and separators: sharp or near-sharp geometry, typically 0–2 px corner radius.
+- Interactive action controls: selective stadium/pill geometry where it improves affordance.
+- Use thin dividers, clipped/angled details, registration crosses, contour/topology lines and hazard striping sparingly.
+- A technical motif must identify a boundary, state, warning, alignment or section. Do not fill whitespace with decoration.
+- Avoid generic glassmorphism, heavy blur, excessive glow, arbitrary gradients, nested cards and dashboard-template composition.
+
+## 4. Information architecture
+
+The current eight workspaces are an initial functional inventory, not a mandate to preserve the old tab layout. Reconcile them against actual user tasks before implementation.
+
+| Proposed workspace | Primary responsibility |
+|---|---|
+| **01 / COMMAND DECK** | Overall device status, important telemetry, capability summary and high-value quick actions |
+| **02 / PERFORMANCE** | CPU policy, system power profile, operating modes and performance telemetry |
+| **03 / THERMAL MANAGEMENT** | Temperature matrix, fan telemetry, thermal state and fan controls only when verified |
+| **04 / KEYBOARD STUDIO** | Physical keyboard lighting, verified static RGB, profiles and preview |
+| **05 / POWER & BATTERY** | Charge/discharge telemetry, capacity estimates, power source and verified charge policy |
+| **06 / GPU CENTER** | NVIDIA telemetry, VRAM, clocks, utilization, power and diagnostics |
+| **07 / DIAGNOSTICS** | Hardware identity, capability evidence, drivers, logs and redacted report export |
+| **08 / SYSTEM CONFIGURATION** | Application preferences, theme, accent, polling and lifecycle options |
+
+A future information-architecture proposal may merge or split these workspaces if user tasks justify it. Avoid duplicating profile controls in several pages. Define global status context separately from per-workspace navigation.
+
+### Command Deck composition
+
+The command deck should answer:
+- What state is the laptop in now?
+- Which subsystems are active, unavailable or degraded?
+- What requires attention?
+- Which operations are genuinely available?
+
+Use live CPU/GPU/thermal/power/battery data where present. Do not add arbitrary gauges, fake utilization, placeholder RPM or meaningless KPI tiles. Each reading must have units, provenance and stale/unavailable handling.
+
+## 5. Interaction model
+
+Define the interaction contract before visual polish.
+
+- Navigation must make current location, hierarchy and global hardware mode obvious.
+- Controls must explain their scope, units, valid range and whether they apply immediately or require explicit Apply.
+- Destructive or high-risk changes require confirmation and explain recovery.
+- Long-running or permission-gated operations need progress, denial and failure states.
+- Profiles must distinguish selected, applied and read-back-verified states.
+- Preview and profile editing must never imply physical hardware changes.
+- Telemetry should show freshness and source; stale values must not look live.
+
+### Capability states
+
+The current domain model includes FullySupported, ReadOnly, PartiallySupported, Unsupported, NotDetected and RequiresVerification. UI presentation must preserve those distinctions and additionally communicate loading, stale, permission-denied, failed, preview and mock states without overloading the capability enum.
+
+For this hardware:
+- Fan curve editing remains preview-only until a safe, exact-model control interface is runtime-verified.
+- Fan RPM/telemetry candidates found in AML are not yet runtime verified; some paths use active EC mailbox transactions.
+- Battery telemetry is available; FlexiCharger paths found in AML remain unverified.
+- Battery charge controls stay disabled until a supported physical setter and readback are verified.
+- Keyboard static RGB functionality reported as physically verified in the recent local engineering workflow must be reconciled with the actual checkout before advertising it as available in that checkout.
+
+## 6. Reusable component language
+
+Build components around recurring information and behavior, not around decorative card styles.
+
+Expected component families:
+- **Global status/context:** device identity, power source, active profile, hardware mode, service status.
+- **Telemetry instruments:** numeric readout with unit, source, freshness and optional trend.
+- **Capability indicator:** verified, read-only, partial, not detected, unverified, preview and mock.
+- **Section header:** index, technical label, optional contextual metadata.
+- **Control group:** segmented modes, sliders, toggles, numeric input, explicit apply/revert.
+- **Event/diagnostic row:** timestamp, subsystem, severity and concise message.
+- **Charts:** labeled axes, known ranges, readable time scale and explicit data availability.
+- **Preview instrument:** clearly differentiated from physical hardware state.
+
+Avoid nesting generic containers. A surface should represent a coherent subsystem or task region, not just wrap every control.
+
+## 7. Responsive, accessibility and motion
+
+Validate the real QML implementation at:
+- 1920×1080.
+- 1600×900.
+- 1366×768.
+- A practical tiled/minimum window size agreed by testing.
+
+Requirements:
+- No overlap, hidden critical controls or clipped primary data.
+- Use adaptive reflow and progressive disclosure rather than only shrinking typography.
+- Keyboard navigation and logical tab order.
+- Visible focus and accessible names.
+- Contrast tested in both themes and across custom accent choices.
+- Text scaling and long localized/device strings handled.
+- Reduced-motion preference respected; animation must communicate state or transition, not decorate telemetry.
+- Color must never be the sole carrier of meaning.
+
+## 8. Redesign acceptance criteria
+
+A screen is not considered redesigned when only its palette, typography or corner radius changes.
+
+A substantive redesign must show evidence of:
+1. Revised task hierarchy or a reasoned decision to retain a part of it.
+2. Deliberate navigation and screen composition.
+3. Reusable components with consistent behavior.
+4. Realistic loading, unavailable, stale, preview, error and success states.
+5. Distinctive industrial-technical visual language across dark and light modes.
+6. Responsive and accessible interaction.
+7. Hardware truthfulness and capability-aware controls.
+
+The prior Precision Hardware Atelier screenshots are historical implementation references only. They are not the target appearance for the next redesign.

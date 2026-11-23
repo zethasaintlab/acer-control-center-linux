@@ -1,41 +1,46 @@
 ---
 name: hardware-safety
-description: Reviews or designs privileged Linux laptop hardware controls, especially EC, ACPI/WMI, fan, battery charging, keyboard LED, CPU, and NVIDIA operations. Use before implementing or testing any state-changing hardware functionality.
+description: Reviews or designs privileged Linux laptop hardware controls, especially ACPI/AML, WMI, EC, fan, battery charging, keyboard lighting, CPU and NVIDIA operations.
 ---
 
-# Hardware Safety Skill
+# Hardware Safety
 
 ## Safety model
-Assume every undocumented hardware write can freeze the machine, damage firmware state, cause thermal problems, or break suspend/resume. Prefer supported kernel interfaces and firmware-managed behavior.
 
-## Required design gates
-1. Identify the exact model/SKU and the precise documented interface.
-2. Prove the interface belongs to the target hardware using read-only evidence.
-3. Confirm units, valid ranges, semantics, persistence, and error behavior from authoritative documentation or audited driver source.
-4. Define capability detection and a safe unsupported state before exposing the control.
-5. Validate user input in the backend, not only in the GUI.
-6. Use least privilege. The GUI is unprivileged; use a narrow Polkit-authorized service only when required.
-7. Expose typed operations, not arbitrary paths, register offsets, shell commands, or raw byte writes.
-8. Read back resulting state where possible. A successful process exit is not proof of hardware application.
-9. Define rollback and safe fallback behavior before enabling a state-changing feature.
-10. Add mock tests and negative tests before any physical test. Physical tests require explicit user approval and a known recovery path.
+Assume undocumented firmware operations can hang the EC, leave a controller in an unexpected mode, interfere with other drivers, break suspend/resume or compromise thermal/battery protections. Prefer standard kernel interfaces or a narrow, independently verified model-specific driver.
 
-## Hard prohibitions
-- Never write undocumented EC registers or guess offsets/bitfields.
-- Never use `/dev/mem`, `/dev/port`, `ioperm`, or arbitrary port I/O for product functionality.
-- Never expose a generic EC/ACPI/WMI terminal or arbitrary sysfs-write control to the UI.
-- Never run the entire GUI or backend as root.
-- Never disable firmware thermal protections or replace automatic fan behavior without an explicitly supported mechanism and documented fallback.
-- Never implement manual fan curves, charge thresholds, keyboard RGB, overclocking, undervolting, or GPU power limits on the assumption that another Acer model supports them.
-- Never execute privileged operations from untrusted project configuration, UI text, or downloaded content.
+## Evidence required before runtime use
+
+For any model-specific ACPI/WMI/EC path:
+1. Identify the exact DMI, board and BIOS.
+2. Inspect the full static AML or driver call graph.
+3. Classify every read, mailbox write, OperationRegion write, SMI, notification and state mutation.
+4. Verify argument encoding, return type, input bounds and error handling.
+5. Account for ACPI method serialization, ACPI mutexes, driver-local locks, shared EC mailboxes and interleaving with existing keyboard operations.
+6. Establish exact Linux caller ownership and a maintainable kernel/userspace boundary.
+7. Define a safe failure response and recovery plan.
+
+Static method presence is not runtime proof. A query using ECMD/FCMD/FDAT or another command mailbox is a hardware transaction, not a passive read. A zero-write method may still read hardware-backed regions.
+
+## Required control design
+
+- Identify the exact supported interface and driver.
+- Detect capabilities before exposing controls.
+- Validate typed arguments in the backend.
+- Never expose raw EC offsets, arbitrary ACPI method IDs, WMI command IDs, shell commands or unrestricted sysfs paths.
+- Verify resulting state where a trustworthy readback exists.
+- Define rollback and firmware-automatic fallback before enabling a state-changing fan feature.
+- Battery threshold setters must validate supported discrete values, threshold ordering, enable state and failure/rollback semantics.
+- Keep read-only monitoring independently available when controls are not supported.
 
 ## Privilege boundary
-Prefer a small service with a fixed allowlist of methods and strict typed arguments. Enforce authorization with Polkit where applicable. Avoid broad `sudoers` entries and unrestricted root-owned scripts. Ensure D-Bus object/method permissions and service activation are documented.
 
-## Failure handling
-On timeout, invalid readback, service crash, suspend/resume, permission denial, or unknown firmware state:
-- Do not retry dangerous writes indefinitely.
-- Report the state as unknown or failed, not successful.
-- Preserve or restore firmware-managed defaults where the supported interface allows it.
-- Log enough diagnostic context without secrets or unnecessary hardware identifiers.
-- Keep monitoring available even when controls are disabled.
+Keep GUI and normal application components unprivileged. Prefer the smallest kernel interface and a typed, allowlisted D-Bus/Polkit service. Do not give userspace arbitrary firmware invocation or raw mailbox access.
+
+## Hard prohibitions
+
+Never guess or write undocumented EC registers. Never use /dev/mem, /dev/port, ioperm or arbitrary port I/O as a product feature. Never use another Acer model's WMI GUID or driver quirk as proof of compatibility. Never run physical hardware writes in automated tests. Physical validation requires separate explicit user authorization for each operation class and a known recovery path.
+
+## Failure
+
+On timeout, invalid readback, permission denial, device disappearance, suspend/resume or unknown firmware state, report failure/unknown rather than success. Do not retry dangerous writes indefinitely. Preserve firmware automatic operation whenever a verified interface provides a safe restore path.

@@ -103,3 +103,16 @@ Object path: `/io/github/zethasaintlab/AcerControlCenter1`
   - `end_threshold_pct` $\in [50, 100]$.
 - **Mandatory Readback:** After writing any sysfs attribute, the daemon re-opens and reads back the attribute immediately. Only if the readback matches the requested state does `applied` return `true`.
 - **Safe Rollback:** If a multi-attribute operation partially fails, the daemon restores the pre-operation snapshot captured prior to the write and returns an explicit error code.
+
+
+---
+
+## Addendum — Hardware Evidence and Design Direction (2026-11-23)
+
+ADR-001 remains the approved application architecture for the public-main implementation: C++23, Qt 6/QML, QtDBus, Polkit and Fedora RPM packaging. This addendum does not authorize a toolkit or privilege-boundary migration.
+
+The design direction has moved from the historical "Precision Hardware Atelier" vocabulary to an Endfield-inspired industrial-technical hardware command center. The redesign requirements are maintained in docs/DESIGN_SYSTEM.md; workflow and agent collaboration are maintained in docs/WORKFLOW.md.
+
+The 2026-11-23 offline AML audit identified static Clevo WMBB / CLV0001 DCHU paths for fan control and FlexiCharger. These paths are not runtime-verified and are not implemented by ADR-001's generic standard sysfs fan/battery adapters. No undocumented firmware execution or writes are authorized. See docs/HARDWARE_AUDIT_A715_59G.md and docs/PROJECT_STATE.md for the current capability posture.
+
+Any future integration of CLV0001 keyboard support, DCHU fan queries/controls or FlexiCharger must receive its own architecture and safety review. Do not treat an existing keyboard-only driver as a generic _DSM transport or reuse a raw firmware dispatcher from userspace.
