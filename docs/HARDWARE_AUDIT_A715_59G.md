@@ -243,33 +243,49 @@ Important limitations:
 - DCHU.SCMD and WMI.SCMD have materially different conditional behavior.
 - BAT0 does not expose the standard charge-threshold node on the reported physical system.
 - The standard _BST charge-limiting status bit is not a threshold-setting interface.
-- Stage 22.1 found BAT0._BTP is an empty stub in this BIOS build; do not treat it as a FlexiCharger control.
+- Stage 22.2 corrected an earlier Stage 22.1 misstatement about `BAT0._BTP`: `BAT0._BTP` (`DSDT/DSDT.dsl:95677-95701`) is **not** an empty stub; when `ECOK` is set it sends a standard ACPI battery trip-point EC mailbox command (`ECMD { 0x05, 0x00, 0xF2, 0x00, 0xC0, hi, lo, 0x00 }`), which is unrelated to Clevo FlexiCharger (`ECMD 0xCB`).
 
 **Product posture:** battery telemetry only. Do not expose or invoke a charge-limit setter until runtime behavior, EC acceptance, constraints, readback and rollback are proven.
 
-### 5.4 Candidate zero-mailbox queries and pending safety review
+### 5.4 Candidate zero-mailbox queries and Stage 22.2 closure
 
-Stage 22.1 identified these as candidates for a separate, explicitly authorized runtime review:
-- DCHU GCMD 0x77.
-- DCHU PK04 0x1E.
-- DCHU PK04 0x08.
-- Optionally PK07 if its BMD0 value is needed.
+Stage 22.2 closed the static AML review of the initial read-only candidate set (`DSDT` + `SSDT1–SSDT17`, offline `iasl -d` disassembly) behind `\_SB_.DCHU._DSM` (UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, `Arg1` revision `0`, `Arg3` as `Package { Buffer }`):
 
-PK04 0x08 may conditionally read EC.RINF. PK04 0x1E is gated by ECOK; Stage 22.2 must resolve the exact ECOK object/access type. DCHU._DSM serialization and the interaction with driver-local keyboard locks and WMBB/PATM must also be reviewed.
+1. **`DCHU.GCMD 0x77`** (`DSDT/DSDT.dsl:102800-102874, 105881-105891, 106591-106597`):
+   - **Call contract:** `Arg2 = 0x77`, `Arg3 = Package { Buffer(>=4) }` (mandatory because `GCMD` executes `ARGP = DerefOf (Arg2 [Zero])` before testing `Arg1`).
+   - **Return:** ACPI `Integer`: bits `[7:0] = (BAEE >> 1)`, `[15:8] = BSCP`, `[23:16] = BTCP`.
+   - **Access path:** Pure `OGNS` ACPI NVS (`SystemMemory 0x428D6018`) read; no `ECOK` check, zero `EC.RAM`, zero `EC81`, zero `PATM`.
+2. **`DCHU.PK04 0x1E`** (`DSDT/DSDT.dsl:102800-102830, 102965-102970, 103011-103029, 103597-103621, 103766`):
+   - **Call contract:** `Arg2 = 0x04`, `Arg3 = Package { Buffer([0]=0x1E, ...) }`.
+   - **Return:** `256`-byte `Buffer` (`0x0100`): when `ECOK == 1`, `[0] = (BAEE >> 1)`, `[1] = BSCP`, `[2] = BTCP`, `[16..31] = FCSC` (`40, 50, 60, 70, 80, 90`, zero-padded), `[32..47] = FCTC` (`60, 70, 80, 90, 100`, zero-padded); when `ECOK == 0`, zero-filled `Buffer (0x0100)`.
+   - **Access path:** `ECOK`-gated (`IntObj`) read of `OGNS` NVS (`SystemMemory 0x428D6018`) and static AML constant buffers; zero `EC.RAM`, zero `EC81`, zero `PATM`.
+3. **`DCHU.PK04 0x08`** (`DSDT/DSDT.dsl:102800-102830, 102965-102970, 103011-103029, 103277-103369, 103766`):
+   - **Call contract:** `Arg2 = 0x04`, `Arg3 = Package { Buffer([0]=0x08, ...) }`.
+   - **Return:** `256`-byte `Buffer` (`0x0100`): when `ECOK == 1`, packs `W000` (`[0..1] = 0x0001`), `W002` (`[2..5] = PSF1`), `W006` (`[6..9] = modified PSF2`), `W00A` (`[10..11] = modified PSF4`), `W00C` (`[12] = PDDS flag`), `W00D` (`[13..14] = PSF5 & mask`), `W00F` (`[15..18] = modified CCF0`), `W013` (`[19..22] = modified CCF1`), `W017` (`[23..26] = 0x0800`); when `ECOK == 0`, zero-filled `Buffer (0x0100)`.
+   - **Access path:** `ECOK`-gated (`IntObj`) read of `OGNS` NVS (`PSF0..PSF6`, `CCF0..CCF1`, `LKFG`), ACPI globals (`OSYS`, `PPMF`, `OSCP`), trivial `WMI.PSTG ()` stub (`DSDT/DSDT.dsl:108258-108261`, returns `Zero`), conditional single-byte `^^PC00.LPCB.EC.RINF` read when `(PSF6 & 0x0F)` (`RINF` is at offset `0xDC` of `OperationRegion (RAM, SystemMemory, 0xFE0B0100, 0x0100)` at `DSDT/DSDT.dsl:100739, 100862`, **not** `EC81`), conditional `^^PC00.GFX0.PDDS (0x0300)` (`SSDT4/SSDT4.dsl:2044-2093`, reading Intel IGD OpRegion `IGDM` `SystemMemory ASLB`), and `CondRefOf (\_SB.PC00.PEG1.PEGP.EJFG)`. Zero `EC81`, zero `ECMD`, zero `PATM`.
 
-PK0C, DCHU.PK0D, GCMD 0x63/0x64/0x6E, all fan setters, PK0E and FlexiCharger setters are not zero-write candidates.
+**Excluded from the initial Stage 23 candidate set:**
+- **`DCHU.PK07`** (`DSDT/DSDT.dsl:103769-103782`): `NotSerialized`, `ECOK`-gated 16-bit read of `EC.RAM.BMD0` (`SystemMemory 0xFE0B0100` at `DSDT/DSDT.dsl:100842`). Although zero-`EC81`/zero-`ECMD`, `BMD0` has no other AML writers or consumers across all 18 tables; `PK07` remains excluded from the initial Stage 23 candidate set unless new evidence establishes a concrete need.
+- **`ECMD` / write-path operations:** `PK0C`, `DCHU.PK0D`, `GCMD 0x63/0x64/0x6E–0x71`, all fan setters (`SCMD 0x68/0x69/0x79`, `PK0E`), `BAT0._BTP`, and FlexiCharger setters (`PK04 0x1F`, `SCMD 0x76`) are not zero-write candidates and remain strictly excluded.
 
-### 5.5 Pending work and authorization
+### 5.5 Stage 22.2 static closure & Stage 23 authorization boundary
 
-Stage 22.2 was not completed in the reported workflow. It must:
-1. Correct the ACPI 6.6 battery method inventory.
-2. Resolve ECOK's declaration and hardware-access semantics.
-3. Verify Serialized method semantics and synchronization boundaries.
-4. Validate exact DCHU function/package contracts and output types.
-5. Finalize the zero-mailbox candidate matrix.
+Stage 22.2 resolved all five open static-analysis questions:
+1. **ACPI 6.6 `BAT0` inventory (`DSDT/DSDT.dsl:95497-95879`):** `_STA` (`95501`), `_BIX` (`95594`, conditionally compiled under `If ((PSF0 & 0x00010000))` at `95527`; `UPBX` reads `EC.RAM.CYCN` at `95581`), `_BIF` (`95663`), `_BTP` (`95677-95701`, EC mailbox-backed `ECMD 0xF2/0xC0` standard ACPI battery trip-point method — **not** an empty stub and **not** a FlexiCharger control), and `_BST` (`95867`, setting bit 3 `0x08` when `(OSCP & 0x00080000) && (BAEE & 0x02)` at `95732-95738`).
+2. **`ECOK` object & semantics:** `Name (ECOK, Zero)` inside `\_SB_.PC00.LPCB.EC` (`DSDT/DSDT.dsl:100605`) — a named ACPICA `IntObj`, **not** a `FieldUnitObj` or EC register (`SSDT1/SSDT1.dsl:44`'s `External(..., FieldUnitObj)` is a per-table `iasl` heuristic). Initialized to `Zero` and updated only once across all 18 tables in `EREG` (`100632`, `If ((PSF0 & One))` -> `ECOK = One`), invoked by `EC._REG (Arg0=0x03, Arg1=One)` (`100718`). Reading `ECOK` performs zero hardware I/O.
+3. **Distinct synchronization mechanisms & boundaries:**
+   - **`DCHU._DSM` (`Serialized`, `102800`):** ACPICA method-level serialization across callers of `DCHU._DSM` only (`GCMD`, `SCMD`, `PK04`, `CPKG` are `Serialized`; `CC30`, `PK07`, `PK0C`, `PK0D`, `PK0E`, `PK11`, `OCWR` are `NotSerialized`). Does **not** acquire `EC.PATM`.
+   - **`WMBB` / `PATM` (`Serialized`, `100176-100312`):** `\_SB_.WMI_.WMBB` explicitly acquires `EC.PATM` (`Mutex (PATM, 0x00)`, `100604`, timeout `0x0064` ms) across every subcommand dispatch.
+   - **`ECMD` / `PATM` (`NotSerialized`, `101104-101168`):** Acquires `EC.PATM` (`0x03E8` ms) directly around `EC81` `EmbeddedControl` mailbox registers `FCMD..FBF3` (likewise `ECRD`/`ECWT` at `101075-101102` acquire `PATM` around single accesses).
+   - **`acer_clv0001_kbd` mutex (`driver/acer_clv0001_kbd.c:355-492`):** Holds Linux kernel `ctx->lock` across sysfs rate-limiting and `acpi_evaluate_dsm(..., 0x67, ...)` (`SCMD 0x67` -> `ECMD` under `PATM`), serializing sysfs keyboard command writers only (not external `WMBB` or ACPI callers).
+   - **Boundary consequence:** Evaluating `GCMD 0x77`, `PK04 0x1E`, or `PK04 0x08` through `DCHU._DSM` never touches `PATM` or `EC81`, cannot deadlock `ctx->lock` or `PATM`, and is serialized against `SCMD 0x67` at `DCHU._DSM` entry; multi-field `EC.RAM`/`EC.RAM3`/`OGNS` writers remain unserialized against `WMBB` and EC SRAM updates.
+4. **Data-layer distinction (NVS shadow vs. direct `SystemMemory` vs. live EC state):**
+   - **NVS shadow values (`OGNS`, `SystemMemory 0x428D6018`):** Boot-time/OS-mutable BIOS shared memory (`PSF0..6`, `BAEE`, `BSCP`, `BTCP`, `CCF0..1`, `LKFG`) read by `GCMD 0x77`, `PK04 0x1E`, and `PK04 0x08`; can differ from live EC state or reflect BIOS defaults rather than hardware acceptance.
+   - **Direct shared `SystemMemory` reads (`EC.RAM 0xFE0B0100`, `IGDM ASLB`):** Shared SRAM / IGD OpRegion reads (`EC.RAM.RINF` in `PK04 0x08`, `IGDM.CPDL..CPL8` in `SSDT4.PDDS`) performed without `EC81` port I/O or `ECMD` handshakes.
+   - **Live EC state (`EC81` `FCMD..FBF3` via `ECMD`):** Active EC firmware registers/commands; never invoked by `GCMD 0x77`, `PK04 0x1E`, or `PK04 0x08`. Live EC acceptance and behavior for FlexiCharger (`ECMD 0xCB`) and fans (`ECMD 0xC1`/`0xD7`/`0xC0`) remain unverified.
 
-Stage 23 runtime queries are not authorized by this static audit. A separate user authorization is required before evaluating any DCHU _DSM function.
+Stage 23 runtime queries are **not** authorized by this static audit. A separate explicit user authorization is required before evaluating `DCHU._DSM` (`GCMD 0x77`, `PK04 0x1E`, or `PK04 0x08`) on physical hardware.
 
 ### 5.6 Evidence location
 
-The operator's private offline audit directory is outside this repository. It contains the extracted DSDT/SSDT binaries, disassembly outputs and reports. Do not assume those binary artifacts are committed here. Exact AML line references should be taken from the operator's Stage 22/22.1 report and rechecked against the current private audit files before implementation.
+The operator's private offline audit directory (`/home/zeth/acpi-audit-a715-59g-WcgNEm`, with individual per-table `iasl -d` outputs under `individual-disassembly-20261123-123004/`) is outside this repository. Combined `iasl -da` failed with `AE_ALREADY_EXISTS` (`SADX`, `\GPOM`), leaving the top-level `DSDT.dsl` empty (`0` bytes), whereas all 18 individual table disassemblies (`DSDT` + `SSDT1–SSDT17`) completed with `exit=0` and populated `AML_SYMBOL_INDEX.txt` (`5,037` lines). Exact AML line references in §5.3–§5.5 are anchored to those individual `.dsl` files.
