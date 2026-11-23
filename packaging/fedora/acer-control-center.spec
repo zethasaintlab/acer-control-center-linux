@@ -1,9 +1,13 @@
 Name:           acer-control-center
 Version:        1.0.0
-Release:        4%{?dist}
+Release:        7%{?dist}
 Summary:        Native Hardware Telemetry & Control Center for Acer Aspire 7 A715-59G
 
-License:        GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
+# Component license breakdown for files shipped in the binary RPM:
+# - Application binaries & docs: GPL-3.0-or-later WITH GPL-3.0-linking-source-exception (see LICENSE)
+# - Clean-room optional CLV0001 driver source (driver/acer_clv0001_kbd.c): GPL-2.0-or-later (see COPYING.GPL-2.0)
+# - AppStream metainfo XML (io.github.zethasaintlab.acer-control-center.metainfo.xml): CC0-1.0
+License:        GPL-2.0-or-later AND (GPL-3.0-or-later WITH GPL-3.0-linking-source-exception) AND CC0-1.0
 URL:            https://github.com/zethasaintlab/acer-control-center-linux
 # Local source archive generated from the active repository tree (see README.md / docs/FEDORA_45_PACKAGING.md)
 # until a tagged upstream release tarball includes the current branch changes.
@@ -66,8 +70,8 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.zethasaintl
 %systemd_postun_with_restart acer-control-daemon.service
 
 %files
-%license LICENSE
-%doc README.md docs/HARDWARE_AUDIT_A715_59G.md docs/ARCHITECTURE_ADR.md docs/DESIGN_SYSTEM.md docs/FEDORA_45_PACKAGING.md docs/ACPI_RUNTIME_INVESTIGATION.md docs/RELEASE_READINESS.md
+%license LICENSE COPYING.GPL-2.0
+%doc README.md docs/HARDWARE_AUDIT_A715_59G.md docs/ARCHITECTURE_ADR.md docs/DESIGN_SYSTEM.md docs/FEDORA_45_PACKAGING.md docs/ACPI_RUNTIME_INVESTIGATION.md docs/RELEASE_READINESS.md docs/HOST_INTEGRATION_A715_59G.md
 %{_bindir}/acer-control-center
 %{_libexecdir}/acer-control-daemon
 %{_unitdir}/acer-control-daemon.service
@@ -85,6 +89,14 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.zethasaintl
 %{_datadir}/acer-control-center/driver/dkms.conf
 
 %changelog
+* Mon Nov 23 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-7
+- Add Stage 31 host integration evidence (docs/HOST_INTEGRATION_A715_59G.md) and close release readiness
+* Mon Nov 23 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-6
+- Reconcile PROJECT_STATE.md and RELEASE_READINESS.md with Stage 29–30.2 release evidence (%%doc refresh)
+* Mon Nov 23 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-5
+- Finalize composite SPDX License tag for application, CLV0001 driver source, and AppStream metadata
+- Add canonical GPL-2.0 license text (COPYING.GPL-2.0) and include it under %%license
+- Ship Stage 23A/23B ACPI investigation and Stage 28 release readiness docs under %%doc
 * Fri Nov 20 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-4
 - Add FirmwareAutomatic fan capability modeling and read-only tachometer/PWM safety gating
 - Reconcile BAT0 cycle_count provenance (NOT REPORTED when unreported) and harden charge-limit rounding/rollback
