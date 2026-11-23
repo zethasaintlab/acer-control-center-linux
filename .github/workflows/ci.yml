@@ -43,6 +43,8 @@ jobs:
           cmake --build build -j"$(nproc)"
 
       - name: Run CTest unit and offscreen GUI suites
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           set -o pipefail
           ctest --test-dir build --output-on-failure --verbose | tee build/ctest.log
@@ -77,7 +79,6 @@ jobs:
       - name: Install RPM build dependencies
         run: |
           dnf -y install --setopt=install_weak_deps=False \
-            git-core \
             tar \
             gzip \
             rpm-build \
@@ -93,15 +94,63 @@ jobs:
             polkit-devel
 
       - name: Export source archive and run rpmbuild -ba
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
-          set -o pipefail
+          set -euo pipefail
           SPEC="packaging/fedora/acer-control-center.spec"
           NAME="$(rpmspec -q --qf '%{NAME}\n' "$SPEC" | head -n 1)"
           VERSION="$(rpmspec -q --qf '%{VERSION}\n' "$SPEC" | head -n 1)"
+          PREFIX="${NAME}-${VERSION}"
+          ARCHIVE_NAME="${PREFIX}.tar.gz"
           TOPDIR="$PWD/build/ci-rpmbuild"
+          ARCHIVE_PATH="$TOPDIR/SOURCES/${ARCHIVE_NAME}"
+
+          TMP_TAR="$(mktemp "/tmp/${PREFIX}.XXXXXX.tar.gz")"
+          trap 'rm -f "$TMP_TAR"' EXIT
+          tar -C . -czf "$TMP_TAR" \
+            --exclude='.git' \
+            --exclude='./build' \
+            --transform="flags=r;s,^\.,${PREFIX}," \
+            .
+
           mkdir -p "$TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
-          git archive --format=tar.gz --prefix="${NAME}-${VERSION}/" \
-            -o "$TOPDIR/SOURCES/${NAME}-${VERSION}.tar.gz" HEAD
+          mv "$TMP_TAR" "$ARCHIVE_PATH"
+
+          if [ ! -s "$ARCHIVE_PATH" ]; then
+            echo "ERROR: Missing or empty source archive: $ARCHIVE_PATH" >&2
+            exit 1
+          fi
+
+          ARCHIVE_LIST="$(tar -tzf "$ARCHIVE_PATH")"
+          printf '%s\n' "$ARCHIVE_LIST"
+
+          if printf '%s\n' "$ARCHIVE_LIST" | grep -vqE "^${PREFIX}(/|$)"; then
+            echo "ERROR: Archive contains entries outside expected prefix ${PREFIX}/" >&2
+            exit 1
+          fi
+          if printf '%s\n' "$ARCHIVE_LIST" | grep -qE "(^|/)\.git(/|$)|^${PREFIX}/build(/|$)"; then
+            echo "ERROR: Archive contains forbidden .git or build entries" >&2
+            exit 1
+          fi
+
+          REQUIRED_FILES="$(
+            {
+              printf '%s\n' "$SPEC" "CMakeLists.txt"
+              rpmspec -P "$SPEC" | awk '
+                /^%license[[:space:]]+/ || /^%doc[[:space:]]+/ {
+                  for (i = 2; i <= NF; i++) print $i
+                }
+              '
+            } | sort -u
+          )"
+          for req in $REQUIRED_FILES; do
+            if ! printf '%s\n' "$ARCHIVE_LIST" | grep -Fxq "${PREFIX}/${req}"; then
+              echo "ERROR: Missing required source file in archive: ${PREFIX}/${req}" >&2
+              exit 1
+            fi
+          done
+
           cp "$SPEC" "$TOPDIR/SPECS/"
           rpmbuild --define "_topdir $TOPDIR" -ba "$TOPDIR/SPECS/$(basename "$SPEC")" 2>&1 | tee "$TOPDIR/rpmbuild.log"
 
