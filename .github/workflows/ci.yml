@@ -33,6 +33,7 @@ jobs:
             libxml2 \
             rpm-build \
             systemd-rpm-macros \
+            util-linux \
             qt6-qtbase-devel \
             qt6-qtdeclarative-devel \
             polkit-devel
@@ -46,8 +47,25 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          set -o pipefail
-          ctest --test-dir build --output-on-failure --verbose | tee build/ctest.log
+          set -euo pipefail
+          command -v setpriv
+          setpriv --version
+          setpriv \
+            --bounding-set=-dac_override \
+            --inh-caps=-dac_override \
+            --ambient-caps=-dac_override \
+            -- \
+            bash -euo pipefail -c '
+              cap_eff_hex="$(awk "/^CapEff:/ {print \$2}" /proc/self/status)"
+              echo "Restricted CTest child CapEff=$cap_eff_hex"
+
+              if [ -z "$cap_eff_hex" ] || (( (16#$cap_eff_hex & 0x2) != 0 )); then
+                echo "::error::CAP_DAC_OVERRIDE remains effective: CapEff=$cap_eff_hex" >&2
+                exit 1
+              fi
+
+              exec "$@"
+            ' -- ctest --test-dir build --output-on-failure --verbose | tee build/ctest.log
 
       - name: Staging install and desktop/AppStream/XML/spec checks
         run: |
@@ -89,6 +107,7 @@ jobs:
             desktop-file-utils \
             appstream \
             systemd-rpm-macros \
+            util-linux \
             qt6-qtbase-devel \
             qt6-qtdeclarative-devel \
             polkit-devel
@@ -98,6 +117,8 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           set -euo pipefail
+          command -v setpriv
+          setpriv --version
           SPEC="packaging/fedora/acer-control-center.spec"
           NAME="$(rpmspec -q --qf '%{NAME}\n' "$SPEC" | head -n 1)"
           VERSION="$(rpmspec -q --qf '%{VERSION}\n' "$SPEC" | head -n 1)"
@@ -152,7 +173,22 @@ jobs:
           done
 
           cp "$SPEC" "$TOPDIR/SPECS/"
-          rpmbuild --define "_topdir $TOPDIR" -ba "$TOPDIR/SPECS/$(basename "$SPEC")" 2>&1 | tee "$TOPDIR/rpmbuild.log"
+          setpriv \
+            --bounding-set=-dac_override \
+            --inh-caps=-dac_override \
+            --ambient-caps=-dac_override \
+            -- \
+            bash -euo pipefail -c '
+              cap_eff_hex="$(awk "/^CapEff:/ {print \$2}" /proc/self/status)"
+              echo "Restricted rpmbuild child CapEff=$cap_eff_hex"
+
+              if [ -z "$cap_eff_hex" ] || (( (16#$cap_eff_hex & 0x2) != 0 )); then
+                echo "::error::CAP_DAC_OVERRIDE remains effective: CapEff=$cap_eff_hex" >&2
+                exit 1
+              fi
+
+              exec "$@"
+            ' -- rpmbuild --define "_topdir $TOPDIR" -ba "$TOPDIR/SPECS/$(basename "$SPEC")" 2>&1 | tee "$TOPDIR/rpmbuild.log"
 
       - name: Verify RPM payload, checksums and rpmlint advisories
         run: |
