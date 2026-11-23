@@ -107,9 +107,11 @@ Object path: `/io/github/zethasaintlab/AcerControlCenter1`
 
 ---
 
-## Addendum — Hardware Evidence and Design Direction (2026-11-23)
+## Addendum — Hardware Evidence, Async Compliance & Design Direction (2026-11-23)
 
-ADR-001 remains the approved application architecture for the public-main implementation: C++23, Qt 6/QML, QtDBus, Polkit and Fedora RPM packaging. This addendum does not authorize a toolkit or privilege-boundary migration.
+ADR-001 remains the approved application architecture: C++23, Qt 6/QML, QtDBus, Polkit and Fedora RPM packaging. This addendum does not authorize a toolkit or privilege-boundary migration.
+
+**Architectural compliance note (2026-11-23 audit):** The current `ControlCenterController` implementation violates ADR-001 §3 Invariant #2 by running `TelemetryCollector::collectSnapshot()`, `GetRaplPowerSnapshot` (`QDBus::Block, 120`), and privileged control writes (`QDBus::Block, 60000`) synchronously on the GUI thread, while `Main.qml` eagerly instantiates all 8 workspace views. Before or alongside the structural UI redesign, telemetry collection must move onto a dedicated `TelemetryCoordinator` worker thread and D-Bus calls must become asynchronous (`QDBusPendingCallWatcher`) with explicit in-flight/stale/error UI states and lazy workspace loading.
 
 The design direction has moved from the historical "Precision Hardware Atelier" vocabulary to an Endfield-inspired industrial-technical hardware command center. The redesign requirements are maintained in docs/DESIGN_SYSTEM.md; workflow and agent collaboration are maintained in docs/WORKFLOW.md.
 
@@ -119,18 +121,18 @@ CLV0001 keyboard integration is documented separately in ADR-002 and remains nar
 
 ---
 
-## 5. ADR-002 — Clean-Room `CLV0001` (`\_SB_.DCHU`) Keyboard Integration via `platform_driver` + Sysfs + D-Bus/Polkit (2026-11-16)
+## 5. ADR-002 — Clean-Room `CLV0001` (`\_SB_.DCHU`) Keyboard Integration via `platform_driver` + Sysfs + D-Bus/Polkit (2026-11-16; updated for Stage 17/18 2026-11-20)
 
-- **Context:** The stock Fedora 45 Linux kernel (`7.3.3-300.fc45.x86_64`) exposes `ACPI` device `CLV0001:00` (`\_SB_.DCHU`) without binding any upstream driver, leaving `/sys/class/leds/` empty for keyboard lighting. User physical testing confirmed ACPI `_DSM` UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, rev `0`, fn `0x67`, 4-byte GRB payload `[G, R, B, 0xF0]` controls 17 presets and 5 discrete brightness steps (`0..4` → `0x00, 0x2F, 0x5F, 0x8F, 0xBF`) on the `A715-59G` (`Kelilu_RTH`).
+- **Context:** The stock Fedora 45 Linux kernel (`7.3.3-300.fc45.x86_64`) exposes `ACPI` device `CLV0001:00` (`\_SB_.DCHU`) without binding any upstream driver, leaving `/sys/class/leds/` empty for keyboard lighting. Physical testing on `A715-59G` (`Kelilu_RTH`) confirmed ACPI `_DSM` UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, rev `0`, fn `0x67`, 4-byte GRB payload `[G, R, B, 0xF0]` controls 17 named presets (Stage 15), static 24-bit `rgb <R> <G> <B> <level>` (Stage 17/18: `#12A7E3` level `4` -> `A7 12 E3 F0`), and 5 discrete brightness steps (`0..4` → `0x00, 0x2F, 0x5F, 0x8F, 0xBF`).
 - **Options Considered:**
   1. *Shell out to `alg-rgb` CLI or open `/dev/alg_rgb` (`0666`):* Rejected. Violates no-shell-execution and least-privilege Polkit boundaries, relies on third-party `install.sh` global mutations, and conflicts with `GPL-2.0`-only upstream source SPDX vs this project's `GPL-3.0-or-later`.
   2. *Legacy `acpi_driver` (`acpi_bus_register_driver`):* Rejected / non-viable. Removed in Fedora 45 kernel `7.3.3-300.fc45.x86_64` headers.
   3. *Clean-room kernel `platform_driver` with `.acpi_match_table` + `sysfs` on ACPI kobject + `Clv0001KeyboardBackend` via `acer-control-daemon` (Chosen):* Complies cleanly with Linux 7.3 kernel APIs, enforces strict allowlists, keeps root ACPI evaluation isolated in kernel/Polkit-daemon space, and cleanly preserves `GPL-2.0-or-later` / `GPL-3.0-or-later` license compatibility.
 - **Architectural Decisions & Invariants:**
   1. `driver/acer_clv0001_kbd.c` validates exact DMI identity (`Acer` / `Aspire A715-59G` / `RTH` / `Kelilu_RTH` with zero override parameter), HID (`CLV0001`), ACPI path (`\_SB.DCHU` / `\_SB_.DCHU`), `_DSM` existence, performs no automatic `_DSM` writes on resume, and exposes `0600`/`0444` sysfs attributes (`clv0001_kbd_command`, `clv0001_kbd_state`, `clv0001_kbd_presets`) on `&adev->dev.kobj` so canonical paths remain confined under `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/`.
-  2. Only `_DSM` function `0x67` is callable; unverified functions (`0x68`, `0x69`, `0x6A`) are prohibited. Both kernel and userspace enforce strict 17-preset + `0..4` level allowlists and rate-limiting (`40 ms` minimum interval / `25 Hz` ceiling in kernel & default HAL).
+  2. Only `_DSM` function `0x67` is callable; unverified functions (`0x68`, `0x69`, `0x6A`) are prohibited. Both kernel and userspace enforce strict input validation (17 presets or `rgb <0..255> <0..255> <0..255> <0..4>` single-zone static commands) and rate-limiting (`40 ms` minimum interval / `25 Hz` ceiling in kernel & default HAL). Temporal animations (`breathing`, `wave`) and per-zone spatial splitting remain excluded/unsupported.
   3. Because `_DSM 0x67` does not expose hardware readback, `ControlResult` explicitly records `physicalStateVerified = false` and `verificationStatusId = "accepted_no_hw_readback"`, distinguished in diagnostics and UI from `verified_physical_readback`.
-  4. Arbitrary 24-bit RGB is never falsely claimed to succeed on `CLV0001`; non-preset hex inputs are rejected with `ERR_CLV0001_PRESET_REQUIRED` while preview colors remain decoupled from `ThemeEngine`.
+  4. Capability discovery reads `supports_custom_rgb=1` from `clv0001_kbd_presets`: arbitrary static 24-bit RGB is routed only when the bound Stage 17+ driver advertises `supports_custom_rgb=1`; legacy preset-only modules still fail closed with `ERR_CLV0001_PRESET_REQUIRED`, while preview colors remain decoupled from `ThemeEngine`.
 - **Non-Destructive Physical Operator Verification Procedure (After Explicit Approval):**
   1. Build module in `build/driver-build/` (`make -C /lib/modules/$(uname -r)/build M=$PWD/build/driver-build modules`) — already verified cleanly on `7.3.3-300.fc45.x86_64`.
   2. Operator loads module explicitly (`sudo insmod build/driver-build/acer_clv0001_kbd.ko`) and restarts/installs updated `acer-control-daemon`.

@@ -2,7 +2,7 @@
 <component type="desktop-application">
     <id>io.github.zethasaintlab.acer-control-center</id>
     <name>Acer Control Center — Linux Edition</name>
-    <summary>Precision Hardware Atelier for Acer Aspire 7 A715-59G on Linux</summary>
+    <summary>Industrial-Technical Hardware Command Center for Acer Aspire 7 A715-59G on Fedora Linux</summary>
     <metadata_license>CC0-1.0</metadata_license>
     <project_license>GPL-3.0-or-later</project_license>
     <developer id="io.github.zethasaintlab">
@@ -17,15 +17,18 @@
         <p>
             It provides real-time CPU, memory, thermal, battery, and NVIDIA GeForce RTX 3050 telemetry,
             verified Intel P-State and TuneD/PPD performance profile management, interactive fan curve
-            visualization, a three-mode Keyboard Lighting Studio (clean-room CLV0001 ACPI _DSM 0x67
-            17-preset backend, /sys/class/leds sysfs backend, and unrestricted sRGB/HSV/HSL Preview
-            Studio independent of the application theme accent color), and privacy-redacted hardware diagnostics.
+            preview (preserving Firmware Automatic EC control), a capability-aware Keyboard Lighting Studio
+            (clean-room CLV0001 ACPI _DSM 0x67 17-preset and static 24-bit custom RGB backend,
+            /sys/class/leds sysfs backend, and sRGB/HSV/HSL Preview Studio independent of the application
+            theme accent color), and privacy-redacted hardware diagnostics.
         </p>
     </description>
     <url type="homepage">https://github.com/zethasaintlab/acer-control-center-linux</url>
     <url type="bugtracker">https://github.com/zethasaintlab/acer-control-center-linux/issues</url>
     <content_rating type="oars-1.1"/>
     <releases>
+        <release version="1.0.0-4" date="2026-11-20"/>
+        <release version="1.0.0-3" date="2026-11-20"/>
         <release version="1.0.0-2" date="2026-11-16"/>
         <release version="1.0.0" date="2026-11-08"/>
     </releases>

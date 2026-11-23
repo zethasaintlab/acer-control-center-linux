@@ -61,12 +61,56 @@ Read-only sysfs inspection on the target `A715-59G` confirmed `CLV0001:00` (`hid
 
 | Item | Evidence Status | Findings |
 |---|---|---|
-| ACPI `_DSM` UUID, Revision & Static Color Function | **User-Confirmed Physical Behavior** + Source Evidence | UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, rev `0`, fn `0x67`, 4-byte GRB payload `[G, R, B, 0xF0]` controls backlight on/off, 17 named presets (`off`, `red`, `orange`, `yellow`, `lime`, `light-green`, `green`, `green-cyan`, `cyan`, `light-blue`, `blue`, `violet`, `magenta`, `pink`, `flesh`, `bluish-white`, `white`), and 5 discrete brightness scales (`0..4` → `0x00, 0x2F, 0x5F, 0x8F, 0xBF` normalized over `0xBF`). |
+| ACPI `_DSM` UUID, Revision & Static Color Function | **User-Confirmed Physical Behavior (Stage 15 Presets + Stage 17 Arbitrary RGB)** + Source Evidence | UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, rev `0`, fn `0x67`, 4-byte GRB payload `[G, R, B, 0xF0]` controls backlight on/off, 17 named presets (Stage 15: `off`, `red`, `orange`, `yellow`, `lime`, `light-green`, `green`, `green-cyan`, `cyan`, `light-blue`, `blue`, `violet`, `magenta`, `pink`, `flesh`, `bluish-white`, `white`), arbitrary static 24-bit RGB `rgb <R> <G> <B> <brightness_level>` (Stage 17: verified `#12A7E3` level `4` -> `A7 12 E3 F0`), and 5 discrete brightness scales (`0..4` → `0x00, 0x2F, 0x5F, 0x8F, 0xBF` normalized over `0xBF`). |
 | Hardware Readback | **Source Evidence + Physical Posture** | `_DSM 0x67` is write-only (`accepted_no_hw_readback`); firmware exposes no readback getter for currently lit keyboard color/brightness. |
 | Secondary Functions (`0x68`, `0x69`, `0x6A`) | **Unverified Hypothesis (Prohibited)** | Appear in `alg_rgb.c` / `cli/alg-rgb.c`; not physically verified on `A715-59G` and permanently excluded from this repository. |
 | Fork `alg-rgb-engine` ABI Mismatch | **Source-Code Evidence** (`zethasaintlab/alg-cli`) | `engine/alg-rgb-engine` writes `"rgb {r} {g} {b} {brightness}\n"`, while `kernel/alg_rgb.c` parses `"%31s %d"` against the 17-preset table and returns `-EINVAL` for `"rgb"`. Reproduced in unit tests. |
 | Third-Party Licensing & Packaging | **Source-Code Evidence** | `alg-cli` `LICENSE` prose states GPLv2-or-later while `alg_rgb.c`/`alg-rgb.c` declare `SPDX-License-Identifier: GPL-2.0`, and `install.sh` creates `0666` `/dev/alg_rgb` and alters `/etc/modules-load.d/`. Resolved by authoring our own clean-room `GPL-2.0-or-later` module (`driver/acer_clv0001_kbd.c`). |
 | Linux `7.3` Kernel API Adaptation | **Local Observation** (`/usr/src/kernels/7.3.3-300.fc45.x86_64`) | `struct acpi_driver` / `acpi_bus_register_driver` are removed in Linux 7.3; clean-room driver binds via `struct platform_driver` + `.acpi_match_table`, enforces exact `Acer`/`Aspire A715-59G`/`RTH`/`Kelilu_RTH` DMI matching and 40 ms (`25 Hz`) rate limit without automatic resume `_DSM` writes, and attaches `0600`/`0444` sysfs attributes (`clv0001_kbd_{command,state,presets}`) to `&adev->dev.kobj` under `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/`. |
+
+
+### 2.4 Stage 14 Controlled Physical Hardware Validation Record (2026-11-16)
+Controlled Stage 14 execution on the target **Acer Aspire 7 A715-59G (`RTH` / `Kelilu_RTH`)** running Fedora 45 (`7.3.3-300.fc45.x86_64`) with packaged RPM `acer-control-center-1.0.0-2.fc45.x86_64` (DNF5 transaction `63`, `rpm -V` exit `0`) and hardened `acer-control-daemon.service` (`MainPID=57721`, `CapabilityBoundingSet=` empty, `ProtectSystem=strict`, `ProtectKernelTunables=yes`, `ReadWritePaths=-/sys/devices/system/cpu/intel_pstate/no_turbo -/sys/devices/system/cpu/intel_pstate/min_perf_pct -/sys/devices/system/cpu/intel_pstate/max_perf_pct -/sys/devices/system/cpu/cpufreq -/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00`):
+
+1. **Module Bind & Initial Posture (Phase B):** `acer_clv0001_kbd` loaded cleanly (`vermagic: 7.3.3-300.fc45.x86_64 SMP preempt mod_unload`), bound `/sys/bus/platform/devices/CLV0001:00/driver` -> `/sys/bus/platform/drivers/acer_clv0001_kbd`, logged `acer_clv0001_kbd CLV0001:00: bound CLV0001 (\_SB.DCHU) _DSM 0x67 keyboard backlight sysfs interface`, and initialized `clv0001_kbd_state` to `status=uninitialized`, `preset=none`, `brightness_level=0`, `payload_grb=00 00 00 F0`, `acpi_return_type=none`, `physical_readback=unsupported`.
+2. **Pre-ACPI Negative Validation (Userspace & Kernel Sysfs `Phase C`):**
+   - Unprivileged D-Bus calls (`SetKeyboardLighting` signature `sus`) rejected `"preset:invalid_preset"` (`ERR_INVALID_CLV0001_PRESET`), `"static"` + `"#123456"` (`ERR_CLV0001_PRESET_REQUIRED`), and brightness `150` (`ERR_INVALID_BRIGHTNESS`) with `bss false` and `verification_status="rejected_before_execution"`.
+   - Direct root writes to `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command` (`-rw-------`) for `invalid_preset 4`, `cyan 9`, and `cyan 2 extra` all returned `Invalid argument` (`-EINVAL`), preserving `status=uninitialized` and `acpi_return_type=none`.
+3. **Sequential Physical ACPI `_DSM 0x67` Writes (`Phase D`, D-Bus -> Polkit -> Daemon -> Sysfs -> Driver):**
+   - `cyan 2` (`50%`): `bss true ... "OK"`, `status=accepted_no_hw_readback`, `preset=cyan`, `brightness_level=2`, `payload_grb=7E 00 63 F0`, `acpi_return_type=integer`, `physical_readback=unsupported`.
+   - `white 4` (`100%`): `bss true ... "OK"`, `status=accepted_no_hw_readback`, `preset=white`, `brightness_level=4`, `payload_grb=FF FF FF F0`, `acpi_return_type=integer`, `physical_readback=unsupported`.
+   - `off 0` (`0%`): `bss true ... "OK"`, `status=accepted_no_hw_readback`, `preset=off`, `brightness_level=0`, `payload_grb=00 00 00 F0`, `acpi_return_type=integer`, `physical_readback=unsupported`.
+   - Back-to-back rate-limit test (`"preset:red" 50 "red"` -> `00 7E 00 F0`, followed immediately by `"preset:blue" 50 "blue"`): second call returned `bss false` with `ERR_RATE_LIMITED` (`rejected_before_execution`), then cleanly restored to `off 0` (`00 00 00 F0`).
+4. **Unprivileged Qt Quick GUI (`Main.qml` + `ControlCenterController`) E2E (`Phase E`):**
+   - Verified `Main.qml` loaded in Physical Hardware mode (`backend=clv0001_acpi_dsm`, `connected=true`, `supportsPresetColors=true`, `supportsArbitraryRgb=false`, `physicalReadback=false`).
+   - Verified `selectKbdPreset("cyan")` + `setKbdBrightnessLevel(3)` -> `preset=cyan`, `brightness_level=3`, `payload_grb=BE 00 95 F0`, `acpi_return_type=integer`; arbitrary hex `#123456` rejected with `ERR_CLV0001_PRESET_REQUIRED` leaving hardware state untouched; `snapToNearestKbdPreset()` -> `bluish-white` level `3` (`5F 2F 5F F0`); and final restore `off 0` (`00 00 00 F0`).
+   - `/usr/bin/acer-control-center --dump-telemetry-json` reported `clv0001LastStatus="accepted_no_hw_readback"`, `clv0001LastAcpiReturnType="integer"`, and `physicalReadbackSupported=false`; `journalctl -k` recorded zero ACPI/kernel errors or warnings across the session.
+5. **Scope of Physical Confirmation:** Kernel and daemon telemetry prove `acpi_evaluate_dsm()` (`_DSM` UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad`, rev `0`, fn `0x67`) accepted each command and returned an ACPI `integer` object (`status=accepted_no_hw_readback`), while `physical_readback=unsupported`. Subsequent Stage 15 operator testing physically verified all 17 named color presets on hardware.
+
+### 2.5 Stage 17 Static Arbitrary RGB Physical Hardware Verification Record (2026-11-20)
+Following Stage 15 preset verification, controlled operator-executed Stage 17 verification tested non-preset arbitrary 24-bit static RGB through `acer_clv0001_kbd` on the exact target **Acer Aspire 7 A715-59G (`RTH` / `Kelilu_RTH`)**:
+
+- **Test identifier:** Stage 17 arbitrary RGB physical verification
+- **Driver artifact tested:** `build/driver-build-stage17/acer_clv0001_kbd.ko` (`srcversion: A86A12F0F4BF3B06F90363E`, `vermagic: 7.3.3-300.fc45.x86_64 SMP preempt mod_unload `, SHA-256 `aa81bdcf7c1af3c293906d2cd4111ad97119726210e4d788be700bf6d7e0efae`)
+- **Requested input:** `rgb 18 167 227 4`
+- **RGB:** `#12A7E3` (`R=18`, `G=167`, `B=227`, brightness level `4`)
+- **Expected GRB payload:** `A7 12 E3 F0`
+- **Physical result:** `OPERATOR-CONFIRMED VISIBLE COLOR CHANGE`
+- **Interpretation:**
+  - The Stage 17 kernel driver was loaded and bound to `CLV0001:00` (`\_SB_.DCHU`).
+  - The command `rgb 18 167 227 4` was accepted through `clv0001_kbd_command` / ACPI `_DSM` function `0x67` with payload `A7 12 E3 F0`.
+  - The operator visually observed the physical keyboard change color to `#12A7E3`.
+  - `physical_readback` remains `unsupported` (`0`); successful ACPI return alone does not independently verify hardware LED state.
+  - This confirms one arbitrary, non-preset static RGB operation on the exact `A715-59G` hardware without claiming exhaustive 24-bit gamut testing, multi-zone spatial split control, or temporal animation.
+
+### 2.6 Stage 18 Custom RGB GUI Integration & Verification Record (2026-11-20 — Audit Log Gap Noted)
+Stage 18 extended the `CLV0001` pipeline across `Clv0001KeyboardBackend`, `ControlOperations`, `DaemonServiceObject` (`SetKeyboardLighting`), `ControlCenterController`, and `KeyboardStudioView` (`1.0.0-3.fc45`), advertising `supports_custom_rgb=1` via `clv0001_kbd_presets` while keeping legacy preset-only modules fail-closed (`ERR_CLV0001_PRESET_REQUIRED`):
+
+- **Operator physical test:** The operator physically tested Stage 18 GUI custom static RGB on the target `Acer Aspire A715-59G` (`Kelilu_RTH`) using `#12A7E3` at brightness level `4` (`rgb 18 167 227 4` -> GRB payload `A7 12 E3 F0`).
+- **Evidence distinction:** Physical LED illumination was confirmed by operator visual observation, firmware acceptance is reported as `accepted_no_hw_readback`, and `physical_readback` remains `unsupported` (`_DSM 0x67` is write-only). HAL, daemon, and controller custom-RGB paths are also exercised in automated mock unit/GUI tests (`test_core_and_hal`, `test_gui_atelier`).
+- **Documentation gap:** Unlike Stage 14, a verbatim Stage 18 machine capture log (`clv0001_kbd_state`, `busctl`/daemon log, `rpm -V`) was not archived in this document at the time of testing. Treat this as a missing audit artifact to capture cleanly if re-validated, not as contradicting the operator-confirmed Stage 18 physical test. On the current host snapshot (`2026-11-23`), `acer_clv0001_kbd` is unloaded (`CLV0001:00 unbound`).
+
+---
 
 ---
 
@@ -77,7 +121,7 @@ Read-only sysfs inspection on the target `A715-59G` confirmed `CLV0001:00` (`hid
 | **System Telemetry Overview** (Acer Control Center / AcerSense) | Real-time CPU, GPU, memory, storage, thermal & battery overview | **Yes** | **Fully Supported** (`coretemp`, `/proc`, `nvme`, `BAT0`, `powercap`, NVML) | **Implemented (Read-Only + RAPL via Daemon)** |
 | **Performance Profiles** (Silent / Normal / Performance) | Coordinate system thermal/power profile and CPU P-state policy | **Yes** | **Fully Supported** via Fedora `tuned` / `tuned-ppd` (`net.hadess.PowerProfiles`) and `intel_pstate` (`scaling_governor`, `energy_performance_preference`, `no_turbo`, `min/max_perf_pct`) | **Implemented (Full Read/Write with Readback)** |
 | **Thermal & Fan Control** (NitroSense / PredatorSense inspiration) | Monitor sensor temperatures, fan RPM, and configure fan curves | **Thermal sensors Yes**; EC (`PNP0C09:00`) controls dual cooling fans automatically | **Thermal Sensors Read-Only Supported** (`hwmon1..6`, `thermal_zone0..7`); **Fan RPM & PWM Not Detected** in `/sys/class/hwmon` | **Thermal Monitoring + Safe Fan Curve Studio:** Live thermal tracking + curve editor that binds to `hwmon/pwm*` when present/mocked and clearly reports `Firmware Auto (No kernel PWM bound)` on physical `Kelilu_RTH` |
-| **Keyboard Lighting Studio** | Control backlight brightness, timeout, or zone RGB colors | **Firmware-Dependent Presets on `CLV0001`** (`\_SB_.DCHU` via `_DSM 0x67` accepts 17 presets & 5 brightness levels; arbitrary 24-bit RGB & readback unsupported) | **No `*kbd_backlight*` in `/sys/class/leds/`**; clean-room `driver/acer_clv0001_kbd.c` compiles against Linux `7.3.3-300.fc45.x86_64` (unloaded until operator opts in) | **Three-State Routing:** (1) `/sys/class/leds/*kbd_backlight*` RW with readback, (2) Clean-room `CLV0001` 17 presets & levels `0..4` (`accepted_no_hw_readback`), or (3) Unrestricted HSV/HSL/RGB Studio Preview when unbound |
+| **Keyboard Lighting Studio** | Control backlight brightness, timeout, or RGB color | **`CLV0001` Static Presets + Static Custom RGB** (`\_SB_.DCHU` via `_DSM 0x67` accepts 17 presets & Stage 17 arbitrary RGB at 5 brightness levels; per-zone split, temporal effects & readback unsupported) | **No `*kbd_backlight*` in `/sys/class/leds/`**; clean-room `driver/acer_clv0001_kbd.c` exposes `clv0001_kbd_{command,state,presets}` with explicit `supports_custom_rgb=1` capability discovery | **Capability-Aware Routing:** (1) `/sys/class/leds/*kbd_backlight*` RW with readback, (2) Clean-room `CLV0001` 17 presets + optional Stage 17 static 24-bit `rgb` (`accepted_no_hw_readback`), or (3) Unrestricted HSV/HSL/RGB Studio Preview when unbound |
 | **Battery Care & Charge Threshold** (80% Charge Limit) | Prevent battery wear by capping charge at 80% and tracking capacity ratio | **Telemetry Yes**; Charge limit depends on ODM EC driver | **Telemetry & Capacity Ratio Read-Only Supported** (`BAT0` capacity, voltage, current, full-vs-design capacity ratio); `charge_control_end_threshold` **Not Detected** | **Telemetry/History Implemented + Conditional Charge Limit:** Charge limit slider binds to standard `charge_control_end_threshold` and remains safely disabled with explanation when absent; fuel-gauge capacity ratio (`charge_full / charge_full_design`) is presented with its estimation limitations and never prescribes forced discharge calibration |
 | **NVIDIA GPU Center** | Monitor RTX 3050 clocks, VRAM, utilization, temperature, P-state, throttling | **Yes** (`RTX 3050 6GB Laptop GPU`) | **Read-Only Supported** via `libnvidia-ml.so.1` & `nvidia-powerd` | **Implemented via Clean-Room Dynamic NVML Loader** with `P8` rail-gating anomaly detection |
 | **Hardware Diagnostics** | Inspect live capabilities, driver bindings, WMI GUIDs, and export redacted logs | **Yes** | **Fully Supported** | **Implemented** |
@@ -105,8 +149,40 @@ Read-only sysfs inspection on the target `A715-59G` confirmed `CLV0001:00` (`hid
 | `cap.battery.telemetry` | Battery Charge %, Voltage, Current, Wattage & Est. Capacity Ratio | `/sys/class/power_supply/BAT0/*`, `/sys/class/power_supply/AC/online` | `0444` | `ReadOnly` | Verified (`charge_full 1956000` / `charge_full_design 3410000` → `57.4%` fuel-gauge capacity ratio; serial redacted). |
 | `cap.battery.limit` | Battery Charge End Threshold (e.g. 80% Care Mode) | `/sys/class/power_supply/BAT0/charge_control_end_threshold` | Absent | `NotDetected` | Supported in HAL & daemon when sysfs node exists; disabled with clear hardware explanation on `Kelilu_RTH`. |
 | `cap.backlight.display` | Internal eDP Panel Brightness | `/sys/class/backlight/intel_backlight` (`max_brightness: 48000`) & `org.freedesktop.login1.Session.SetBrightness` | `0644` / D-Bus | `FullySupported` | Verified (`intel_backlight` on `card1-eDP-1`). |
-| `cap.keyboard.lighting` | Physical Keyboard Backlight, CLV0001 Firmware Presets & Preview Studio | `/sys/class/leds/*kbd_backlight*` or `/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command` | `0600` (root, daemon-mediated) / unbound on stock kernel | `PartiallySupported` when driver is loaded / `NotDetected` when unbound | Clean-room `CLV0001` backend supports 17 firmware presets and 5 brightness levels over `_DSM 0x67`; hardware readback is unavailable and status is explicitly `accepted_no_hw_readback`. Preview remains available when the driver is unbound. |
+| `cap.keyboard.lighting` | Physical Keyboard Backlight, `CLV0001` Presets & Static Custom RGB | `/sys/class/leds/*kbd_backlight*` OR `/sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_command` | `0600` (`root`, D-Bus/Polkit) / Unbound on stock kernel | `PartiallySupported` (when bound) / `NotDetected` (unbound) | Clean-room `CLV0001` backend supports 17 presets (Stage 15 verified), Stage 17 static 24-bit RGB (`supports_custom_rgb=1` advertised in `clv0001_kbd_presets`; `#12A7E3` level `4` physically confirmed), and 5 levels (`0..4`) over `_DSM 0x67` with strict DMI/HID/`_STA` checks and `accepted_no_hw_readback`; falls back cleanly to Preview Mode when unbound or preset-only on older modules. |
 
+
+
+## Stage 21.1 Read-Only Fan, WMI & Battery Forensics Addendum (2026-11-20) — Historical Snapshot
+
+
+> **Historical status:** This record reflects the investigation state on 2026-11-20, before the Stage 22/22.1 offline AML audit. Its pre-disassembly hypotheses and proposed inspection steps are superseded by Section 5 below. Use Section 5 for current firmware safety and capability conclusions.
+
+
+### 1. Confirmed Kernel & Hardware State (`Acer Aspire A715-59G` / `Kelilu_RTH`, INSYDE `V1.17`)
+- **Fan Interface Confirmation:** Zero `fan*_input`, `pwm*`, or `PNP0C0B` fan cooling devices exist in `/sys/class/hwmon/hwmon0..6` (`AC`, `acpitz`, `BAT0`, `nvme0`, `nvme1`, `coretemp`, `iwlwifi_1`) or `/sys/class/thermal/`. The Embedded Controller `PNP0C09:00` (`\_SB_.PC00.LPCB.EC__`) manages dual cooling fans exclusively in **`FIRMWARE AUTOMATIC`** mode.
+- **Battery Cycle-Count Reconciliation:** `/sys/class/power_supply/BAT0/uevent` exposes `POWER_SUPPLY_CYCLE_COUNT=0` alongside `POWER_SUPPLY_CHARGE_FULL=1970000` uAh vs `POWER_SUPPLY_CHARGE_FULL_DESIGN=3410000` uAh (`57.8%` estimated capacity ratio). Linux `drivers/acpi/battery.c` initializes `cycle_count = 0` when the firmware uses legacy `_BIF` or when `_BIX` / the Smart Battery IC omits cycle count (`0` or `0xFFFF`). Therefore, `BAT0/cycle_count == 0` on `Kelilu_RTH` cannot be distinguished from an unreported cycle counter without raw ACPI `_BIX` table inspection and is classified and displayed conservatively as **`NOT REPORTED`** rather than fabricating `0 cycles`.
+- **Battery Charge Threshold:** `charge_control_end_threshold`, `charge_control_start_threshold`, `charge_behaviour`, `charge_type`, and `charge_control_limit` are absent under `/sys/class/power_supply/BAT0/`. Status: **`BATTERY TELEMETRY ONLY — CHARGE LIMIT NOT DETECTED`**.
+
+### 2. Bounded Read-Only Scope — ACPI Tables, `WMBB`, & `ABBC0F6D`
+- **ACPI Table Permissions:** `/sys/firmware/acpi/tables/{DSDT,SSDT1..SSDT17}` exist on disk with strict `0400 root:root` permissions (547,290-byte `DSDT`). Unprivileged inspection cannot read AML definitions.
+- **Observed Platform Nodes:**
+  - `CLV0001:00` (`\_SB_.DCHU`, status `15`): Bound by clean-room Stage 17+ `acer_clv0001_kbd` solely for verified keyboard backlight `_DSM 0x67` commands. Zero fan or battery methods are assumed or invoked on `\_SB_.DCHU`.
+  - `CLV0002:00` (`\_SB_.DCHP`, status `15`): Present and unbound in ACPI; semantics unverified without `DSDT`/`SSDT` AML disassembly.
+  - `ABBC0F6D-8EA1-11D1-00A0-C90629100000-1` (`object_id: BB` / `\_SB_.WMI_.WMBB`): Unbound Clevo/Kapok WMI device GUID (alongside `ABBC0F6B` `notify_id: D0` and `ABBC0F6C` `notify_id: D1`).
+- **Upstream Clevo / TUXEDO Driver Context:** In mainline Linux and out-of-tree Clevo/TUXEDO drivers (`clevo_acpi`, `clevo-xsm-wmi`, `tuxedo-drivers`), `WMBB` (`ABBC0F6D`) commonly implements OEM-specific WMI methods (including fan RPM/duty queries or EC bridges on certain Clevo chassis). However, **exact-board DMI identity `Acer / Aspire A715-59G / Kelilu_RTH (RTH)` is NOT upstreamed in Fedora 45 kernel drivers (`acer_wmi`, `acerhdf`, `uniwill_laptop`, `system76_acpi`)**, and `WMBB` method numbers vary across ODM/InsYde BIOS generations.
+- **Distinction — Confirmed Absence vs. Open Hypothesis:**
+  - **Confirmed Fact:** No standard kernel Linux `hwmon` fan tachometer, `pwm*`, `power_supply` charge-limit sysfs interface, or ACPI `PNP0C0B` fan actuator is exposed on this host (`FIRMWARE AUTOMATIC — NO EXPOSED CONTROL`).
+  - **Open Hypothesis (Unverified):** Read-only fan tachometer getters or battery charge-limit methods *may* exist inside `DSDT`/`SSDT` (`\_SB_.WMI_.WMBB` / `\_SB_.DCHU` / `\_SB_.DCHP`), but verifying them safely requires offline AML disassembly first — never speculative WMI/EC calls.
+
+### 3. Historical Offline-Inspection Preparation (Superseded by Stage 22/22.1)
+To inspect `DSDT`/`SSDT` definitions read-only without invoking firmware methods or writing EC registers, the operator may run:
+```bash
+sudo mkdir -p /tmp/acpi-audit-a715-59g && sudo cp /sys/firmware/acpi/tables/DSDT /sys/firmware/acpi/tables/SSDT* /tmp/acpi-audit-a715-59g/
+sudo chmod 0644 /tmp/acpi-audit-a715-59g/DSDT /tmp/acpi-audit-a715-59g/SSDT*
+iasl -d /tmp/acpi-audit-a715-59g/DSDT /tmp/acpi-audit-a715-59g/SSDT*
+grep -rn -E "WMBB|DCHU|DCHP|ABBC0F6D|FANG|FANR|PFAN|_BIX|BATT" /tmp/acpi-audit-a715-59g/*.dsl
+```
 
 ---
 

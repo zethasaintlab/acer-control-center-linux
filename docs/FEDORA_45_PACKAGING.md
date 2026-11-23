@@ -52,15 +52,16 @@ rpmbuild --define "_topdir $(pwd)/build/rpmbuild" -ba build/rpmbuild/SPECS/acer-
 ```
 
 ### Inspecting the Resulting RPM
+*(Replace `1.0.0-4` with the built release from `packaging/fedora/acer-control-center.spec`; release progression is `1.0.0-1` baseline -> `1.0.0-2` CLV0001 presets -> `1.0.0-3` Stage 18 custom RGB -> `1.0.0-4` Stage 21/21.1 WIP & hardening.)*
 ```bash
-rpm -qip build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
-rpm -qlp build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
-rpm -qRp build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
+rpm -qip build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-4.fc45.x86_64.rpm
+rpm -qlp build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-4.fc45.x86_64.rpm
+rpm -qRp build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-4.fc45.x86_64.rpm
 ```
 
 ### 2.3 Complete Fedora 45 (DNF5) RPM Installation, Verification & Rollback Procedure
 
-Fedora 45 uses `dnf5` (`dnf5 5.4.7.0` observed on host). Because `acer-control-center` is installed directly from local `.rpm` files (`@commandline` repository) rather than a remote Fedora mirror, rollback must use the preserved local `1.0.0-1.fc45` RPM rather than assuming `dnf5 history undo` can fetch an older local package from a remote repo.
+Fedora 45 uses `dnf5` (`dnf5 5.4.7.0` observed on host). Because `acer-control-center` is installed directly from local `.rpm` files (`@commandline` repository) rather than a remote Fedora mirror, rollback must use a preserved local prior `.rpm` (for example `1.0.0-3.fc45` or `1.0.0-2.fc45`) rather than assuming `dnf5 history undo` can fetch an older local package from a remote repo.
 
 #### Step 1 — Record Pre-Upgrade Baseline & Verify Rollback Artifact (Read-Only)
 ```bash
@@ -69,7 +70,7 @@ rpm -q --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH} (built %{BUILDTIME:date})\n' 
 rpm -qi acer-control-center
 rpm -q --dump acer-control-center | grep -E '/usr/(bin/acer-control-center|libexec/acer-control-daemon|lib/systemd/system/acer-control-daemon.service)'
 
-# Record DNF5 transaction history for acer-control-center (e.g., ID 60 before upgrade):
+# Record DNF5 transaction history for acer-control-center:
 dnf5 history list --contains-pkgs=acer-control-center
 
 # Record active systemd unit, live sandbox properties, and running D-Bus daemon version:
@@ -78,16 +79,14 @@ systemctl cat acer-control-daemon.service --no-pager
 systemctl show -p MainPID,ActiveState,SubState,FragmentPath,ReadWritePaths,CapabilityBoundingSet acer-control-daemon.service
 busctl call io.github.zethasaintlab.AcerControlCenter1 /io/github/zethasaintlab/AcerControlCenter1 io.github.zethasaintlab.AcerControlCenter1 GetDaemonVersion
 
-# Verify both the previous working RPM (1.0.0-1.fc45) and target RPM (1.0.0-2.fc45) exist locally:
-ls -la build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-*.fc45.x86_64.rpm
-sha256sum build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-1.fc45.x86_64.rpm \
-          build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
+# Verify both the previous working RPM (e.g. 1.0.0-3.fc45) and target RPM (1.0.0-4.fc45) exist locally:
+ls -la build/rpmbuild*/RPMS/x86_64/acer-control-center-1.0.0-*.fc45.x86_64.rpm
 ```
 
-#### Step 2 — Upgrade to `1.0.0-2.fc45` & Verify Effective Systemd / Daemon State (Operator-Authorized)
+#### Step 2 — Upgrade to Target Release & Verify Effective Systemd / Daemon State (Operator-Authorized)
 ```bash
 # Upgrade (or install on clean system) via DNF5:
-sudo dnf5 upgrade ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-2.fc45.x86_64.rpm
+sudo dnf5 upgrade ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-4.fc45.x86_64.rpm
 
 # Record the new DNF5 transaction ID:
 dnf5 history list --contains-pkgs=acer-control-center
@@ -104,15 +103,15 @@ systemctl show -p MainPID,ActiveState,SubState,FragmentPath,ReadWritePaths,Capab
 busctl call io.github.zethasaintlab.AcerControlCenter1 /io/github/zethasaintlab/AcerControlCenter1 io.github.zethasaintlab.AcerControlCenter1 GetDaemonVersion
 ```
 Expected post-upgrade invariants:
-- `rpm -q acer-control-center` outputs `acer-control-center-1.0.0-2.fc45.x86_64` and `rpm -V acer-control-center` returns exit `0` with empty output.
+- `rpm -q acer-control-center` outputs the target NEVRA (`acer-control-center-1.0.0-4.fc45.x86_64`) and `rpm -V acer-control-center` returns exit `0` with empty output.
 - `systemctl show` confirms `ReadWritePaths` includes `-/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00`, `CapabilityBoundingSet` is empty (`CapabilityBoundingSet=`), and `ActiveState=active`.
 - `GetDaemonVersion` returns `s "1.0.0-fc45"`.
 
 #### Step 3 — Deterministic RPM Rollback Procedure (If Upgrade or Daemon Fails)
-If the upgrade introduces a unit/daemon regression or RPM verification failure, roll back explicitly against the preserved local `1.0.0-1.fc45` package (do **not** rely on `dnf5 history undo` alone for `@commandline` local RPMs):
+If the upgrade introduces a unit/daemon regression or RPM verification failure, roll back explicitly against the preserved local working RPM (do **not** rely on `dnf5 history undo` alone for `@commandline` local RPMs):
 ```bash
-# Downgrade offline to preserved working 1.0.0-1.fc45 RPM:
-sudo dnf5 downgrade ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-1.fc45.x86_64.rpm
+# Downgrade offline to preserved working prior RPM (e.g., 1.0.0-3.fc45):
+sudo dnf5 downgrade ./build/rpmbuild-stage18/RPMS/x86_64/acer-control-center-1.0.0-3.fc45.x86_64.rpm
 sudo systemctl daemon-reload
 sudo systemctl restart acer-control-daemon.service
 rpm -q acer-control-center
@@ -155,9 +154,9 @@ sudo systemctl daemon-reload
 |---|---|---|
 | `io.github.zethasaintlab.acercontrol.read-rapl` | `yes` | Read `/sys/class/powercap/intel-rapl:0/energy_uj` (`0400` root-only on Linux 6.x/7.x) |
 | `io.github.zethasaintlab.acercontrol.set-power-profile` | `auth_admin_keep` | Validated writes to `intel_pstate` / `cpufreq` (`scaling_governor`, `energy_performance_preference`, `no_turbo`, `min/max_perf_pct`) with readback verification and rollback |
-| `io.github.zethasaintlab.acercontrol.set-keyboard-lighting` | `yes` | Validated preset/brightness writes to `CLV0001` (`clv0001_kbd_command`, write-only `_DSM 0x67`) or `/sys/class/leds/*kbd_backlight*` |
-| `io.github.zethasaintlab.acercontrol.set-battery-limit` | `auth_admin_keep` | Validated writes (`[50..100]`) to `/sys/class/power_supply/BAT0/charge_control_end_threshold` with readback verification |
-| `io.github.zethasaintlab.acercontrol.set-fan-mode` | `auth_admin_keep` | Validated writes (`[20..100]%`) to `/sys/class/hwmon/*/pwm1` & `pwm1_enable` with automatic fallback to `pwm1_enable=2` on error |
+| `io.github.zethasaintlab.acercontrol.set-keyboard-lighting` | `yes` | Validated preset/static-RGB/brightness writes to `CLV0001` (`clv0001_kbd_command`, write-only `_DSM 0x67`) or `/sys/class/leds/*kbd_backlight*` |
+| `io.github.zethasaintlab.acercontrol.set-battery-limit` | `auth_admin_keep` | Validated writes (`[50..100]`) to `/sys/class/power_supply/BAT0/charge_control_end_threshold` with readback verification (blocked on host by `ProtectSystem=strict` & absent sysfs node) |
+| `io.github.zethasaintlab.acercontrol.set-fan-mode` | `auth_admin_keep` | Validated writes (`[20..100]%`) to verified `/sys/class/hwmon/*/pwm1` & `pwm1_enable` with fallback to `pwm1_enable=2` (blocked on host by `ProtectSystem=strict` & absent sysfs node) |
 
 ---
 
@@ -281,7 +280,7 @@ busctl call io.github.zethasaintlab.AcerControlCenter1 \
 ./build/acer-control-center --dump-telemetry-json
 acer-control-center
 ```
-In `04 // KEYBOARD STUDIO`, confirm the banner reads `CLV0001 ACPI _DSM 0x67 (17 PRESETS · 5 LEVELS · NO HW READBACK)`, apply presets (`cyan`, `red`, `white`, `off`), confirm a non-preset hex (`#123456`) is rejected with `ERR_CLV0001_PRESET_REQUIRED` while `SNAP TO <PRESET>` restores valid preset selection, and verify the status banner never claims physical readback.
+In `04 // KEYBOARD STUDIO`, confirm `CLV0001` status shows write-only `_DSM 0x67` with no physical readback (`supports_custom_rgb=1` on Stage 17+ modules, or `17 PRESETS ONLY` on legacy modules), apply presets (`cyan`, `red`, `white`, `off`) and optional static 24-bit RGB (`#12A7E3` level `4` on Stage 17+ modules), confirm legacy preset-only modules reject non-preset hex with `ERR_CLV0001_PRESET_REQUIRED`, and verify the status banner never claims physical readback.
 
 ### 5.6 Explicit Failure & Abort Conditions
 **Stop testing immediately if any condition below occurs. Do NOT issue repeated physical writes after an unexpected result.**

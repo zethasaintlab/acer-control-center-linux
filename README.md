@@ -10,7 +10,7 @@
 
 ---
 
-> **Design and hardware status note (2026-11-23):** This public-main snapshot predates the local Stage 17/18 CLV0001 integration and Stage 22 AML investigation described in docs/PROJECT_STATE.md. The screenshots are a historical UI baseline. Reconcile the active checkout before assuming local engineering results are already present in this branch.
+> **Design and hardware status note (2026-11-23):** Active branch `feat/clv0001-keyboard-integration` includes the clean-room `CLV0001` driver (`driver/acer_clv0001_kbd.c`), Stage 17/18 static 24-bit custom RGB support, Stage 21.1 `FirmwareAutomatic` / battery cycle-count honesty fixes, and preliminary Stage 21 Endfield-inspired QML WIP (the full structural UI redesign per [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) is still pending). The screenshots below document the historical baseline.
 
 ## Legacy UI Baseline — Before the Structural Redesign
 
@@ -50,7 +50,7 @@
    - Implemented control adapters target documented Linux interfaces such as `intel_pstate`, TuneD/PPD, display backlight and optional standard LED/fan/battery sysfs nodes.
    - A standard node must be detected and validated before the corresponding control can be used. The A715-59G currently has no standard hwmon fan PWM or battery charge-threshold node.
 3. **Independent Keyboard Lighting Preview and Application Theme Systems:**
-   - **Keyboard Lighting Studio:** The optional clean-room CLV0001 backend provides 17 firmware presets and five brightness levels when loaded. Unrestricted colors may be used for UI preview, but are not represented as arbitrary physical RGB support. The interface distinguishes bound, unbound and preview states.
+   - **Keyboard Lighting Studio:** When `acer_clv0001_kbd` is loaded, the clean-room `CLV0001` backend provides 17 firmware presets, Stage 17/18 static 24-bit custom RGB (`supports_custom_rgb=1`), and five discrete brightness levels (`0..4`) over single-zone `_DSM 0x67` (`accepted_no_hw_readback`, no physical readback). Unrestricted preview colors remain independent of `ThemeEngine`.
    - **Application Theme Accent Studio (`08 // SETTINGS`):** Unrestricted sRGB/HSV/Hex accent color engine with real-time WCAG 2.1 relative luminance and contrast ratio ($\ge 4.5:1$ AA) guardrail token derivation. Changing the physical keyboard color never alters the application theme accent, and vice versa.
 4. **Optional Dynamic NVIDIA NVML Integration (`dlopen`) + `P8` Rail-Gate Spike Filter:**
    - Dynamically loads `libnvidia-ml.so.1` at runtime without compile-time hard linking; launches cleanly on Intel-only or Nouveau systems.
@@ -78,7 +78,7 @@ See [docs/HARDWARE_AUDIT_A715_59G.md](docs/HARDWARE_AUDIT_A715_59G.md) for the c
 | **Battery Telemetry & Est. Capacity Ratio** | `/sys/class/power_supply/BAT0` & `AC` | **Read-Only Supported** | Yes |
 | **Internal eDP Panel Backlight** | `/sys/class/backlight/intel_backlight` (`logind`) | **Fully Supported (48,000 steps)** | Yes |
 | **Fan Tachometer RPM & Manual PWM** | Standard hwmon fan/PWM ABI; vendor AML candidate paths | **No standard fan RPM/PWM node; static AML paths found but not runtime-verified** | **Mock support only** |
-| **Keyboard Backlight & Firmware Presets** | `CLV0001` (`\_SB_.DCHU`, `_DSM 0x67`, clean-room `acer_clv0001_kbd`) or `/sys/class/leds/*kbd_backlight*` | **17 firmware presets + 5 brightness levels when driver is loaded; preview when unbound** | **Full RW in `clv0001` and `full` mock modes** |
+| **Keyboard Backlight & Static RGB** | `CLV0001` (`\_SB_.DCHU`, `_DSM 0x67`, clean-room `acer_clv0001_kbd`) or `/sys/class/leds/*kbd_backlight*` | **17 presets + Stage 17/18 static 24-bit RGB + 5 levels when driver is loaded (single-zone, write-only); preview when unbound** | **Full RW in `clv0001` and `full` mock modes** |
 | **Battery Charge Limit Threshold** | Standard power_supply threshold ABI; vendor FlexiCharger AML candidate | **No standard threshold node; static FlexiCharger path found but not runtime-verified** | **Mock support only** |
 
 ---
@@ -126,14 +126,7 @@ rpmbuild --define "_topdir $(pwd)/build/rpmbuild" -ba build/rpmbuild/SPECS/acer-
 - [Engineering Workflow & Agent Collaboration](docs/WORKFLOW.md)
 - [Industrial-Technical Design System](docs/DESIGN_SYSTEM.md)
 - [Hardware Audit & Capability Matrix (`A715-59G / Kelilu_RTH`)](docs/HARDWARE_AUDIT_A715_59G.md)
-## Project Documentation
-
-- [Project State & Hydrogen Handoff](docs/PROJECT_STATE.md)
-- [Engineering Workflow & Agent Collaboration](docs/WORKFLOW.md)
-- [Industrial-Technical Design System](docs/DESIGN_SYSTEM.md)
-- [Hardware Audit & Capability Matrix (`A715-59G / Kelilu_RTH`)](docs/HARDWARE_AUDIT_A715_59G.md)
 - [Architecture Decision Records (ADR-001 & ADR-002)](docs/ARCHITECTURE_ADR.md)
-- [Fedora Linux 45 Packaging & Privilege Guide](docs/FEDORA_45_PACKAGING.md)
 - [Fedora Linux 45 Packaging & Privilege Guide](docs/FEDORA_45_PACKAGING.md)
 
 ---
