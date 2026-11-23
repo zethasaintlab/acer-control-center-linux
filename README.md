@@ -10,7 +10,7 @@
 
 ---
 
-> **Design and hardware status note (2026-11-23):** Active branch `feat/clv0001-keyboard-integration` includes the clean-room `CLV0001` driver (`driver/acer_clv0001_kbd.c`), Stage 17/18 static 24-bit custom RGB support, Stage 21.1 `FirmwareAutomatic` / battery cycle-count honesty fixes, and preliminary Stage 21 Endfield-inspired QML WIP (the full structural UI redesign per [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) is still pending). The screenshots below document the historical baseline.
+> **Project status note (2026-11-23, Stage 28):** Active branch `feat/clv0001-keyboard-integration` includes the clean-room `CLV0001` driver (`driver/acer_clv0001_kbd.c`), Stage 17/18 static 24-bit custom RGB support, Stage 21.1 hardware-honesty fixes, Stage 24–26 asynchronous runtime, Endfield-inspired UI rebuild per [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md), native Wayland integration, and Stage 23A/23B/28 ACPI evidence closure. The screenshots below document the historical baseline UI.
 
 ## Legacy UI Baseline — Before the Structural Redesign
 
@@ -77,9 +77,9 @@ See [docs/HARDWARE_AUDIT_A715_59G.md](docs/HARDWARE_AUDIT_A715_59G.md) for the c
 | **NVIDIA RTX 3050 6GB Telemetry** | `libnvidia-ml.so.1` (`dlopen` + `P8` filter) | **Read-Only Supported** | Yes |
 | **Battery Telemetry & Est. Capacity Ratio** | `/sys/class/power_supply/BAT0` & `AC` | **Read-Only Supported** | Yes |
 | **Internal eDP Panel Backlight** | `/sys/class/backlight/intel_backlight` (`logind`) | **Fully Supported (48,000 steps)** | Yes |
-| **Fan Tachometer RPM & Manual PWM** | Standard hwmon fan/PWM ABI; vendor AML candidate paths | **No standard fan RPM/PWM node; static AML paths found but not runtime-verified** | **Mock support only** |
-| **Keyboard Backlight & Static RGB** | `CLV0001` (`\_SB_.DCHU`, `_DSM 0x67`, clean-room `acer_clv0001_kbd`) or `/sys/class/leds/*kbd_backlight*` | **17 presets + Stage 17/18 static 24-bit RGB + 5 levels when driver is loaded (single-zone, write-only); preview when unbound** | **Full RW in `clv0001` and `full` mock modes** |
-| **Battery Charge Limit Threshold** | Standard power_supply threshold ABI; vendor FlexiCharger AML candidate | **No standard threshold node; static FlexiCharger path found but not runtime-verified** | **Mock support only** |
+| **Fan Tachometer RPM & Manual PWM** | Standard hwmon fan/PWM ABI; static AML paths locked | **No standard fan RPM/PWM node (`FirmwareAutomatic`); static AML paths unverified & locked** | **Mock / Curve Preview only (`--mock-hardware full`)** |
+| **Keyboard Backlight & Static RGB** | `CLV0001` (`\_SB_.DCHU`, `_DSM 0x67`, clean-room `acer_clv0001_kbd`) or `/sys/class/leds/*kbd_backlight*` | **17 presets + Stage 17/18 static 24-bit RGB + 5 levels physically verified when module loaded (`accepted_no_hw_readback`, single-zone); Preview when unbound** | **Full RW in `clv0001` and `full` mock modes** |
+| **Battery Charge Limit Threshold** | Standard `power_supply` threshold ABI (`BAT0`); Stage 23A read-only `OGNS` NVS probes | **No standard threshold node (`NotDetected`); Stage 23A probes observed `OGNS` NVS shadow (`1/70/80`) only; live EC unverified & setters locked** | **Mock only (`--mock-hardware full`)** |
 
 ---
 
@@ -123,6 +123,8 @@ rpmbuild --define "_topdir $(pwd)/build/rpmbuild" -ba build/rpmbuild/SPECS/acer-
 ## Project Documentation
 
 - [Project State & Hydrogen Handoff](docs/PROJECT_STATE.md)
+- [Release Readiness & QA Assessment (Stage 28)](docs/RELEASE_READINESS.md)
+- [ACPI Runtime & Static Safety Investigation (Stages 23A/23B)](docs/ACPI_RUNTIME_INVESTIGATION.md)
 - [Engineering Workflow & Agent Collaboration](docs/WORKFLOW.md)
 - [Industrial-Technical Design System](docs/DESIGN_SYSTEM.md)
 - [Hardware Audit & Capability Matrix (`A715-59G / Kelilu_RTH`)](docs/HARDWARE_AUDIT_A715_59G.md)

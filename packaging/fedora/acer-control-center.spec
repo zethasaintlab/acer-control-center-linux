@@ -5,6 +5,8 @@ Summary:        Native Hardware Telemetry & Control Center for Acer Aspire 7 A71
 
 License:        GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
 URL:            https://github.com/zethasaintlab/acer-control-center-linux
+# Local source archive generated from the active repository tree (see README.md / docs/FEDORA_45_PACKAGING.md)
+# until a tagged upstream release tarball includes the current branch changes.
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  cmake >= 3.26
@@ -65,7 +67,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.zethasaintl
 
 %files
 %license LICENSE
-%doc README.md docs/HARDWARE_AUDIT_A715_59G.md docs/ARCHITECTURE_ADR.md docs/DESIGN_SYSTEM.md docs/FEDORA_45_PACKAGING.md
+%doc README.md docs/HARDWARE_AUDIT_A715_59G.md docs/ARCHITECTURE_ADR.md docs/DESIGN_SYSTEM.md docs/FEDORA_45_PACKAGING.md docs/ACPI_RUNTIME_INVESTIGATION.md docs/RELEASE_READINESS.md
 %{_bindir}/acer-control-center
 %{_libexecdir}/acer-control-daemon
 %{_unitdir}/acer-control-daemon.service
