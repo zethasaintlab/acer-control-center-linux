@@ -1,6 +1,6 @@
 # Product Design System — Industrial Technical / Endfield-Inspired
 
-**Status:** Current design direction approved for the next structural redesign  
+**Status:** Implemented in Stage 25 on `feat/clv0001-keyboard-integration`
 **Product:** Acer Control Center — Linux Edition  
 **Reference research:** https://github.com/zethasaintlab/Endfield-Design-System  
 **Functional reference:** https://github.com/PXDiv/Div-Acer-Manager-Max
@@ -170,4 +170,24 @@ A substantive redesign must show evidence of:
 6. Responsive and accessible interaction.
 7. Hardware truthfulness and capability-aware controls.
 
-The prior Precision Hardware Atelier screenshots are historical implementation references only. They are not the target appearance for the next redesign.
+A structural UI rebuild (Stage 25) is implemented cleanly atop the Stage 24 asynchronous runtime foundation:
+
+1. **Responsive 3-tier command shell (`src/ui/qml/Main.qml`, `minimumWidth: 680`, `minimumHeight: 540`):**
+   - *Wide desktop (`>= 1160px`, non-compact):* `222px` grouped command rail (`// OPERATIONS` `01..06` and `// SYSTEM` `07..08`) displaying inline live telemetry micro-readouts and keyboard shortcuts (`Alt+1`..`Alt+8`).
+   - *Compact / medium (`820..1159px` or `theme.compactNavigation`):* `64px` sharp icon rail with code index (`01`..`08`).
+   - *Narrow / half-screen tiled (`< 820px`):* Side rail collapses cleanly into a `40px` horizontal scrollable tab strip so tiled windows retain full workspace width.
+   - *Global header (`52px`) & conduit bar (`30px`):* Hosts progressive telemetry pills (`CPU`, `RTX 3050`, `BAT`), active operating mode badge, hardware posture (`PHYSICAL HW` / `MOCK HW`), manual `SYNC` trigger (`ctrl.refreshNow()`), and Stage 24 freshness/auth readout.
+2. **Stage 24 Async State Integration (`TelemetryStateBanner.qml`, `TelemetryMetricTile.qml`, `TelemetryLoadRow.qml`, `AtelierButton.qml`):**
+   - `unavailable` telemetry hides live metrics cleanly (`--` + awaiting-worker message) instead of rendering zeroed or stale data.
+   - `stale` telemetry (timer threshold, worker I/O failure, or suspend cycle) visibly dims instruments, prefixes `[STALE // source]`, and presents an inline retryable `TelemetryStateBanner`.
+   - Privileged D-Bus/Polkit operations expose explicit non-blocking `pending` (`AUTH PENDING` + disabled pending buttons), `denied` (`POLKIT DENIED`), `daemon_unavailable` (`DAEMON // UNREACHABLE`), and `failed` (`CONTROL // HW FAILED`) states distinct from capability locks.
+3. **Reusable Stage 25 Component Families (`src/ui/qml/`):**
+   - `CommandModule`: Hairline-framed industrial subsystem bay with sharp `2px` geometry, integrated `34px` header (`[CODE]`, title, provenance, `CapabilityBadge`), optional left directional register stripe, subtle corner fiducials, and optional hazard rule reserved exclusively for unverified/write-only regions (`Thermal` PWM unverified, `Battery` charge limit unexposed, `Keyboard` write-only no-readback).
+   - `TelemetryMetricTile`: `Inter Display` hero figure + separated `JetBrains Mono` unit, provenance tag (`[coretemp]`, `[nvml]`, `[BAT0]`, `[calc]`, `[estimate]`), sub-metric context, and built-in `stale` / `unavailable` visual honesty.
+   - `TelemetryStateBanner`: Unified Stage 24 async telemetry and Polkit authorization banner directly below the contextual workspace bar.
+   - `CadKeyValueRow`: Border-divided key-value ledger row replacing nested box clutter.
+   - Upgraded existing primitives: `AtelierButton` (with `pendingState`), `CapabilityBadge` (with responsive `maxWidth` clamping), `TelemetryLoadRow` (with `<520px` stacked reflow & `stale`/`unavailable` dimming), `AtelierSlider`, `SegmentedPillToggle`.
+4. **Bimodal Token Architecture (`acc::app::ThemeEngine`):**
+   - Preserves WCAG 2.2 AA (`>= 4.5:1`) contrast-guardrailed custom app accent (`#222524` Dark HUD / `#D8DCDF` Light CAD) while adding `surfaceSunken` (`#151818` / `#C5CDD2`), `surfaceOverlay` (`#333837` / `#F7F9FA`), and `hairlineRule` (`#2E3433` / `#B6BFC6`) for crisp dark tactical HUD vs light engineering blueprint depth.
+5. **Validated Workspaces (`OverviewView`, `PerformanceView`, `ThermalView`, `KeyboardStudioView`, `BatteryView`, `GpuView`, `DiagnosticsView`, `SettingsView`):**
+   - Every workspace uses asymmetric/split task-driven composition verified offscreen in Dark HUD and Light CAD across `760x700` (tiled), `1366x768`, `1600x900`, `1920x1080`, and `2560x1440`, preserving lazy single-view `workspaceLoader` instantiation and strict `CLV0001` static single-zone RGB separation.
