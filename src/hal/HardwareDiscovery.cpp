@@ -45,6 +45,31 @@ QString HardwareDiscovery::findFirstKeyboardLedPath() {
     return QString();
 }
 
+bool HardwareDiscovery::isVerifiedFanDriverName(const QString& driverName) {
+    return driverName.trimmed() == QLatin1String("acer_ec_fans");
+}
+
+bool HardwareDiscovery::hasValidFanPwmAttributes(const QString& hwmonDir) {
+    const QString pwmPath = hwmonDir + QStringLiteral("/pwm1");
+    const QString enablePath = hwmonDir + QStringLiteral("/pwm1_enable");
+    if (!QFileInfo::exists(pwmPath) || !QFileInfo::exists(enablePath)) {
+        return false;
+    }
+    bool okPwm = false;
+    const int pwmVal = SysfsRoot::readFileTrimmed(pwmPath, &okPwm).toInt(&okPwm);
+    bool okEn = false;
+    const int enVal = SysfsRoot::readFileTrimmed(enablePath, &okEn).toInt(&okEn);
+    return okPwm && pwmVal >= 0 && pwmVal <= 255 && okEn && enVal >= 0 && enVal <= 2;
+}
+
+bool HardwareDiscovery::isVerifiedWritableFanPwmHwmon(const QString& hwmonDir) {
+    if (!hasValidFanPwmAttributes(hwmonDir)) {
+        return false;
+    }
+    const QString drvName = SysfsRoot::readFileTrimmed(hwmonDir + QStringLiteral("/name"));
+    return isVerifiedFanDriverName(drvName);
+}
+
 QString HardwareDiscovery::findFirstFanPwmHwmonPath() {
     const QString hwmonBase = SysfsRoot::instance().resolvePath(QStringLiteral("/sys/class/hwmon"));
     QDir dir(hwmonBase);
@@ -54,8 +79,7 @@ QString HardwareDiscovery::findFirstFanPwmHwmonPath() {
     const QStringList entries = dir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const QString& entry : entries) {
         const QString candidate = dir.filePath(entry);
-        if (QFileInfo::exists(candidate + QStringLiteral("/fan1_input")) ||
-            QFileInfo::exists(candidate + QStringLiteral("/pwm1"))) {
+        if (isVerifiedWritableFanPwmHwmon(candidate)) {
             return candidate;
         }
     }
@@ -209,18 +233,22 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
     if (clvTopo.devicePresent && clvTopo.driverBound && clvTopo.dmiEligible) {
         state.backendKind = core::KeyboardBackendKind::Clv0001AcpiDsmPreset;
         state.backendKindId = QStringLiteral("clv0001_acpi_dsm");
-        state.controlModeBadge = QStringLiteral("CLV0001 ACPI _DSM 0x67 (17 PRESETS · 5 LEVELS · NO HW READBACK)");
+        state.controlModeBadge = clvTopo.supportsCustomRgb
+                                     ? QStringLiteral("CLV0001 ACPI _DSM 0x67 (17 PRESETS + STATIC 24-BIT RGB · 5 LEVELS · NO HW READBACK)")
+                                     : QStringLiteral("CLV0001 ACPI _DSM 0x67 (17 PRESETS ONLY · 5 LEVELS · NO HW READBACK)");
         state.ledSysfsPath = clvTopo.commandPath;
         state.supportsBacklightBrightness = true;
         state.supportsRgbZones = false;
-        state.supportsPresetColors = true;
-        state.supportsArbitraryRgb = false;
+        state.supportsPresetColors = clvTopo.supportsPresets;
+        state.supportsArbitraryRgb = clvTopo.supportsCustomRgb;
         state.supportsTimeout = false;
         state.independentHwReadback = false;
         state.zoneCount = 1;
         state.maxBrightness = 4;
         state.discreteBrightnessLevels = 5;
-        state.currentPresetName = (clvTopo.lastAppliedPreset == QLatin1String("none") || clvTopo.lastAppliedPreset.isEmpty())
+        state.currentPresetName = (clvTopo.lastAppliedPreset == QLatin1String("none") ||
+                                   clvTopo.lastAppliedPreset == QLatin1String("custom_rgb") ||
+                                   clvTopo.lastAppliedPreset.isEmpty())
                                       ? QStringLiteral("cyan")
                                       : clvTopo.lastAppliedPreset;
         state.currentBrightnessLevel = (clvTopo.lastAppliedStatus == QLatin1String("uninitialized"))
@@ -228,15 +256,25 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
                                            : clvTopo.lastAppliedBrightnessLevel;
         state.currentBrightnessPct = Clv0001KeyboardBackend::brightnessLevelToPct(state.currentBrightnessLevel);
         state.capabilityState = core::CapabilityState::PartiallySupported;
-        state.hardwareRoutingBadge = QStringLiteral(
-            "CLV0001 ACPI _DSM 0x67 BOUND (%1 — 17 Presets, Levels 0..4, Accepted Without Physical Readback)"
-        ).arg(clvTopo.acpiPath);
-        state.hardwareExplanation = QStringLiteral(
-            "Bound to ACPI device CLV0001:00 (%1) via kernel module `acer_clv0001_kbd`. "
-            "Supports 17 verified named color presets and 5 discrete brightness levels (0..4 -> 0x00, 0x2F, 0x5F, 0x8F, 0xBF) "
-            "over `_DSM` UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad` rev `0` fn `0x67` (`[G, R, B, 0xF0]`). "
-            "Arbitrary 24-bit RGB, 4-zone split hardware control, and physical hardware readback are not exposed by firmware."
-        ).arg(clvTopo.acpiPath);
+        state.hardwareRoutingBadge = clvTopo.supportsCustomRgb
+                                         ? QStringLiteral(
+                                               "CLV0001 ACPI _DSM 0x67 BOUND (%1 — 17 Presets + Static 24-Bit RGB, Levels 0..4, Accepted Without Physical Readback)"
+                                           ).arg(clvTopo.acpiPath)
+                                         : QStringLiteral(
+                                               "CLV0001 ACPI _DSM 0x67 BOUND (%1 — Preset-Only Driver Module, 17 Presets, Levels 0..4, Accepted Without Physical Readback)"
+                                           ).arg(clvTopo.acpiPath);
+        state.hardwareExplanation = clvTopo.supportsCustomRgb
+                                        ? QStringLiteral(
+                                              "Bound to ACPI device CLV0001:00 (%1) via Stage 17+ kernel module `acer_clv0001_kbd` (`supports_custom_rgb=1`). "
+                                              "Supports 17 verified named presets and static 24-bit `rgb <R> <G> <B> <level>` colors (levels 0..4 -> 0x00, 0x2F, 0x5F, 0x8F, 0xBF) "
+                                              "over `_DSM` UUID `93f224e4-fbdc-4bbf-add6-db71bdc0afad` rev `0` fn `0x67`. "
+                                              "Per-zone split, temporal animations (breathing/wave), and physical hardware readback remain unsupported."
+                                          ).arg(clvTopo.acpiPath)
+                                        : QStringLiteral(
+                                              "Bound to ACPI device CLV0001:00 (%1) via legacy preset-only `acer_clv0001_kbd` (`supports_custom_rgb=0`). "
+                                              "Supports the 17 verified named presets and 5 discrete brightness levels (0..4) over `_DSM 0x67`. "
+                                              "Upgrade kernel module with Stage 17+ `acer_clv0001_kbd` to unlock static 24-bit custom RGB; physical readback remains unsupported."
+                                          ).arg(clvTopo.acpiPath);
         return state;
     }
 
@@ -386,17 +424,55 @@ std::vector<core::CapabilityRecord> HardwareDiscovery::probeAllCapabilities(bool
 
     // 8. Fan RPM & PWM Control
     const QString fanHwmon = findFirstFanPwmHwmonPath();
+    bool hasReadOnlyTach = false;
+    bool hasAnyPwmNode = false;
+    {
+        QDir hwDir(root.resolvePath(QStringLiteral("/sys/class/hwmon")));
+        if (hwDir.exists()) {
+            for (const QString& entry : hwDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+                QDir d(hwDir.filePath(entry));
+                if (!d.entryList({QStringLiteral("fan*_input")}, QDir::Files).isEmpty()) {
+                    hasReadOnlyTach = true;
+                }
+                if (!d.entryList({QStringLiteral("pwm*")}, QDir::Files).isEmpty()) {
+                    hasAnyPwmNode = true;
+                }
+            }
+        }
+    }
+    const bool hasAcpiEc =
+        dmi.acpiDevices.join(QLatin1Char(',')).contains(QLatin1String("PNP0C09"), Qt::CaseInsensitive) ||
+        QFileInfo::exists(root.resolvePath(QStringLiteral("/sys/bus/acpi/devices/PNP0C09:00")));
+
+    core::CapabilityState fanCapState = core::CapabilityState::NotDetected;
+    bool fanWritable = false;
+    QString fanSummary = QStringLiteral("No fan telemetry or PWM control interface detected");
+    if (!fanHwmon.isEmpty()) {
+        fanCapState = root.isMockActive() ? core::CapabilityState::Simulated : core::CapabilityState::FullySupported;
+        fanWritable = true;
+        fanSummary = root.isMockActive()
+                         ? QStringLiteral("SIMULATED: Mock hwmon fan RPM and PWM interface active with automatic fallback")
+                         : QStringLiteral("Kernel hwmon fan RPM and PWM interface active with automatic fallback");
+    } else if (hasAnyPwmNode) {
+        fanCapState = core::CapabilityState::RequiresVerification;
+        fanSummary = QStringLiteral("Unverified or incomplete hwmon PWM node detected; manual writes blocked for thermal safety");
+    } else if (hasReadOnlyTach) {
+        fanCapState = core::CapabilityState::ReadOnly;
+        fanSummary = QStringLiteral("Read-only fan tachometer detected; no verified writable PWM control node");
+    } else if (hasAcpiEc) {
+        fanCapState = core::CapabilityState::FirmwareAutomatic;
+        fanSummary = QStringLiteral("No kernel hwmon fan RPM or PWM node is bound on Kelilu_RTH; INSYDE EC (PNP0C09:00) manages dual fans in hardware Auto mode");
+    }
+
     caps.push_back(core::CapabilityRecord{
         QStringLiteral("cap.thermal.fans"),
         QStringLiteral("Cooling Fan RPM & Manual/Curve PWM Control"),
         QStringLiteral("Thermal"),
-        fanHwmon.isEmpty() ? QStringLiteral("/sys/class/hwmon/*/fan*_input & pwm* (Absent)") : fanHwmon,
-        fanHwmon.isEmpty() ? core::CapabilityState::NotDetected : core::CapabilityState::FullySupported,
-        !fanHwmon.isEmpty(),
-        fanHwmon.isEmpty()
-            ? QStringLiteral("No kernel hwmon fan RPM or PWM node is bound on Kelilu_RTH; EC manages fans in Auto mode")
-            : QStringLiteral("Kernel hwmon fan RPM and PWM interface active with automatic fallback"),
-        QStringLiteral("Per Hardware Safety Invariant, undocumented EC registers are never written. Curve Studio runs in Preview Mode unless a verified hwmon PWM node is present.")
+        fanHwmon.isEmpty() ? QStringLiteral("/sys/class/hwmon/*/fan*_input & pwm* (PNP0C09:00 EC Auto)") : fanHwmon,
+        fanCapState,
+        fanWritable,
+        fanSummary,
+        QStringLiteral("Per Hardware Safety Invariant, undocumented EC registers are never written. Curve Studio runs in Preview Only mode unless a verified hwmon PWM node is present.")
     });
 
     // 9. NVIDIA GPU Telemetry
@@ -436,17 +512,23 @@ std::vector<core::CapabilityRecord> HardwareDiscovery::probeAllCapabilities(bool
     // 11. Battery Charge Threshold
     const QString batLimitPath = root.resolvePath(QStringLiteral("/sys/class/power_supply/BAT0/charge_control_end_threshold"));
     const bool hasBatLimit = QFileInfo::exists(batLimitPath);
+    const core::CapabilityState batLimitState =
+        hasBatLimit
+            ? (root.isMockActive() ? core::CapabilityState::Simulated : core::CapabilityState::FullySupported)
+            : core::CapabilityState::NotDetected;
     caps.push_back(core::CapabilityRecord{
         QStringLiteral("cap.battery.limit"),
         QStringLiteral("Battery Charge Limit Threshold (80% Care Mode)"),
         QStringLiteral("Battery & Power"),
         QStringLiteral("/sys/class/power_supply/BAT0/charge_control_end_threshold"),
-        hasBatLimit ? core::CapabilityState::FullySupported : core::CapabilityState::NotDetected,
+        batLimitState,
         hasBatLimit,
         hasBatLimit
-            ? QStringLiteral("Kernel charge_control_end_threshold attribute detected and writable")
-            : QStringLiteral("charge_control_end_threshold not exposed by acpi-battery on Kelilu_RTH"),
-        QStringLiteral("Control is enabled automatically when the kernel power_supply driver exposes charge_control_end_threshold.")
+            ? (root.isMockActive()
+                   ? QStringLiteral("SIMULATED: Mock charge_control_end_threshold attribute detected and writable")
+                   : QStringLiteral("Kernel charge_control_end_threshold attribute detected and writable"))
+            : QStringLiteral("BATTERY TELEMETRY ONLY — CHARGE LIMIT NOT DETECTED (charge_control_end_threshold not exposed by acpi-battery on Kelilu_RTH)"),
+        QStringLiteral("Control is enabled automatically only when the kernel power_supply driver exposes charge_control_end_threshold.")
     });
 
     // 12. Display Backlight

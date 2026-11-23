@@ -18,7 +18,18 @@
 #include <QXmlStreamReader>
 #include <QtTest/QtTest>
 #include <cmath>
+#include <errno.h>
 #include <limits>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+namespace clv0001_kmod_unit {
+extern "C" {
+#include "../../driver/acer_clv0001_kbd.c"
+}
+} // namespace clv0001_kmod_unit
 
 using namespace acc;
 
@@ -43,6 +54,17 @@ private Q_SLOTS:
 
         // Invalid hex rejected
         QVERIFY(!core::ColorScience::parseHexToRgb(QStringLiteral("#12345G"), parsed));
+
+        // Strict #RRGGBB parser (Stage 18): accepts 6 hex digits with '#', rejects shorthand/missing '#'/overflow
+        QVERIFY(core::ColorScience::parseStrictHex6ToRgb(QStringLiteral("#12A7E3"), parsed));
+        QCOMPARE(parsed.r, 18);
+        QCOMPARE(parsed.g, 167);
+        QCOMPARE(parsed.b, 227);
+        QVERIFY(core::ColorScience::parseStrictHex6ToRgb(QStringLiteral(" #12a7e3 "), parsed));
+        QVERIFY(!core::ColorScience::parseStrictHex6ToRgb(QStringLiteral("12A7E3"), parsed));
+        QVERIFY(!core::ColorScience::parseStrictHex6ToRgb(QStringLiteral("#123"), parsed));
+        QVERIFY(!core::ColorScience::parseStrictHex6ToRgb(QStringLiteral("#12345G"), parsed));
+        QVERIFY(!core::ColorScience::parseStrictHex6ToRgb(QStringLiteral("#1234567"), parsed));
 
         // 2. RGB <-> HSV roundtrip
         const core::HsvColor hsv = core::ColorScience::rgbToHsv(core::RgbColor{59, 158, 255});
@@ -161,11 +183,80 @@ private Q_SLOTS:
         QVERIFY(!snap.dmi.acerWmiLoaded);
         QVERIFY(snap.dmi.wmiGuids.join(QLatin1Char(',')).contains(QLatin1String("ABBC0F6D")));
 
-        // On Physical Mirror, keyboard LED, fan PWM, and battery charge threshold must be NotDetected
+        // On Physical Mirror, keyboard LED & battery charge threshold must be NotDetected,
+        // BAT0/cycle_count=0 must be reconciled as NOT REPORTED,
+        // and fan control must truthfully report FirmwareAutomatic (PNP0C09:00 EC Auto)
         QCOMPARE(snap.keyboardHw.capabilityState, core::CapabilityState::NotDetected);
         QVERIFY(!snap.keyboardHw.supportsBacklightBrightness);
         QVERIFY(!snap.thermal.manualFanSupported);
         QVERIFY(!snap.battery.chargeLimitSupported);
+        QCOMPARE(snap.battery.cycleCount, 0);
+        QCOMPARE(snap.battery.cycleCountReported, false);
+        QCOMPARE(snap.battery.cycleCountLabel, QStringLiteral("NOT REPORTED"));
+        QVERIFY(snap.battery.statusExplanation.contains(QStringLiteral("BATTERY TELEMETRY ONLY — CHARGE LIMIT NOT DETECTED")));
+
+        bool foundFanCap = false, foundBatCap = false;
+        for (const auto& cap : snap.capabilities) {
+            if (cap.id == QLatin1String("cap.thermal.fans")) {
+                foundFanCap = true;
+                QCOMPARE(cap.state, core::CapabilityState::FirmwareAutomatic);
+                QCOMPARE(core::capabilityStateToBadge(cap.state), QStringLiteral("FIRMWARE AUTOMATIC"));
+                QVERIFY(!cap.isWritable);
+            } else if (cap.id == QLatin1String("cap.battery.limit")) {
+                foundBatCap = true;
+                QCOMPARE(cap.state, core::CapabilityState::NotDetected);
+                QCOMPARE(core::capabilityStateToBadge(cap.state), QStringLiteral("NOT DETECTED"));
+                QVERIFY(!cap.isWritable);
+            }
+        }
+        QVERIFY(foundFanCap && foundBatCap);
+
+        // Battery telemetry range validation, rounding, rollback & readback verification in MockFullCapabilities
+        hal::SysfsRoot::instance().setMode(hal::HardwareMode::MockFullCapabilities);
+        const core::SystemSnapshot fullSnap = collector.collectSnapshot(QStringLiteral("balanced"));
+        QCOMPARE(fullSnap.battery.cycleCount, 42);
+        QCOMPARE(fullSnap.battery.cycleCountReported, true);
+        QCOMPARE(fullSnap.battery.cycleCountLabel, QStringLiteral("42"));
+        for (const auto& cap : fullSnap.capabilities) {
+            if (cap.id == QLatin1String("cap.thermal.fans")) {
+                QCOMPARE(cap.state, core::CapabilityState::Simulated);
+                QCOMPARE(core::capabilityStateToBadge(cap.state), QStringLiteral("SIMULATED"));
+                QVERIFY(cap.summary.contains(QStringLiteral("SIMULATED")));
+            } else if (cap.id == QLatin1String("cap.battery.limit")) {
+                QCOMPARE(cap.state, core::CapabilityState::Simulated);
+                QCOMPARE(core::capabilityStateToBadge(cap.state), QStringLiteral("SIMULATED"));
+                QVERIFY(cap.summary.contains(QStringLiteral("SIMULATED")));
+            }
+        }
+
+        int rbLim = 0;
+        const core::ControlResult batSetRes = hal::ControlOperations::applyBatteryChargeLimit(75, rbLim);
+        QVERIFY(batSetRes.applied);
+        QVERIFY(batSetRes.physicalStateVerified);
+        QCOMPARE(batSetRes.verificationStatusId, QStringLiteral("verified_physical_readback"));
+        QCOMPARE(rbLim, 75);
+        QVERIFY(batSetRes.message.contains(QStringLiteral("previous=80%")));
+        QCOMPARE(hal::ControlOperations::applyBatteryChargeLimit(45, rbLim).errorCode, QStringLiteral("ERR_INVALID_THRESHOLD"));
+        QCOMPARE(hal::ControlOperations::applyBatteryChargeLimit(105, rbLim).errorCode, QStringLiteral("ERR_INVALID_THRESHOLD"));
+
+        // Driver rounding handling (step=10 rounds requested 78% -> 80% with previous=75% logged)
+        const QString stepPath = hal::SysfsRoot::instance().resolvePath(
+            QStringLiteral("/sys/class/power_supply/BAT0/mock_charge_limit_step")
+        );
+        {
+            QFile stepF(stepPath);
+            QVERIFY(stepF.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            stepF.write("10\n");
+        }
+        int rbRounded = 0;
+        const core::ControlResult roundedRes = hal::ControlOperations::applyBatteryChargeLimit(78, rbRounded);
+        QVERIFY(roundedRes.applied);
+        QVERIFY(roundedRes.physicalStateVerified);
+        QCOMPARE(rbRounded, 80);
+        QCOMPARE(roundedRes.verificationStatusId, QStringLiteral("verified_physical_readback_rounded"));
+        QVERIFY(roundedRes.message.contains(QStringLiteral("driver rounded requested 78%; previous=75%")));
+
+        hal::SysfsRoot::instance().setMode(hal::HardwareMode::MockPhysicalMirror);
 
         // Attempting writes on unexposed interfaces must fail safely without fabricating success
         int rbPct = 0;
@@ -619,7 +710,7 @@ private Q_SLOTS:
         QCOMPARE(unboundRes.errorCode, QStringLiteral("ERR_CLV0001_DRIVER_NOT_BOUND"));
         QCOMPARE(unboundRes.verificationStatusId, QStringLiteral("rejected_before_execution"));
 
-        // 2. MockClv0001DriverActive: driver bound, 17 presets accepted WITHOUT fake physical readback
+        // 2. MockClv0001DriverActive: Stage 18 driver bound, 17 presets + static custom RGB accepted WITHOUT fake physical readback
         root.setMode(hal::HardwareMode::MockClv0001DriverActive);
         const core::DmiIdentity clvDmi = hal::HardwareDiscovery::probeDmiAndWmi();
         QVERIFY(clvDmi.loadedDrivers.contains(QStringLiteral("acer_clv0001_kbd")));
@@ -629,17 +720,97 @@ private Q_SLOTS:
         QCOMPARE(kbdBound.clv0001DriverBound, true);
         QCOMPARE(kbdBound.backendKind, core::KeyboardBackendKind::Clv0001AcpiDsmPreset);
         QCOMPARE(kbdBound.supportsPresetColors, true);
-        QCOMPARE(kbdBound.supportsArbitraryRgb, false);
+        QCOMPARE(kbdBound.supportsArbitraryRgb, true);
         QCOMPARE(kbdBound.independentHwReadback, false);
 
-        // Reject arbitrary RGB color not matching a verified preset
-        const core::ControlResult arbRes =
-            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("static"), 100, QStringLiteral("#123456"));
-        QVERIFY(!arbRes.applied);
-        QCOMPARE(arbRes.errorCode, QStringLiteral("ERR_CLV0001_PRESET_REQUIRED"));
-        QCOMPARE(arbRes.verificationStatusId, QStringLiteral("rejected_before_execution"));
+        // Test Stage 18 static custom RGB vectors (0,0,0), (255,255,255), (18,167,227), (18,52,86) across all levels 0..4
+        const core::ControlResult customHeroRes =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("#12A7E3"));
+        QVERIFY(customHeroRes.applied);
+        QCOMPARE(customHeroRes.physicalStateVerified, false);
+        QCOMPARE(customHeroRes.verificationStatusId, QStringLiteral("accepted_no_hw_readback"));
+        QVERIFY(customHeroRes.readbackSummary.contains(QStringLiteral("\"preset\":\"custom_rgb\"")));
+        QVERIFY(customHeroRes.readbackSummary.contains(QStringLiteral("\"payload_grb\":\"A7 12 E3 F0\"")));
+        QVERIFY(customHeroRes.readbackSummary.contains(QStringLiteral("\"physical_readback\":false")));
 
-        // Apply valid preset + brightness level
+        const core::ControlResult customZeroRes =
+            hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, 0, 0, 0, 0);
+        QVERIFY(customZeroRes.applied);
+        QVERIFY(customZeroRes.readbackSummary.contains(QStringLiteral("\"payload_grb\":\"00 00 00 F0\"")));
+
+        const core::ControlResult customWhiteRes =
+            hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, 255, 255, 255, 4);
+        QVERIFY(customWhiteRes.applied);
+        QVERIFY(customWhiteRes.readbackSummary.contains(QStringLiteral("\"payload_grb\":\"FF FF FF F0\"")));
+
+        const std::array<QString, 5> expected18_52_86 = {
+            QStringLiteral("00 00 00 F0"),
+            QStringLiteral("0C 04 15 F0"),
+            QStringLiteral("19 08 2A F0"),
+            QStringLiteral("26 0D 40 F0"),
+            QStringLiteral("34 12 56 F0")
+        };
+        for (int lvl = 0; lvl <= 4; ++lvl) {
+            const core::ControlResult lvlRes =
+                hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, 18, 52, 86, lvl);
+            QVERIFY(lvlRes.applied);
+            QVERIFY(lvlRes.readbackSummary.contains(QStringLiteral("\"payload_grb\":\"%1\"").arg(expected18_52_86[static_cast<size_t>(lvl)])));
+        }
+
+        // Invalid custom RGB / level / HEX / deferred animation mode rejected BEFORE touching sysfs
+        QCOMPARE(hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, -1, 52, 86, 4).errorCode, QStringLiteral("ERR_INVALID_RGB_CHANNEL"));
+        QCOMPARE(hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, 256, 52, 86, 4).errorCode, QStringLiteral("ERR_INVALID_RGB_CHANNEL"));
+        QCOMPARE(hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, 18, 52, 86, -1).errorCode, QStringLiteral("ERR_INVALID_BRIGHTNESS"));
+        QCOMPARE(hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, 18, 52, 86, 5).errorCode, QStringLiteral("ERR_INVALID_BRIGHTNESS"));
+        QCOMPARE(hal::ControlOperations::applyKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("123456")).errorCode, QStringLiteral("ERR_INVALID_COLOR_HEX"));
+        QCOMPARE(hal::ControlOperations::applyKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("#123")).errorCode, QStringLiteral("ERR_INVALID_COLOR_HEX"));
+        QCOMPARE(hal::ControlOperations::applyKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("#12345G")).errorCode, QStringLiteral("ERR_INVALID_COLOR_HEX"));
+        QCOMPARE(hal::ControlOperations::applyKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("#1234567")).errorCode, QStringLiteral("ERR_INVALID_COLOR_HEX"));
+        QCOMPARE(hal::ControlOperations::applyKeyboardLighting(QStringLiteral("breathing"), 100, QStringLiteral("#12A7E3")).errorCode, QStringLiteral("ERR_UNSUPPORTED_KEYBOARD_MODE"));
+
+        // Capability discovery: distinguish legacy preset-only module & malformed metadata from Stage 17/18 module
+        const QString presetsPath =
+            root.resolvePath(QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_presets"));
+        const QString fullPresetsMetadata = hal::SysfsRoot::readFileTrimmed(presetsPath);
+        QVERIFY(fullPresetsMetadata.contains(QStringLiteral("supports_custom_rgb=1")));
+        {
+            QFile pf(presetsPath);
+            QVERIFY(pf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            pf.write("presets=off,red,cyan,white\nbrightness_levels=0,1,2,3,4\n");
+        }
+        const core::KeyboardHardwareState presetOnlyKbd = hal::HardwareDiscovery::probeKeyboardHardware(clvDmi);
+        QCOMPARE(presetOnlyKbd.supportsPresetColors, true);
+        QCOMPARE(presetOnlyKbd.supportsArbitraryRgb, false);
+        const core::ControlResult oldModuleReject =
+            hal::ControlOperations::applyKeyboardLighting(QStringLiteral("static"), 100, QStringLiteral("#123456"));
+        QVERIFY(!oldModuleReject.applied);
+        QCOMPARE(oldModuleReject.errorCode, QStringLiteral("ERR_CLV0001_PRESET_REQUIRED"));
+        QVERIFY(hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:cyan"), 100, QStringLiteral("cyan")).applied);
+
+        // Malformed metadata also defaults supportsArbitraryRgb cleanly to false
+        {
+            QFile pf(presetsPath);
+            QVERIFY(pf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            pf.write("corrupted_metadata\n");
+        }
+        QCOMPARE(hal::HardwareDiscovery::probeKeyboardHardware(clvDmi).supportsArbitraryRgb, false);
+        {
+            QFile pf(presetsPath);
+            QVERIFY(pf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            pf.write(fullPresetsMetadata.toUtf8() + "\n");
+        }
+
+        // Permission failure on clv0001_kbd_command propagates cleanly without claiming success
+        const QString cmdPathPerm =
+            root.resolvePath(QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command"));
+        QFile::setPermissions(cmdPathPerm, QFileDevice::ReadOwner);
+        const core::ControlResult permFailRes =
+            hal::Clv0001KeyboardBackend::applyCustomRgbCommand(clvDmi, 18, 167, 227, 4);
+        QFile::setPermissions(cmdPathPerm, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+        QVERIFY(!permFailRes.applied);
+        QCOMPARE(permFailRes.errorCode, QStringLiteral("ERR_CLV0001_WRITE_FAILED"));
+
+        // Apply valid preset + brightness level (Stage 15 preset regression)
         const core::ControlResult applyRes =
             hal::ControlOperations::applyKeyboardLighting(QStringLiteral("preset:red"), 100, QStringLiteral("red"));
         QVERIFY(applyRes.applied);
@@ -806,23 +977,53 @@ private Q_SLOTS:
         bool dbusApplied = false;
         QString dbusRb, dbusErr;
 
-        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestDenyAll);
-        daemonObj.SetKeyboardLighting(QStringLiteral("preset:magenta"), 75, QStringLiteral("magenta"), dbusApplied, dbusRb, dbusErr);
-        QVERIFY(!dbusApplied);
-        QCOMPARE(dbusErr, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
-        QVERIFY(dbusRb.contains(QStringLiteral("ERR_POLKIT_UNAUTHORIZED")));
-        QVERIFY(dbusRb.contains(QStringLiteral("rejected_before_execution")));
-
+        // First set baseline state via allowed call so we verify denied call leaves state unchanged
         daemonObj.setAuthMode(daemon::AuthPolicyMode::TestAllowAll);
-        daemonObj.SetKeyboardLighting(QStringLiteral("static"), 100, QStringLiteral("#123456"), dbusApplied, dbusRb, dbusErr);
-        QVERIFY(!dbusApplied);
-        QCOMPARE(dbusErr, QStringLiteral("ERR_CLV0001_PRESET_REQUIRED"));
-        QVERIFY(dbusRb.contains(QStringLiteral("nearest preset")));
-
         daemonObj.SetKeyboardLighting(QStringLiteral("preset:magenta"), 75, QStringLiteral("magenta"), dbusApplied, dbusRb, dbusErr);
         QVERIFY(dbusApplied);
         QCOMPARE(dbusErr, QStringLiteral("OK"));
         QVERIFY(dbusRb.contains(QStringLiteral("accepted_no_hw_readback")));
+        const QString savedStateBeforeDeny = hal::SysfsRoot::readFileTrimmed(statePath);
+
+        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestDenyAll);
+        daemonObj.SetKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("#12A7E3"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(!dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("ERR_POLKIT_UNAUTHORIZED"));
+        QVERIFY(dbusRb.contains(QStringLiteral("ERR_POLKIT_UNAUTHORIZED")));
+        QVERIFY(dbusRb.contains(QStringLiteral("rejected_before_execution")));
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(statePath), savedStateBeforeDeny);
+
+        daemonObj.setAuthMode(daemon::AuthPolicyMode::TestAllowAll);
+        daemonObj.SetKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("#12A7E3"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("OK"));
+        QVERIFY(dbusRb.contains(QStringLiteral("\"preset\":\"custom_rgb\"")));
+        QVERIFY(dbusRb.contains(QStringLiteral("\"payload_grb\":\"A7 12 E3 F0\"")));
+        QVERIFY(dbusRb.contains(QStringLiteral("accepted_no_hw_readback")));
+
+        // Invalid custom RGB/HEX/mode over D-Bus rejected before driver write
+        daemonObj.SetKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("256,0,0"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(!dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("ERR_INVALID_RGB_CHANNEL"));
+
+        daemonObj.SetKeyboardLighting(QStringLiteral("custom_rgb"), 100, QStringLiteral("#12345G"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(!dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("ERR_INVALID_COLOR_HEX"));
+
+        daemonObj.SetKeyboardLighting(QStringLiteral("wave"), 100, QStringLiteral("#12A7E3"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(!dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("ERR_UNSUPPORTED_KEYBOARD_MODE"));
+
+        // Preset-only mock module rejection via D-Bus
+        {
+            QFile pf(presetsPath);
+            QVERIFY(pf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            pf.write("presets=off,cyan,white\nbrightness_levels=0,1,2,3,4\nsupports_presets=1\nsupports_custom_rgb=0\n");
+        }
+        daemonObj.SetKeyboardLighting(QStringLiteral("static"), 100, QStringLiteral("#123456"), dbusApplied, dbusRb, dbusErr);
+        QVERIFY(!dbusApplied);
+        QCOMPARE(dbusErr, QStringLiteral("ERR_CLV0001_PRESET_REQUIRED"));
+        QVERIFY(dbusRb.contains(QStringLiteral("nearest")));
 
         // Verify default keyboard profiles map cleanly to CLV0001 presets
         const core::AppSettings defSettings = core::ConfigStore::defaultSettings();
@@ -957,6 +1158,238 @@ private Q_SLOTS:
         QCOMPARE(hal::SysfsRoot::readFileTrimmed(maxPerfPath), QStringLiteral("100"));
 
         root.setMode(hal::HardwareMode::PhysicalSystem);
+    }
+
+    void testStage17KernelDriverStaticCustomRgbAndPresetRegression() {
+        auto formatKmodPayload = [](const clv0001_kmod_unit::u8 p[4]) -> QString {
+            return QStringLiteral("%1 %2 %3 %4")
+                .arg(p[0], 2, 16, QLatin1Char('0'))
+                .arg(p[1], 2, 16, QLatin1Char('0'))
+                .arg(p[2], 2, 16, QLatin1Char('0'))
+                .arg(p[3], 2, 16, QLatin1Char('0'))
+                .toUpper();
+        };
+
+        // 1. Existing preset regression vectors (byte-for-byte identical)
+        struct PresetVector {
+            const char* cmd;
+            const char* expectedLabel;
+            int expectedLevel;
+            const char* expectedHex;
+        };
+        const PresetVector presetVectors[] = {
+            { "cyan 2\n",         "cyan",         2, "7E 00 63 F0" },
+            { "white 4\n",        "white",        4, "FF FF FF F0" },
+            { "off 0\n",          "off",          0, "00 00 00 F0" },
+            { "bluish-white 3\n", "bluish-white", 3, "5F 2F 5F F0" },
+            { "cyan",             "cyan",         4, "FF 00 C8 F0" },
+            { "off",              "off",          0, "00 00 00 F0" },
+            { "off 4",            "off",          0, "00 00 00 F0" },
+        };
+        for (const auto& vec : presetVectors) {
+            clv0001_kmod_unit::clv0001_parsed_cmd cmd{};
+            clv0001_kmod_unit::u8 payload[4] = {};
+            const int rc = clv0001_kmod_unit::clv0001_parse_and_build_payload(
+                vec.cmd, strlen(vec.cmd), &cmd, payload
+            );
+            QCOMPARE(rc, 0);
+            QCOMPARE(cmd.is_custom_rgb, false);
+            QVERIFY(cmd.preset != nullptr);
+            QCOMPARE(QString::fromLatin1(clv0001_kmod_unit::clv0001_parsed_cmd_preset_label(&cmd)),
+                     QString::fromLatin1(vec.expectedLabel));
+            QCOMPARE(cmd.brightness, vec.expectedLevel);
+            QCOMPARE(formatKmodPayload(payload), QString::fromLatin1(vec.expectedHex));
+        }
+
+        // Cross-verify all 17 presets x levels 0..4 match HAL payload encoder identically
+        for (const auto& preset : hal::Clv0001KeyboardBackend::verifiedPresets()) {
+            for (int lvl = 0; lvl <= 4; ++lvl) {
+                const QByteArray cmdBytes = QStringLiteral("%1 %2\n").arg(preset.name).arg(lvl).toLatin1();
+                clv0001_kmod_unit::clv0001_parsed_cmd cmd{};
+                clv0001_kmod_unit::u8 kmodPkt[4] = {};
+                QCOMPARE(clv0001_kmod_unit::clv0001_parse_and_build_payload(
+                    cmdBytes.constData(), static_cast<size_t>(cmdBytes.size()), &cmd, kmodPkt), 0);
+
+                std::array<uint8_t, 4> halPkt{};
+                QVERIFY(hal::Clv0001KeyboardBackend::buildFirmwarePayload(preset.name, lvl, halPkt));
+                QCOMPARE(formatKmodPayload(kmodPkt), hal::Clv0001KeyboardBackend::formatPayloadHex(halPkt));
+            }
+        }
+
+        // 2. Custom static RGB vectors (Stage 17 test table + Stage 17 physical test candidate)
+        struct RgbVector {
+            const char* cmd;
+            int expectedLevel;
+            const char* expectedHex;
+        };
+        const RgbVector rgbVectors[] = {
+            { "rgb 18 52 86 4",       4, "34 12 56 F0" },
+            { "rgb 18 52 86 2\n",     2, "19 08 2A F0" },
+            { "rgb 0 255 200 2",      2, "7E 00 63 F0" },
+            { "rgb 255 255 255 4",    4, "FF FF FF F0" },
+            { "rgb 255 0 128 0",      0, "00 00 00 F0" },
+            { "rgb 18 167 227 4\n",   4, "A7 12 E3 F0" },
+            { "  rgb  18\t52\t86 4 \r\n", 4, "34 12 56 F0" },
+        };
+        for (const auto& vec : rgbVectors) {
+            clv0001_kmod_unit::clv0001_parsed_cmd cmd{};
+            clv0001_kmod_unit::u8 payload[4] = {};
+            const int rc = clv0001_kmod_unit::clv0001_parse_and_build_payload(
+                vec.cmd, strlen(vec.cmd), &cmd, payload
+            );
+            QCOMPARE(rc, 0);
+            QCOMPARE(cmd.is_custom_rgb, true);
+            QVERIFY(cmd.preset == nullptr);
+            QCOMPARE(QString::fromLatin1(clv0001_kmod_unit::clv0001_parsed_cmd_preset_label(&cmd)),
+                     QStringLiteral("custom_rgb"));
+            QCOMPARE(cmd.brightness, vec.expectedLevel);
+            QCOMPARE(formatKmodPayload(payload), QString::fromLatin1(vec.expectedHex));
+        }
+
+        // Uninitialized / NULL label safeguard
+        clv0001_kmod_unit::clv0001_parsed_cmd emptyCmd{};
+        QCOMPARE(QString::fromLatin1(clv0001_kmod_unit::clv0001_parsed_cmd_preset_label(nullptr)),
+                 QStringLiteral("none"));
+        QCOMPARE(QString::fromLatin1(clv0001_kmod_unit::clv0001_parsed_cmd_preset_label(&emptyCmd)),
+                 QStringLiteral("none"));
+
+        // 3. Invalid input validation: all malformed commands must return -EINVAL before ACPI invocation
+        const char* invalidCommands[] = {
+            "rgb",
+            "rgb 18",
+            "rgb 18 52",
+            "rgb 18 52 86",
+            "rgb 18 52 86 4 extra",
+            "rgb -1 52 86 4",
+            "rgb 256 52 86 4",
+            "rgb 18 -1 86 4",
+            "rgb 18 52 256 4",
+            "rgb 18 52 86 -1",
+            "rgb 18 52 86 5",
+            "rgb abc 52 86 4",
+            "rgb 18 def 86 4",
+            "rgb 18 52 ghi 4",
+            "rgb 18 52 86 xyz",
+            "rgb 99999999999999999999 52 86 4",
+            "rgb 18 52 86 4294967296",
+            "rgb +18 52 86 4",
+            "rgb -0 52 86 4",
+            "rgb 0x12 52 86 4",
+            "RGB 18 52 86 4",
+            "rgb 18,52,86,4",
+            "rgb18 52 86 4",
+            "",
+            "   \n",
+            "\nrgb 18 52 86 4",
+            "rgb 18 52\n86 4",
+            "rgb 18 52 86\r4",
+            "unknown 2",
+            "cyan -1",
+            "cyan 5",
+            "cyan abc",
+            "cyan 2 extra",
+            "off 5",
+        };
+        for (const char* badCmd : invalidCommands) {
+            clv0001_kmod_unit::clv0001_parsed_cmd cmd{};
+            clv0001_kmod_unit::u8 payload[4] = {};
+            const int rc = clv0001_kmod_unit::clv0001_parse_and_build_payload(
+                badCmd, strlen(badCmd), &cmd, payload
+            );
+            QVERIFY2(rc == -EINVAL, qPrintable(QStringLiteral("Expected -EINVAL for '%1', got %2")
+                                                   .arg(QString::fromLatin1(badCmd)).arg(rc)));
+        }
+
+        // Embedded NUL byte and oversized input (>= 64 bytes) must return -EINVAL
+        const QByteArray nulEmbedded("rgb 18 52 86 4\0extra", 20);
+        {
+            clv0001_kmod_unit::clv0001_parsed_cmd cmd{};
+            clv0001_kmod_unit::u8 payload[4] = {};
+            QCOMPARE(clv0001_kmod_unit::clv0001_parse_and_build_payload(
+                nulEmbedded.constData(), static_cast<size_t>(nulEmbedded.size()), &cmd, payload), -EINVAL);
+
+            const QByteArray tooLong(64, '1');
+            QCOMPARE(clv0001_kmod_unit::clv0001_parse_and_build_payload(
+                tooLong.constData(), static_cast<size_t>(tooLong.size()), &cmd, payload), -EINVAL);
+
+            QCOMPARE(clv0001_kmod_unit::clv0001_parse_and_build_payload(nullptr, 5, &cmd, payload), -EINVAL);
+            QCOMPARE(clv0001_kmod_unit::clv0001_build_payload(18, 52, 86, 5, payload), -EINVAL);
+            QCOMPARE(clv0001_kmod_unit::clv0001_build_payload(18, 52, 86, -1, payload), -EINVAL);
+        }
+    }
+
+    void testFanCapabilitySafetyTransitions() {
+        auto writeText = [](const QString& path, const QByteArray& content) {
+            QDir().mkpath(QFileInfo(path).absolutePath());
+            QFile f(path);
+            QVERIFY2(f.open(QIODevice::WriteOnly | QIODevice::Truncate), qPrintable(path));
+            f.write(content);
+            f.close();
+        };
+
+        auto findFanCap = [](const core::SystemSnapshot& snap) -> core::CapabilityRecord {
+            for (const auto& c : snap.capabilities) {
+                if (c.id == QLatin1String("cap.thermal.fans")) {
+                    return c;
+                }
+            }
+            return core::CapabilityRecord{};
+        };
+
+        // Case 1: Only fan1_input (tachometer), missing pwm* -> ReadOnly & non-writable
+        {
+            QTemporaryDir tmp;
+            QVERIFY(tmp.isValid());
+            writeText(tmp.filePath(QStringLiteral("sys/class/hwmon/hwmon7/name")), "acer_ec_fans\n");
+            writeText(tmp.filePath(QStringLiteral("sys/class/hwmon/hwmon7/fan1_input")), "2200\n");
+            hal::SysfsRoot::instance().setCustomRootPath(tmp.path(), QStringLiteral("TachOnly"));
+            hal::TelemetryCollector col;
+            const core::SystemSnapshot snap = col.collectSnapshot(QStringLiteral("balanced"));
+            QVERIFY(!snap.thermal.manualFanSupported);
+            QCOMPARE(findFanCap(snap).state, core::CapabilityState::ReadOnly);
+            QVERIFY(!findFanCap(snap).isWritable);
+            const core::ControlResult r = hal::ControlOperations::applyFanControlMode(QStringLiteral("manual"), 70);
+            QVERIFY(!r.applied);
+            QCOMPARE(r.errorCode, QStringLiteral("ERR_FAN_PWM_NOT_DETECTED"));
+        }
+
+        // Case 2: pwm1 alone without pwm1_enable -> RequiresVerification (UNVERIFIED) & non-writable
+        {
+            QTemporaryDir tmp;
+            QVERIFY(tmp.isValid());
+            writeText(tmp.filePath(QStringLiteral("sys/class/hwmon/hwmon7/name")), "acer_ec_fans\n");
+            writeText(tmp.filePath(QStringLiteral("sys/class/hwmon/hwmon7/pwm1")), "128\n");
+            hal::SysfsRoot::instance().setCustomRootPath(tmp.path(), QStringLiteral("BarePwmOnly"));
+            hal::TelemetryCollector col;
+            const core::SystemSnapshot snap = col.collectSnapshot(QStringLiteral("balanced"));
+            QVERIFY(!snap.thermal.manualFanSupported);
+            QCOMPARE(findFanCap(snap).state, core::CapabilityState::RequiresVerification);
+            QCOMPARE(core::capabilityStateToBadge(findFanCap(snap).state), QStringLiteral("UNVERIFIED"));
+            QVERIFY(!findFanCap(snap).isWritable);
+            const core::ControlResult r = hal::ControlOperations::applyFanControlMode(QStringLiteral("manual"), 70);
+            QVERIFY(!r.applied);
+            QCOMPARE(r.errorCode, QStringLiteral("ERR_FAN_PWM_NOT_DETECTED"));
+        }
+
+        // Case 3: pwm1 + pwm1_enable on unverified driver name -> RequiresVerification & blocked
+        {
+            QTemporaryDir tmp;
+            QVERIFY(tmp.isValid());
+            writeText(tmp.filePath(QStringLiteral("sys/class/hwmon/hwmon7/name")), "unverified_fan_drv\n");
+            writeText(tmp.filePath(QStringLiteral("sys/class/hwmon/hwmon7/pwm1")), "128\n");
+            writeText(tmp.filePath(QStringLiteral("sys/class/hwmon/hwmon7/pwm1_enable")), "2\n");
+            hal::SysfsRoot::instance().setCustomRootPath(tmp.path(), QStringLiteral("UnverifiedDriverPwm"));
+            hal::TelemetryCollector col;
+            const core::SystemSnapshot snap = col.collectSnapshot(QStringLiteral("balanced"));
+            QVERIFY(!snap.thermal.manualFanSupported);
+            QCOMPARE(findFanCap(snap).state, core::CapabilityState::RequiresVerification);
+            QVERIFY(!findFanCap(snap).isWritable);
+            const core::ControlResult r = hal::ControlOperations::applyFanControlMode(QStringLiteral("manual"), 70);
+            QVERIFY(!r.applied);
+            QCOMPARE(r.errorCode, QStringLiteral("ERR_FAN_PWM_NOT_DETECTED"));
+        }
+
+        hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
     }
 };
 

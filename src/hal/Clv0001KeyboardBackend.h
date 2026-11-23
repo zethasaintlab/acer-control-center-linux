@@ -16,6 +16,8 @@ struct Clv0001Topology {
     QString acpiPath;
     QString status;
     bool driverBound = false;
+    bool supportsPresets = false;
+    bool supportsCustomRgb = false;
     QString sysfsDeviceDir;
     QString commandPath;
     QString statePath;
@@ -36,8 +38,10 @@ struct Clv0001Topology {
  * 1. Exposes ONLY function 0x67 via the narrowly scoped `clv0001_kbd_command` sysfs
  *    attribute provided by `acer_clv0001_kbd`. Prohibited functions 0x68, 0x69, 0x6A are
  *    never called or exposed.
- * 2. Enforces exact 4-byte GRB payload order [G, R, B, 0xF0] and the 17 verified
- *    presets + 5 discrete brightness levels (0..4 => 0x00, 0x2F, 0x5F, 0x8F, 0xBF).
+ * 2. Enforces exact 4-byte GRB payload order [G, R, B, 0xF0], 5 discrete brightness levels
+ *    (0..4 => 0x00, 0x2F, 0x5F, 0x8F, 0xBF), the 17 verified presets, and Stage 17
+ *    static custom RGB (`rgb R G B brightness_level`) only when `supports_custom_rgb=1`
+ *    is explicitly advertised in `clv0001_kbd_presets`.
  * 3. Never fabricates physical readback: `CLV0001` _DSM 0x67 is write-only, so
  *    successful ACPI evaluation reports `accepted_no_hw_readback` with
  *    `physicalStateVerified = false`.
@@ -64,6 +68,14 @@ public:
         std::array<uint8_t, 4>& outPayload,
         QString* outError = nullptr
     );
+    static bool buildCustomRgbFirmwarePayload(
+        int r,
+        int g,
+        int b,
+        int brightnessLevel,
+        std::array<uint8_t, 4>& outPayload,
+        QString* outError = nullptr
+    );
     static QString formatPayloadHex(const std::array<uint8_t, 4>& payload);
 
     // Maps an arbitrary RGB color to the nearest of the 17 verified CLV0001 presets
@@ -84,6 +96,14 @@ public:
     static core::ControlResult applyPresetCommand(
         const core::DmiIdentity& dmi,
         const QString& presetName,
+        int brightnessLevel
+    );
+
+    static core::ControlResult applyCustomRgbCommand(
+        const core::DmiIdentity& dmi,
+        int red,
+        int green,
+        int blue,
         int brightnessLevel
     );
 

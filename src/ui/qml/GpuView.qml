@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
 import QtQuick 2.15
-import AcerControl.Ui 1.0
 
 Flickable {
     id: root
@@ -17,12 +16,9 @@ Flickable {
         spacing: 14
 
         // 01 // NVIDIA GPU IDENTIFICATION & HYBRID GRAPHICS BANNER
-        Rectangle {
+        IndustrialPanel {
             width: parent.width
-            height: 150
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
+            height: gpuIdHdr.height + gpuGrid.implicitHeight + 24
 
             SectionHeader {
                 id: gpuIdHdr
@@ -31,81 +27,100 @@ Flickable {
                 anchors.right: parent.right
                 indexCode: "01"
                 title: "DISCRETE GPU ARCHITECTURE // " + (ctrl.gpuAvailable ? ctrl.gpuName : "NVIDIA GPU NOT DETECTED")
-                badgeText: ctrl.gpuSourceLabel
-                badgeColor: ctrl.gpuAvailable ? theme.statusNominal : theme.statusWarning
+                badgeText: ctrl.gpuAvailable ? "READ-ONLY" : "UNAVAILABLE"
             }
 
-            Row {
+            Grid {
+                id: gpuGrid
                 anchors.top: gpuIdHdr.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.margins: 14
-                spacing: 20
+                anchors.margins: 12
+                columns: width >= 880 ? 4 : 2
+                spacing: 10
 
-                Column {
-                    width: parent.width * 0.25
-                    spacing: 4
-                    Text { text: "PERFORMANCE STATE"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.gpuAvailable ? ctrl.gpuPstate : "--"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: theme.accentReadable }
-                    Text { text: "DRIVER: " + ctrl.gpuDriverVersion; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                }
-
-                Column {
-                    width: parent.width * 0.25
-                    spacing: 4
-                    Text { text: "DIE TEMPERATURE"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuTempC.toFixed(0) + " °C") : "--"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: ctrl.gpuTelemetryMeasuredByNvml ? theme.textPrimary : theme.textMuted }
-                    Text { text: "PCI BUS: " + ctrl.gpuPciBusId; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                }
-
-                Column {
-                    width: parent.width * 0.25
-                    spacing: 4
-                    Text { text: "CORE / MEMORY LOAD"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuUtilizationPct + "% / " + ctrl.gpuMemUtilizationPct + "%") : "--"; font.family: "monospace"; font.pixelSize: 26; font.weight: Font.Bold; color: ctrl.gpuTelemetryMeasuredByNvml ? theme.textPrimary : theme.textMuted }
-                    Text { text: "SUBSYS: " + (ctrl.gpuSubsystemId.length > 0 ? ctrl.gpuSubsystemId : "--"); font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                }
-
-                Column {
-                    width: parent.width * 0.20
-                    spacing: 4
-                    Text { text: "TGP BOARD POWER"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text {
-                        text: ctrl.gpuPowerRailGated
-                              ? "RAIL GATED (P8)"
-                              : (ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuPowerDrawW.toFixed(1) + " W") : "UNMEASURED")
-                        font.family: "monospace"
-                        font.pixelSize: 20
-                        font.weight: Font.Bold
-                        color: ctrl.gpuPowerRailGated
-                               ? theme.statusInfo
-                               : (ctrl.gpuTelemetryMeasuredByNvml ? theme.statusNominal : theme.textMuted)
+                Rectangle {
+                    width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                    height: 82
+                    radius: theme.radiusStructural
+                    color: theme.surfaceElevated
+                    border.width: 1; border.color: theme.borderSubtle
+                    Column {
+                        anchors.fill: parent; anchors.margins: 10; spacing: 3
+                        Text { text: "PERFORMANCE STATE"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.textSecondary }
+                        Text { text: ctrl.gpuAvailable ? ctrl.gpuPstate : "--"; font.family: theme.fontMono; font.pixelSize: 26; font.weight: Font.Bold; color: theme.accentReadable }
+                        Text { width: parent.width; elide: Text.ElideRight; text: "DRIVER: " + ctrl.gpuDriverVersion; font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary }
                     }
-                    Text {
-                        text: ctrl.gpuPowerLimitsMeasured
-                              ? ("DEFAULT " + ctrl.gpuDefaultLimitW.toFixed(0) + "W / MAX " + ctrl.gpuMaxLimitW.toFixed(0) + "W")
-                              : "LIMITS: UNMEASURED"
-                        font.family: "monospace"
-                        font.pixelSize: 10
-                        color: theme.textSecondary
+                }
+
+                Rectangle {
+                    width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                    height: 82
+                    radius: theme.radiusStructural
+                    color: theme.surfaceElevated
+                    border.width: 1; border.color: theme.borderSubtle
+                    Column {
+                        anchors.fill: parent; anchors.margins: 10; spacing: 3
+                        Text { text: "DIE TEMPERATURE"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.textSecondary }
+                        Text {
+                            text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuTempC.toFixed(0) + " °C") : "--"
+                            font.family: theme.fontMono; font.pixelSize: 26; font.weight: Font.Bold
+                            color: ctrl.gpuTelemetryMeasuredByNvml ? theme.textPrimary : theme.textMuted
+                        }
+                        Text { width: parent.width; elide: Text.ElideRight; text: "PCI: " + ctrl.gpuPciBusId; font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary }
+                    }
+                }
+
+                Rectangle {
+                    width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                    height: 82
+                    radius: theme.radiusStructural
+                    color: theme.surfaceElevated
+                    border.width: 1; border.color: theme.borderSubtle
+                    Column {
+                        anchors.fill: parent; anchors.margins: 10; spacing: 3
+                        Text { text: "CORE / MEM LOAD"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.textSecondary }
+                        Text {
+                            text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuUtilizationPct + "% / " + ctrl.gpuMemUtilizationPct + "%") : "--"
+                            font.family: theme.fontMono; font.pixelSize: 24; font.weight: Font.Bold
+                            color: ctrl.gpuTelemetryMeasuredByNvml ? theme.telemetryLime : theme.textMuted
+                        }
+                        Text { text: "SUBSYS: " + (ctrl.gpuSubsystemId.length > 0 ? ctrl.gpuSubsystemId : "--"); font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary }
+                    }
+                }
+
+                Rectangle {
+                    width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                    height: 82
+                    radius: theme.radiusStructural
+                    color: theme.surfaceElevated
+                    border.width: 1; border.color: theme.borderSubtle
+                    Column {
+                        anchors.fill: parent; anchors.margins: 10; spacing: 3
+                        Text { text: "TGP BOARD POWER"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.textSecondary }
+                        Text {
+                            text: ctrl.gpuPowerRailGated ? "RAIL GATED (P8)" : (ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuPowerDrawW.toFixed(1) + " W") : "UNMEASURED")
+                            font.family: theme.fontMono; font.pixelSize: 18; font.weight: Font.Bold
+                            color: ctrl.gpuPowerRailGated ? theme.technicalCyan : (ctrl.gpuTelemetryMeasuredByNvml ? theme.telemetryLime : theme.textMuted)
+                        }
+                        Text {
+                            text: ctrl.gpuPowerLimitsMeasured ? ("TGP " + ctrl.gpuDefaultLimitW.toFixed(0) + "W / MAX " + ctrl.gpuMaxLimitW.toFixed(0) + "W") : "LIMITS: UNMEASURED"
+                            font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary
+                        }
                     }
                 }
             }
         }
 
-        // 02 // CLOCK DOMAINS, VRAM ALLOCATION & THROTTLE REASON DECODER
+        // 02 // SEGMENTED CLOCKS, VRAM & THROTTLE REASON DECODER
         Grid {
             width: parent.width
             columns: width >= 920 ? 2 : 1
             spacing: 12
 
-            Rectangle {
-                width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
-                height: 220
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+            IndustrialPanel {
+                width: parent.columns === 2 ? (parent.width - 12) * 0.52 : parent.width
+                height: 224
 
                 SectionHeader {
                     id: clkHdr
@@ -113,80 +128,46 @@ Flickable {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     indexCode: "02.A"
-                    title: "CLOCK DOMAINS & GDDR6 VRAM ALLOCATION"
-                    badgeText: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuVramTotalMiB + " MiB GDDR6") : "UNMEASURED (NVML REQUIRED)"
-                    badgeColor: ctrl.gpuTelemetryMeasuredByNvml ? theme.accentReadable : theme.statusWarning
+                    title: "CLOCK DOMAINS & GDDR6 VRAM GAUGES"
+                    badgeText: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuVramTotalMiB + " MiB GDDR6") : "UNMEASURED"
                 }
 
                 Column {
                     anchors.top: clkHdr.bottom
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.margins: 14
-                    spacing: 14
+                    anchors.margins: 12
+                    spacing: 10
 
-                    // Graphics / SM Clock Bar
-                    Column {
+                    TelemetryLoadRow {
                         width: parent.width
-                        spacing: 4
-                        Row {
-                            width: parent.width
-                            Text { text: "GRAPHICS / SM CLOCK"; width: parent.width * 0.5; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                            Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuGraphicsClockMhz + " / " + ctrl.gpuMaxGraphicsClockMhz + " MHz") : "UNMEASURED"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
-                        }
-                        Rectangle {
-                            width: parent.width; height: 8; color: theme.surfaceHeader
-                            Rectangle {
-                                width: ctrl.gpuTelemetryMeasuredByNvml ? (parent.width * Math.min(1.0, ctrl.gpuGraphicsClockMhz / Math.max(1, ctrl.gpuMaxGraphicsClockMhz))) : 0
-                                height: parent.height; color: theme.accentPrimary
-                            }
-                        }
+                        label: "Graphics / SM Clock"
+                        sourceTag: "nvml"
+                        fraction: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuGraphicsClockMhz / Math.max(1, ctrl.gpuMaxGraphicsClockMhz)) : 0.0
+                        valueText: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuGraphicsClockMhz + " / " + ctrl.gpuMaxGraphicsClockMhz + " MHz") : "UNMEASURED"
                     }
 
-                    // Memory Clock Bar
-                    Column {
+                    TelemetryLoadRow {
                         width: parent.width
-                        spacing: 4
-                        Row {
-                            width: parent.width
-                            Text { text: "GDDR6 MEMORY CLOCK"; width: parent.width * 0.5; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                            Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuMemClockMhz + " / " + ctrl.gpuMaxMemClockMhz + " MHz") : "UNMEASURED"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
-                        }
-                        Rectangle {
-                            width: parent.width; height: 8; color: theme.surfaceHeader
-                            Rectangle {
-                                width: ctrl.gpuTelemetryMeasuredByNvml ? (parent.width * Math.min(1.0, ctrl.gpuMemClockMhz / Math.max(1, ctrl.gpuMaxMemClockMhz))) : 0
-                                height: parent.height; color: theme.statusNominal
-                            }
-                        }
+                        label: "GDDR6 Memory Clock"
+                        sourceTag: "nvml"
+                        fraction: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuMemClockMhz / Math.max(1, ctrl.gpuMaxMemClockMhz)) : 0.0
+                        valueText: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuMemClockMhz + " / " + ctrl.gpuMaxMemClockMhz + " MHz") : "UNMEASURED"
                     }
 
-                    // VRAM Bar
-                    Column {
+                    TelemetryLoadRow {
                         width: parent.width
-                        spacing: 4
-                        Row {
-                            width: parent.width
-                            Text { text: "VRAM ALLOCATED"; width: parent.width * 0.5; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                            Text { text: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuVramUsedMiB + " / " + ctrl.gpuVramTotalMiB + " MiB") : "UNMEASURED"; width: parent.width * 0.5; horizontalAlignment: Text.AlignRight; font.family: "monospace"; font.pixelSize: 11; font.weight: Font.Bold; color: theme.textPrimary }
-                        }
-                        Rectangle {
-                            width: parent.width; height: 8; color: theme.surfaceHeader
-                            Rectangle {
-                                width: ctrl.gpuTelemetryMeasuredByNvml ? (parent.width * Math.min(1.0, ctrl.gpuVramUsedMiB / Math.max(1, ctrl.gpuVramTotalMiB))) : 0
-                                height: parent.height; color: theme.statusWarning
-                            }
-                        }
+                        label: "VRAM Framebuffer Allocated"
+                        sourceTag: "nvml"
+                        fraction: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuVramUsedMiB / Math.max(1, ctrl.gpuVramTotalMiB)) : 0.0
+                        valueText: ctrl.gpuTelemetryMeasuredByNvml ? (ctrl.gpuVramUsedMiB + " / " + ctrl.gpuVramTotalMiB + " MiB") : "UNMEASURED"
                     }
                 }
             }
 
-            Rectangle {
-                width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
-                height: 220
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+            IndustrialPanel {
+                width: parent.columns === 2 ? (parent.width - 12) * 0.48 : parent.width
+                height: 224
 
                 SectionHeader {
                     id: throtHdr
@@ -194,23 +175,23 @@ Flickable {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     indexCode: "02.B"
-                    title: "NVML CLOCKS EVENT & THROTTLE REASON DECODER"
-                    badgeText: ctrl.gpuPowerRailGated ? "P8 RAIL GATED FILTER ACTIVE" : "LIVE NVML"
-                    badgeColor: theme.statusInfo
+                    title: "NVML CLOCKS EVENT & THROTTLE DECODER"
+                    badgeText: ctrl.gpuPowerRailGated ? "P8 FILTER ACTIVE" : "LIVE NVML"
                 }
 
                 Column {
                     anchors.top: throtHdr.bottom
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.margins: 14
-                    spacing: 10
+                    anchors.margins: 12
+                    spacing: 8
 
                     Repeater {
                         model: ctrl.gpuThrottleReasons
                         delegate: Rectangle {
                             width: parent.width
                             height: 28
+                            radius: theme.radiusStructural
                             color: theme.surfaceElevated
                             border.width: 1
                             border.color: theme.borderSubtle
@@ -220,7 +201,7 @@ Flickable {
                                 anchors.leftMargin: 10
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: "ACTIVE FLAG: " + modelData
-                                font.family: "monospace"
+                                font.family: theme.fontMono
                                 font.pixelSize: 11
                                 color: theme.accentReadable
                             }
@@ -231,9 +212,9 @@ Flickable {
                         width: parent.width
                         wrapMode: Text.WordWrap
                         text: ctrl.gpuPowerRailGated
-                              ? "Note: In P8 idle state on GA107BM (driver " + ctrl.gpuDriverVersion + "), NVML raw power sensor reports " + ctrl.gpuRawPowerW.toFixed(2) + " W because the dGPU power rail ADC is gated. Our adapter filters this hardware quirk automatically."
-                              : "Hybrid Graphics Note: Dynamic Boost (60W base -> 75W max) is managed by `nvidia-powerd.service` alongside Intel Raptor Lake i915."
-                        font.family: "sans-serif"
+                              ? "GA107BM P8 Idle Note: NVML raw power reports " + ctrl.gpuRawPowerW.toFixed(2) + " W because dGPU rail ADC is gated. Filtered automatically."
+                              : "Hybrid Graphics Note: Dynamic Boost (60W -> 75W) managed by nvidia-powerd.service alongside Intel Raptor Lake i915."
+                        font.family: theme.fontSans
                         font.pixelSize: 11
                         color: theme.textSecondary
                     }

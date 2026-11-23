@@ -4,7 +4,7 @@ import QtQuick 2.15
 Canvas {
     id: root
     property string iconName: "overview"
-    property color strokeColor: "#ECEFF4"
+    property color strokeColor: theme.textOnSelectedDark
     width: 18
     height: 18
 

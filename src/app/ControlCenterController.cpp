@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QPixmap>
+#include <QRandomGenerator>
 #include <algorithm>
 #include <cmath>
 
@@ -104,11 +105,11 @@ void ControlCenterController::setupSystemTray() {
     pix.fill(Qt::transparent);
     QPainter p(&pix);
     p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(QPen(QColor(QStringLiteral("#3B9EFF")), 2.0));
-    p.setBrush(QColor(QStringLiteral("#13161B")));
-    p.drawRoundedRect(QRectF(2, 2, 28, 28), 5.0, 5.0);
-    p.setPen(QColor(QStringLiteral("#ECEFF4")));
-    QFont f(QStringLiteral("monospace"));
+    p.setPen(QPen(QColor(QStringLiteral("#FFEA00")), 2.0));
+    p.setBrush(QColor(QStringLiteral("#222524")));
+    p.drawRoundedRect(QRectF(2, 2, 28, 28), 2.0, 2.0);
+    p.setPen(QColor(QStringLiteral("#F0F2F2")));
+    QFont f(QStringLiteral("JetBrains Mono"));
     f.setPixelSize(13);
     f.setBold(true);
     p.setFont(f);
@@ -236,6 +237,9 @@ void ControlCenterController::refreshNow() {
     const bool wasFirstPoll = m_firstPoll;
     m_lastAcOnlineState = m_snapshot.battery.acOnline;
     m_firstPoll = false;
+    if (wasFirstPoll && m_snapshot.battery.chargeLimitSupported) {
+        m_batPreviousThresholdPct = std::clamp(m_snapshot.battery.chargeEndThresholdPct, 50, 100);
+    }
 
     // Check AC/Battery auto profile transition
     if (!wasFirstPoll && m_settings.autoSwitchProfileOnPower && m_snapshot.battery.acOnline != prevAcOnline) {
@@ -253,6 +257,11 @@ void ControlCenterController::refreshNow() {
                 .arg(m_snapshot.cpu.totalUtilizationPct, 0, 'f', 0)
                 .arg(gpuTip, m_settings.activeOperatingProfileId.toUpper())
         );
+    }
+
+    if (!m_snapshot.keyboardHw.supportsRgbZones && m_kbdSelectedZone != -1) {
+        m_kbdSelectedZone = -1;
+        Q_EMIT keyboardStudioChanged();
     }
 
     Q_EMIT telemetryUpdated();
@@ -375,6 +384,29 @@ QString ControlCenterController::kbdCapabilityBadge() const {
     return core::capabilityStateToBadge(m_snapshot.keyboardHw.capabilityState);
 }
 
+QString ControlCenterController::fanCapabilityBadge() const {
+    for (const auto& cap : m_snapshot.capabilities) {
+        if (cap.id == QLatin1String("cap.thermal.fans")) {
+            return core::capabilityStateToBadge(cap.state);
+        }
+    }
+    return m_snapshot.thermal.manualFanSupported
+               ? QStringLiteral("FULL RW")
+               : QStringLiteral("FIRMWARE AUTOMATIC");
+}
+
+QString ControlCenterController::batCapabilityBadge() const {
+    if (!m_snapshot.battery.chargeLimitSupported) {
+        return QStringLiteral("BATTERY TELEMETRY ONLY — CHARGE LIMIT NOT DETECTED");
+    }
+    for (const auto& cap : m_snapshot.capabilities) {
+        if (cap.id == QLatin1String("cap.battery.limit")) {
+            return core::capabilityStateToBadge(cap.state);
+        }
+    }
+    return QStringLiteral("FULL RW");
+}
+
 void ControlCenterController::syncCurrentKbdProfileToSettings() {
     for (auto& kp : m_settings.keyboardProfiles) {
         if (kp.id == m_currentKbdProfile.id) {
@@ -404,13 +436,14 @@ void ControlCenterController::loadActiveKeyboardProfileFromSettings() {
         m_kbdPickerHex = core::ColorScience::rgbToHex(m_kbdRgb);
     }
     m_kbdCustomPreviewDirty = false;
+    m_kbdSelectionSource = QStringLiteral("preset");
 }
 
 void ControlCenterController::setKbdEnabled(bool e) {
     if (m_currentKbdProfile.enabled != e) {
         m_currentKbdProfile.enabled = e;
         if (e) {
-            if (m_currentKbdProfile.clv0001PresetName == QLatin1String("off")) {
+            if (!m_kbdCustomPreviewDirty && m_currentKbdProfile.clv0001PresetName == QLatin1String("off")) {
                 m_currentKbdProfile.clv0001PresetName = QStringLiteral("cyan");
             }
             if (m_currentKbdProfile.clv0001BrightnessLevel <= 0) {
@@ -445,6 +478,16 @@ void ControlCenterController::setKbdBrightnessPct(int b) {
 }
 
 QString ControlCenterController::kbdFirmwarePacketHex() const {
+    if (m_kbdCustomPreviewDirty) {
+        const int lvl = m_currentKbdProfile.enabled ? m_currentKbdProfile.clv0001BrightnessLevel : 0;
+        std::array<uint8_t, 4> payload{};
+        if (hal::Clv0001KeyboardBackend::buildCustomRgbFirmwarePayload(
+                m_kbdRgb.r, m_kbdRgb.g, m_kbdRgb.b, lvl, payload)) {
+            return hal::Clv0001KeyboardBackend::formatPayloadHex(payload);
+        }
+        return QStringLiteral("00 00 00 F0");
+    }
+
     const QString preset = m_currentKbdProfile.enabled
                                ? m_currentKbdProfile.clv0001PresetName
                                : QStringLiteral("off");
@@ -500,6 +543,7 @@ void ControlCenterController::selectKbdPreset(const QString& presetName) {
     m_kbdPickerHex = core::ColorScience::rgbToHex(m_kbdRgb);
     m_kbdSelectedZone = -1;
     m_kbdCustomPreviewDirty = false;
+    m_kbdSelectionSource = QStringLiteral("preset");
     applySelectedKbdColorToActiveZones();
     setStatusBanner(
         QStringLiteral("Selected CLV0001 preset '%1' (GRB packet %2).")
@@ -516,9 +560,64 @@ void ControlCenterController::setKbdBrightnessLevel(int level) {
     const int clamped = std::clamp(level, 0, 4);
     m_currentKbdProfile.clv0001BrightnessLevel = clamped;
     m_currentKbdProfile.brightnessPct = hal::Clv0001KeyboardBackend::brightnessLevelToPct(clamped);
-    m_currentKbdProfile.enabled = (clamped > 0 && m_currentKbdProfile.clv0001PresetName != QLatin1String("off"));
+    if (m_kbdCustomPreviewDirty) {
+        m_currentKbdProfile.enabled = true;
+    } else {
+        m_currentKbdProfile.enabled = (clamped > 0 && m_currentKbdProfile.clv0001PresetName != QLatin1String("off"));
+    }
     syncCurrentKbdProfileToSettings();
     Q_EMIT keyboardStudioChanged();
+}
+
+void ControlCenterController::selectRandomKbdColor() {
+    auto* rng = QRandomGenerator::global();
+    int r = 0, g = 0, b = 0;
+    do {
+        r = rng->bounded(256);
+        g = rng->bounded(256);
+        b = rng->bounded(256);
+    } while (r == 0 && g == 0 && b == 0);
+
+    m_kbdRgb = core::RgbColor{r, g, b};
+    m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
+    m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
+    m_kbdCustomPreviewDirty = true;
+    m_kbdSelectionSource = QStringLiteral("random_rgb");
+    m_currentKbdProfile.enabled = true;
+    if (m_currentKbdProfile.clv0001BrightnessLevel == 0) {
+        m_currentKbdProfile.clv0001BrightnessLevel = 4;
+        m_currentKbdProfile.brightnessPct = 100;
+    }
+    applySelectedKbdColorToActiveZones();
+    setStatusBanner(
+        QStringLiteral("Selected random static RGB %1 (%2, %3, %4) — click Apply to send to hardware.")
+            .arg(m_kbdPickerHex)
+            .arg(r)
+            .arg(g)
+            .arg(b),
+        false
+    );
+}
+
+bool ControlCenterController::applyCustomKbdRgb(int r, int g, int b, int brightnessLevel) {
+    if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) {
+        setStatusBanner(
+            QStringLiteral("RGB channels (%1, %2, %3) must be within [0, 255].").arg(r).arg(g).arg(b),
+            true
+        );
+        return false;
+    }
+    if (brightnessLevel < 0 || brightnessLevel > 4) {
+        setStatusBanner(
+            QStringLiteral("CLV0001 brightness level %1 must be within [0, 4].").arg(brightnessLevel),
+            true
+        );
+        return false;
+    }
+    setKbdColorFromRgb(r, g, b);
+    setKbdBrightnessLevel(brightnessLevel);
+    applyKeyboardLightingToHardware();
+    return !m_statusBannerIsError;
 }
 
 void ControlCenterController::setKbdTimeoutSec(int sec) {
@@ -531,7 +630,7 @@ void ControlCenterController::setKbdTimeoutSec(int sec) {
 }
 
 void ControlCenterController::setKbdSelectedZone(int z) {
-    const int clamped = std::clamp(z, -1, 3);
+    const int clamped = m_snapshot.keyboardHw.supportsRgbZones ? std::clamp(z, -1, 3) : -1;
     if (m_kbdSelectedZone != clamped) {
         m_kbdSelectedZone = clamped;
         if (clamped >= 0 && static_cast<size_t>(clamped) < m_currentKbdProfile.zones.size()) {
@@ -591,36 +690,38 @@ void ControlCenterController::applySelectedKbdColorToActiveZones() {
 
 bool ControlCenterController::setKbdColorFromHex(const QString& hexStr) {
     core::RgbColor parsed;
-    if (!core::ColorScience::parseHexToRgb(hexStr, parsed)) {
+    if (!core::ColorScience::parseStrictHex6ToRgb(hexStr, parsed)) {
+        setStatusBanner(
+            QStringLiteral("Invalid HEX color '%1' — expected #RRGGBB (six hexadecimal digits after '#').")
+                .arg(hexStr.trimmed()),
+            true
+        );
         return false;
     }
     m_kbdRgb = parsed;
     m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
     m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
-    bool exactMatch = false;
-    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
-    if (exactMatch) {
-        m_currentKbdProfile.clv0001PresetName = matchedPreset;
-        m_kbdCustomPreviewDirty = false;
-    } else {
-        m_kbdCustomPreviewDirty = true;
-    }
+    m_kbdCustomPreviewDirty = true;
+    m_kbdSelectionSource = QStringLiteral("custom_rgb");
+    m_currentKbdProfile.enabled = true;
     applySelectedKbdColorToActiveZones();
     return true;
 }
 
 void ControlCenterController::setKbdColorFromRgb(int r, int g, int b) {
-    m_kbdRgb = core::ColorScience::clampRgb(r, g, b);
+    if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) {
+        setStatusBanner(
+            QStringLiteral("RGB channels (%1, %2, %3) must be within [0, 255].").arg(r).arg(g).arg(b),
+            true
+        );
+        return;
+    }
+    m_kbdRgb = core::RgbColor{r, g, b};
     m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
     m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
-    bool exactMatch = false;
-    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
-    if (exactMatch) {
-        m_currentKbdProfile.clv0001PresetName = matchedPreset;
-        m_kbdCustomPreviewDirty = false;
-    } else {
-        m_kbdCustomPreviewDirty = true;
-    }
+    m_kbdCustomPreviewDirty = true;
+    m_kbdSelectionSource = QStringLiteral("custom_rgb");
+    m_currentKbdProfile.enabled = true;
     applySelectedKbdColorToActiveZones();
 }
 
@@ -628,14 +729,9 @@ void ControlCenterController::setKbdColorFromHsv(double h, double s, double v) {
     m_kbdHsv = core::HsvColor{h, s, v};
     m_kbdRgb = core::ColorScience::hsvToRgb(m_kbdHsv);
     m_kbdHsl = core::ColorScience::rgbToHsl(m_kbdRgb);
-    bool exactMatch = false;
-    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
-    if (exactMatch) {
-        m_currentKbdProfile.clv0001PresetName = matchedPreset;
-        m_kbdCustomPreviewDirty = false;
-    } else {
-        m_kbdCustomPreviewDirty = true;
-    }
+    m_kbdCustomPreviewDirty = true;
+    m_kbdSelectionSource = QStringLiteral("custom_rgb");
+    m_currentKbdProfile.enabled = true;
     applySelectedKbdColorToActiveZones();
 }
 
@@ -643,14 +739,9 @@ void ControlCenterController::setKbdColorFromHsl(double h, double s, double l) {
     m_kbdHsl = core::HslColor{h, s, l};
     m_kbdRgb = core::ColorScience::hslToRgb(m_kbdHsl);
     m_kbdHsv = core::ColorScience::rgbToHsv(m_kbdRgb);
-    bool exactMatch = false;
-    const QString matchedPreset = hal::Clv0001KeyboardBackend::findNearestPresetName(m_kbdRgb, &exactMatch);
-    if (exactMatch) {
-        m_currentKbdProfile.clv0001PresetName = matchedPreset;
-        m_kbdCustomPreviewDirty = false;
-    } else {
-        m_kbdCustomPreviewDirty = true;
-    }
+    m_kbdCustomPreviewDirty = true;
+    m_kbdSelectionSource = QStringLiteral("custom_rgb");
+    m_currentKbdProfile.enabled = true;
     applySelectedKbdColorToActiveZones();
 }
 
@@ -678,6 +769,7 @@ void ControlCenterController::selectKbdProfile(const QString& profileId) {
                 m_kbdPickerHex = core::ColorScience::rgbToHex(m_kbdRgb);
             }
             m_kbdCustomPreviewDirty = false;
+            m_kbdSelectionSource = QStringLiteral("preset");
             persistSettings();
             Q_EMIT keyboardStudioChanged();
             setStatusBanner(QStringLiteral("Loaded Keyboard Studio profile '%1'.").arg(kp.name), false);
@@ -718,14 +810,18 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
     QString zonesCsv = hexes.join(QLatin1Char(','));
 
     if (useClvPresetProtocol) {
-        if (m_currentKbdProfile.enabled && m_kbdCustomPreviewDirty) {
-            hwMode = m_currentKbdProfile.mode;
+        if (!m_currentKbdProfile.enabled) {
+            hwMode = QStringLiteral("preset:off");
+            effectiveBri = 0;
+            zonesCsv = QStringLiteral("off");
+        } else if (m_kbdCustomPreviewDirty) {
+            hwMode = (m_currentKbdProfile.mode == QLatin1String("static"))
+                         ? QStringLiteral("custom_rgb")
+                         : m_currentKbdProfile.mode;
             effectiveBri = hal::Clv0001KeyboardBackend::brightnessLevelToPct(m_currentKbdProfile.clv0001BrightnessLevel);
             zonesCsv = m_kbdPickerHex;
         } else {
-            const QString activePreset = m_currentKbdProfile.enabled
-                                             ? m_currentKbdProfile.clv0001PresetName
-                                             : QStringLiteral("off");
+            const QString activePreset = m_currentKbdProfile.clv0001PresetName;
             hwMode = QStringLiteral("preset:%1").arg(activePreset);
             effectiveBri = (activePreset == QLatin1String("off"))
                                ? 0
@@ -750,7 +846,7 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
             refreshNow();
             setStatusBanner(
                 ok ? (useClvPresetProtocol
-                          ? QStringLiteral("Daemon sent CLV0001 _DSM 0x67 command (%1; no hardware readback).").arg(rb)
+                          ? QStringLiteral("Command accepted — physical readback unavailable (%1).").arg(rb)
                           : QStringLiteral("Daemon applied & verified keyboard lighting (%1).").arg(rb))
                    : QStringLiteral("Daemon rejected keyboard lighting (%1).").arg(formatDaemonRejection(errCode, rb)),
                 !ok
@@ -918,6 +1014,14 @@ void ControlCenterController::setFanMode(const QString& mode, int manualDutyPct)
 }
 
 void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
+    const int clamped = std::clamp(thresholdPct, 50, 100);
+    if (m_snapshot.battery.chargeLimitSupported &&
+        m_snapshot.battery.chargeEndThresholdPct >= 50 &&
+        m_snapshot.battery.chargeEndThresholdPct <= 100 &&
+        m_snapshot.battery.chargeEndThresholdPct != clamped) {
+        m_batPreviousThresholdPct = m_snapshot.battery.chargeEndThresholdPct;
+    }
+
     if (!hal::SysfsRoot::instance().isMockActive()) {
         QDBusMessage call = QDBusMessage::createMethodCall(
             QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
@@ -925,7 +1029,7 @@ void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
             QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
             QStringLiteral("SetBatteryChargeLimit")
         );
-        call << static_cast<uint>(std::clamp(thresholdPct, 50, 100));
+        call << static_cast<uint>(clamped);
         const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
         if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
             const bool ok = reply.arguments().at(0).toBool();
@@ -933,7 +1037,9 @@ void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
             const QString errCode = reply.arguments().at(2).toString();
             refreshNow();
             setStatusBanner(
-                ok ? QStringLiteral("Daemon verified battery charge threshold at %1%.").arg(rbPct)
+                ok ? QStringLiteral("Daemon verified battery charge threshold at %1% (previous=%2%).")
+                         .arg(rbPct)
+                         .arg(m_batPreviousThresholdPct)
                    : QStringLiteral("Daemon rejected battery charge threshold (%1).").arg(errCode),
                 !ok
             );
@@ -952,9 +1058,13 @@ void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
     }
 
     int rbPct = 100;
-    const core::ControlResult res = hal::ControlOperations::applyBatteryChargeLimit(thresholdPct, rbPct);
+    const core::ControlResult res = hal::ControlOperations::applyBatteryChargeLimit(clamped, rbPct);
     refreshNow();
     setStatusBanner(res.message, !res.applied);
+}
+
+void ControlCenterController::restorePreviousBatteryChargeLimit() {
+    applyBatteryChargeLimit(m_batPreviousThresholdPct);
 }
 
 void ControlCenterController::applyDisplayBrightness(int brightnessPct) {

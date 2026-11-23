@@ -40,7 +40,7 @@ AppSettings ConfigStore::defaultSettings() {
     AppSettings s;
     s.schemaVersion = 1;
     s.darkTheme = true;
-    s.accentColorHex = QStringLiteral("#3B9EFF");
+    s.accentColorHex = QStringLiteral("#FFEA00");
     s.pollingIntervalMs = 1000;
     s.reducedMotion = false;
     s.compactNavigation = false;
@@ -66,14 +66,14 @@ AppSettings ConfigStore::defaultSettings() {
     s.customOperatingProfile.isCustom = true;
 
     s.customAccentSwatches = {
-        QStringLiteral("#3B9EFF"),
-        QStringLiteral("#2EBE7E"),
-        QStringLiteral("#E5A024"),
-        QStringLiteral("#E04F5F"),
-        QStringLiteral("#00B8D9"),
-        QStringLiteral("#D97706"),
-        QStringLiteral("#84CC16"),
-        QStringLiteral("#94A3B8")
+        QStringLiteral("#FFEA00"),
+        QStringLiteral("#A4E61D"),
+        QStringLiteral("#F5D328"),
+        QStringLiteral("#2596FF"),
+        QStringLiteral("#F5B82E"),
+        QStringLiteral("#9B6BFF"),
+        QStringLiteral("#E06C65"),
+        QStringLiteral("#68C938")
     };
 
     s.customKeyboardSwatches = {

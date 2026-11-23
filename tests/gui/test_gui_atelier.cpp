@@ -3,10 +3,13 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QSize>
 #include <QTemporaryDir>
+#include <array>
 
 #include "app/ControlCenterController.h"
 #include "app/ThemeEngine.h"
+#include "hal/SysfsRoot.h"
 #include "ui/FanCurveEditorItem.h"
 #include "ui/HsvColorWheelItem.h"
 #include "ui/KeyboardVisualizerItem.h"
@@ -34,15 +37,19 @@ private slots:
     void testThemeEngineContrastAndIndependence() {
         app::ThemeEngine theme;
         QCOMPARE(theme.darkTheme(), true);
+        QCOMPARE(theme.accentHex(), QStringLiteral("#FFEA00"));
         QVERIFY(theme.contrastOnSurface() >= 4.5);
+        QVERIFY(theme.contrastOnAccent() >= 4.5);
         QVERIFY(theme.wcagAaPass());
 
         QVERIFY(theme.setAccentFromHex(QStringLiteral("#3B82F6"))); // Blueprint Blue
         QVERIFY(theme.contrastOnSurface() >= 4.5);
 
-        theme.setDarkTheme(false);
+        theme.setDarkTheme(false); // Light CAD Surface (#D8DCDF)
         QCOMPARE(theme.darkTheme(), false);
+        QVERIFY(theme.setAccentFromHex(QStringLiteral("#FFEA00")));
         QVERIFY(theme.contrastOnSurface() >= 4.5);
+        QVERIFY(theme.contrastOnAccent() >= 4.5);
         theme.setDarkTheme(true);
     }
 
@@ -96,9 +103,17 @@ private slots:
         controller.setFanMode(QStringLiteral("auto"), 50);
         QCOMPARE(controller.fanControlModeLabel(), QStringLiteral("Firmware Automatic (PWM)"));
 
-        // Apply battery limit
-        controller.applyBatteryChargeLimit(80);
+        // Apply battery limit and test restorePreviousBatteryChargeLimit() rollback
+        QCOMPARE(controller.batCycleCountReported(), true);
+        QCOMPARE(controller.batCycleCountText(), QStringLiteral("42"));
+        QCOMPARE(controller.fanCapabilityBadge(), QStringLiteral("SIMULATED"));
         QCOMPARE(controller.batChargeThresholdPct(), 80);
+        controller.applyBatteryChargeLimit(65);
+        QCOMPARE(controller.batChargeThresholdPct(), 65);
+        QCOMPARE(controller.batPreviousThresholdPct(), 80);
+        controller.restorePreviousBatteryChargeLimit();
+        QCOMPARE(controller.batChargeThresholdPct(), 80);
+        QCOMPARE(controller.batCapabilityBadge(), QStringLiteral("SIMULATED"));
 
         // Suspend / resume cycle
         controller.onPrepareForSleep(true);
@@ -108,22 +123,32 @@ private slots:
         // Switch to MockPhysicalMirror (A715-59G default kernel posture)
         controller.switchHardwareMode(1);
         QCOMPARE(controller.manualFanSupported(), false);
+        QCOMPARE(controller.fanCapabilityBadge(), QStringLiteral("FIRMWARE AUTOMATIC"));
         QCOMPARE(controller.kbdHardwareConnected(), false);
         QCOMPARE(controller.batChargeLimitSupported(), false);
+        QCOMPARE(controller.batCycleCountReported(), false);
+        QCOMPARE(controller.batCycleCountText(), QStringLiteral("NOT REPORTED"));
+        QCOMPARE(controller.batCapabilityBadge(), QStringLiteral("BATTERY TELEMETRY ONLY — CHARGE LIMIT NOT DETECTED"));
 
-        // Switch to MockClv0001DriverActive (CLV0001 bound via clean-room driver)
+        // Switch to MockClv0001DriverActive (Stage 18 CLV0001 bound via clean-room driver)
         controller.switchHardwareMode(3);
         QCOMPARE(controller.hardwareModeIndex(), 3);
         QCOMPARE(controller.kbdBackendKindId(), QStringLiteral("clv0001_acpi_dsm"));
+        QCOMPARE(controller.kbdRgbSupported(), false);
         QCOMPARE(controller.kbdSupportsPresetColors(), true);
-        QCOMPARE(controller.kbdSupportsArbitraryRgb(), false);
+        QCOMPARE(controller.kbdSupportsArbitraryRgb(), true);
         QCOMPARE(controller.kbdPhysicalReadbackSupported(), false);
         QCOMPARE(controller.kbdPresetsModel().size(), 17);
+
+        // Single-zone CLV0001 hardware must refuse per-zone split selection
+        controller.setKbdSelectedZone(2);
+        QCOMPARE(controller.kbdSelectedZone(), -1);
 
         const QString themeBeforeClv = theme.accentHex();
         controller.selectKbdPreset(QStringLiteral("red"));
         controller.setKbdBrightnessLevel(2);
         QCOMPARE(controller.kbdPresetName(), QStringLiteral("red"));
+        QCOMPARE(controller.kbdSelectionSource(), QStringLiteral("preset"));
         QCOMPARE(controller.kbdBrightnessLevel(), 2);
         QCOMPARE(controller.kbdFirmwarePacketHex(), QStringLiteral("00 7E 00 F0"));
         QCOMPARE(theme.accentHex(), themeBeforeClv);
@@ -132,17 +157,48 @@ private slots:
         QCOMPARE(controller.statusBannerIsError(), false);
         QVERIFY(controller.statusBannerText().contains(QStringLiteral("physical hardware readback not exposed")));
 
-        // Verify custom non-preset RGB color in CLV0001 mode fails cleanly instead of silently substituting
-        QVERIFY(controller.setKbdColorFromHex(QStringLiteral("#123456")));
-        QCOMPARE(controller.kbdCustomPreviewDirty(), true);
-        QCOMPARE(controller.kbdNearestPresetName(), QStringLiteral("bluish-white"));
-        controller.applyKeyboardLightingToHardware();
+        // Verify strict #RRGGBB HEX validation rejects malformed values without snapping to a preset or altering color
+        QVERIFY(!controller.setKbdColorFromHex(QStringLiteral("123456")));
         QCOMPARE(controller.statusBannerIsError(), true);
-        QVERIFY(controller.statusBannerText().contains(QStringLiteral("17 verified named presets")));
+        QVERIFY(!controller.setKbdColorFromHex(QStringLiteral("#123")));
+        QVERIFY(!controller.setKbdColorFromHex(QStringLiteral("#12345G")));
+        QVERIFY(!controller.setKbdColorFromHex(QStringLiteral("#1234567")));
+        QVERIFY(!controller.applyCustomKbdRgb(256, 0, 0, 4));
+        QCOMPARE(controller.statusBannerIsError(), true);
+        QVERIFY(!controller.applyCustomKbdRgb(18, 52, 86, 5));
+        QCOMPARE(controller.statusBannerIsError(), true);
+
+        // Selecting custom HEX (#12A7E3) updates preview only (does NOT write to hardware before Apply)
+        const QString clvStatePath = hal::SysfsRoot::instance().resolvePath(
+            QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_state")
+        );
+        const QString stateBeforePreview = hal::SysfsRoot::readFileTrimmed(clvStatePath);
+        QVERIFY(controller.setKbdColorFromHex(QStringLiteral("#12A7E3")));
+        controller.setKbdBrightnessLevel(4);
+        QCOMPARE(controller.kbdCustomPreviewDirty(), true);
+        QCOMPARE(controller.kbdSelectionSource(), QStringLiteral("custom_rgb"));
+        QCOMPARE(controller.kbdFirmwarePacketHex(), QStringLiteral("A7 12 E3 F0"));
+        QCOMPARE(hal::SysfsRoot::readFileTrimmed(clvStatePath), stateBeforePreview);
+
+        // Apply Stage 17 hero color via explicit Apply action after cooldown
+        QTest::qWait(50);
+        QVERIFY(controller.applyCustomKbdRgb(18, 167, 227, 4));
+        QCOMPARE(controller.statusBannerIsError(), false);
+        QVERIFY(controller.statusBannerText().contains(QStringLiteral("A7 12 E3 F0")));
+        QVERIFY(hal::SysfsRoot::readFileTrimmed(clvStatePath).contains(QStringLiteral("preset=custom_rgb")));
+
+        // Random static color picks one uniform RGB triplet and sends through standard Apply
+        controller.selectRandomKbdColor();
+        QCOMPARE(controller.kbdSelectionSource(), QStringLiteral("random_rgb"));
+        QCOMPARE(controller.kbdCustomPreviewDirty(), true);
+        QTest::qWait(50);
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), false);
 
         // Rapid second apply within 40 ms cooldown hits real rate limiter; after 50 ms cooldown preset apply succeeds
         controller.selectKbdPreset(QStringLiteral("green"));
         QCOMPARE(controller.kbdCustomPreviewDirty(), false);
+        QCOMPARE(controller.kbdSelectionSource(), QStringLiteral("preset"));
         controller.applyKeyboardLightingToHardware();
         QCOMPARE(controller.statusBannerIsError(), true);
         QVERIFY(controller.statusBannerText().contains(QStringLiteral("rate-limited")));
@@ -151,10 +207,25 @@ private slots:
         controller.applyKeyboardLightingToHardware();
         QCOMPARE(controller.statusBannerIsError(), false);
 
-        // Snap from custom RGB preview (#0000B0 -> nearest 'blue') and verify profile brightness persistence
+        // Verify legacy preset-only module fallback disables arbitrary RGB cleanly in controller
+        const QString clvPresetsPath = hal::SysfsRoot::instance().resolvePath(
+            QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_presets")
+        );
+        {
+            QFile pf(clvPresetsPath);
+            QVERIFY(pf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            pf.write("presets=off,blue,cyan,white\nbrightness_levels=0,1,2,3,4\n");
+        }
+        controller.refreshNow();
+        QCOMPARE(controller.kbdSupportsPresetColors(), true);
+        QCOMPARE(controller.kbdSupportsArbitraryRgb(), false);
         QVERIFY(controller.setKbdColorFromHex(QStringLiteral("#0000B0")));
         QCOMPARE(controller.kbdCustomPreviewDirty(), true);
         QCOMPARE(controller.kbdNearestPresetName(), QStringLiteral("blue"));
+        QTest::qWait(50);
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), true);
+        QVERIFY(controller.statusBannerText().contains(QStringLiteral("17 verified named presets")));
         controller.snapToNearestKbdPreset();
         QCOMPARE(controller.kbdCustomPreviewDirty(), false);
         QCOMPARE(controller.kbdPresetName(), QStringLiteral("blue"));
@@ -162,6 +233,8 @@ private slots:
         controller.applyKeyboardLightingToHardware();
         QCOMPARE(controller.statusBannerIsError(), false);
 
+        // Restore full mock mode and check profile brightness persistence + off
+        controller.switchHardwareMode(3);
         const QString prevProfId = controller.activeKbdProfileId();
         controller.setKbdBrightnessLevel(3);
         QCOMPARE(controller.kbdBrightnessLevel(), 3);
@@ -169,6 +242,10 @@ private slots:
         QCOMPARE(controller.kbdPresetName(), QStringLiteral("white"));
         controller.selectKbdProfile(prevProfId);
         QCOMPARE(controller.kbdBrightnessLevel(), 3);
+        QTest::qWait(50);
+        controller.selectKbdPreset(QStringLiteral("off"));
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), false);
     }
 
     void testQmlMainWindowInstantiationOffscreen() {
@@ -194,7 +271,7 @@ private slots:
             QVERIFY(img.height() >= 700);
         }
 
-        // Verify CLV0001 Keyboard Studio mode renders cleanly offscreen
+        // Verify CLV0001 Keyboard Studio mode (preset + custom RGB + random RGB) renders cleanly offscreen
         controller.switchHardwareMode(3);
         controller.setCurrentTabIndex(3);
         controller.selectKbdPreset(QStringLiteral("cyan"));
@@ -202,6 +279,38 @@ private slots:
         QImage clvImg = window->grabWindow();
         QVERIFY(!clvImg.isNull());
         QVERIFY(clvImg.width() >= 1100);
+
+        QVERIFY(controller.setKbdColorFromHex(QStringLiteral("#12A7E3")));
+        controller.setKbdBrightnessLevel(4);
+        QCoreApplication::processEvents();
+        QImage customImg = window->grabWindow();
+        QVERIFY(!customImg.isNull());
+        QVERIFY(customImg.width() >= 1100);
+
+        controller.selectRandomKbdColor();
+        QCoreApplication::processEvents();
+        QImage randImg = window->grabWindow();
+        QVERIFY(!randImg.isNull());
+
+        // Multi-resolution responsive checks (1366x768, 1600x900, 1920x1080, 2560x1440) + Light CAD polarity
+        const std::array<QSize, 4> resSizes = {
+            QSize(1366, 768),
+            QSize(1600, 900),
+            QSize(1920, 1080),
+            QSize(2560, 1440)
+        };
+        for (const QSize& sz : resSizes) {
+            window->resize(sz);
+            controller.setCurrentTabIndex(0);
+            QCoreApplication::processEvents();
+            const QImage szImg = window->grabWindow();
+            QVERIFY(!szImg.isNull());
+        }
+        theme.setDarkTheme(false);
+        controller.setCurrentTabIndex(6);
+        QCoreApplication::processEvents();
+        QImage lightCadImg = window->grabWindow();
+        QVERIFY(!lightCadImg.isNull());
     }
 };
 

@@ -303,33 +303,76 @@ bool SysfsRoot::writeCommandAndReadState(
 
     bool simulatedFailure = false;
     if (SysfsRoot::instance().isMockActive()) {
+        const QString devDir = QFileInfo(canonicalState).dir().absolutePath();
         const QStringList parts = commandValue.trimmed().simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
-        const QString preset = parts.isEmpty() ? QString() : parts.at(0).toLower();
-        int level = (preset == QLatin1String("off")) ? 0 : 4;
-        if (parts.size() >= 2) {
-            bool okLvl = false;
-            const int parsed = parts.at(1).toInt(&okLvl);
-            if (!okLvl) {
+        const QString cmdHead = parts.isEmpty() ? QString() : parts.at(0);
+        QString stateLabel;
+        int level = 4;
+        std::array<uint8_t, 4> pkt{};
+        QString encErr;
+
+        if (cmdHead == QLatin1String("rgb")) {
+            const QString presetsText = readFileTrimmed(devDir + QStringLiteral("/clv0001_kbd_presets"));
+            bool mockSupportsCustomRgb = false;
+            for (const QString& line : presetsText.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                if (line.trimmed() == QLatin1String("supports_custom_rgb=1")) {
+                    mockSupportsCustomRgb = true;
+                    break;
+                }
+            }
+            if (!mockSupportsCustomRgb) {
                 if (outError) {
-                    *outError = QStringLiteral("Invalid brightness token in mock command '%1'").arg(commandValue);
+                    *outError = QStringLiteral("Simulated preset-only driver rejected 'rgb' command (-EINVAL)");
                 }
                 return false;
             }
-            level = parsed;
-        }
-        if (preset == QLatin1String("off")) {
-            level = 0;
-        }
-        std::array<uint8_t, 4> pkt{};
-        QString encErr;
-        if (!Clv0001KeyboardBackend::buildFirmwarePayload(preset, level, pkt, &encErr)) {
-            if (outError) {
-                *outError = encErr;
+            if (parts.size() != 5) {
+                if (outError) {
+                    *outError = QStringLiteral("Invalid token count in mock rgb command '%1'").arg(commandValue);
+                }
+                return false;
             }
-            return false;
+            bool okR = false, okG = false, okB = false, okLvl = false;
+            const int r = parts.at(1).toInt(&okR);
+            const int g = parts.at(2).toInt(&okG);
+            const int b = parts.at(3).toInt(&okB);
+            level = parts.at(4).toInt(&okLvl);
+            if (!okR || !okG || !okB || !okLvl ||
+                !Clv0001KeyboardBackend::buildCustomRgbFirmwarePayload(r, g, b, level, pkt, &encErr)) {
+                if (outError) {
+                    *outError = encErr.isEmpty()
+                                    ? QStringLiteral("Invalid rgb arguments in mock command '%1'").arg(commandValue)
+                                    : encErr;
+                }
+                return false;
+            }
+            stateLabel = QStringLiteral("custom_rgb");
+        } else {
+            const QString preset = cmdHead.toLower();
+            level = (preset == QLatin1String("off")) ? 0 : 4;
+            if (parts.size() >= 2) {
+                bool okLvl = false;
+                const int parsed = parts.at(1).toInt(&okLvl);
+                if (!okLvl) {
+                    if (outError) {
+                        *outError = QStringLiteral("Invalid brightness token in mock command '%1'").arg(commandValue);
+                    }
+                    return false;
+                }
+                level = parsed;
+            }
+            if (preset == QLatin1String("off")) {
+                level = 0;
+            }
+            if (!Clv0001KeyboardBackend::buildFirmwarePayload(preset, level, pkt, &encErr)) {
+                if (outError) {
+                    *outError = encErr;
+                }
+                return false;
+            }
+            stateLabel = preset;
         }
         const QString pktHex = Clv0001KeyboardBackend::formatPayloadHex(pkt);
-        const QString devDir = QFileInfo(canonicalState).dir().absolutePath();
         const QString behavior = readFileTrimmed(devDir + QStringLiteral("/mock_eval_behavior"));
 
         QString status = QStringLiteral("accepted_no_hw_readback");
@@ -377,7 +420,7 @@ bool SysfsRoot::writeCommandAndReadState(
                                       "payload_grb=%4\n"
                                       "acpi_return_type=%5\n"
                                       "physical_readback=unsupported\n")
-                                      .arg(status, preset)
+                                      .arg(status, stateLabel)
                                       .arg(level)
                                       .arg(pktHex, retType);
         QFile stFile(statePath);
@@ -528,7 +571,8 @@ bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalCo
     writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/charge_now"), QStringLiteral("1408000\n"));
     writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/charge_full"), QStringLiteral("1956000\n"));
     writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/charge_full_design"), QStringLiteral("3410000\n"));
-    writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/cycle_count"), QStringLiteral("42\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/cycle_count"),
+                  includeOptionalControls ? QStringLiteral("42\n") : QStringLiteral("0\n"));
 
     // 7. Display backlight
     writeMockFile(rootPath, QStringLiteral("/sys/class/backlight/intel_backlight/brightness"), QStringLiteral("24000\n"));
@@ -583,7 +627,13 @@ bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalCo
         for (const auto& p : Clv0001KeyboardBackend::verifiedPresets()) {
             presetNames.append(p.name);
         }
-        const QString presetsContent = QStringLiteral("presets=%1\nbrightness_levels=0,1,2,3,4\n")
+        const QString presetsContent = QStringLiteral(
+                                           "presets=%1\n"
+                                           "brightness_levels=0,1,2,3,4\n"
+                                           "supports_presets=1\n"
+                                           "supports_custom_rgb=1\n"
+                                           "custom_rgb_grammar=rgb R G B brightness_level\n"
+                                           "physical_readback=0\n")
                                            .arg(presetNames.join(QLatin1Char(',')));
         writeMockFile(rootPath, clvDevRel + QStringLiteral("/clv0001_kbd_presets"), presetsContent);
     }

@@ -59,10 +59,13 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(int memUsedMiB READ memUsedMiB NOTIFY telemetryUpdated)
     Q_PROPERTY(int memAvailableMiB READ memAvailableMiB NOTIFY telemetryUpdated)
     Q_PROPERTY(int memCachedMiB READ memCachedMiB NOTIFY telemetryUpdated)
+    Q_PROPERTY(int memBuffersMiB READ memBuffersMiB NOTIFY telemetryUpdated)
     Q_PROPERTY(double memUtilizationPct READ memUtilizationPct NOTIFY telemetryUpdated)
     Q_PROPERTY(double psiCpuSome10 READ psiCpuSome10 NOTIFY telemetryUpdated)
     Q_PROPERTY(double psiMemSome10 READ psiMemSome10 NOTIFY telemetryUpdated)
+    Q_PROPERTY(double psiMemFull10 READ psiMemFull10 NOTIFY telemetryUpdated)
     Q_PROPERTY(double psiIoSome10 READ psiIoSome10 NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool psiAvailable READ psiAvailable NOTIFY telemetryUpdated)
 
     // Rolling Time-Series Arrays (60 samples)
     Q_PROPERTY(QVariantList historyCpuTemp READ historyCpuTemp NOTIFY telemetryUpdated)
@@ -83,6 +86,7 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(QString thermalStateLabel READ thermalStateLabel NOTIFY telemetryUpdated)
     Q_PROPERTY(QString fanControlModeLabel READ fanControlModeLabel NOTIFY telemetryUpdated)
     Q_PROPERTY(bool manualFanSupported READ manualFanSupported NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString fanCapabilityBadge READ fanCapabilityBadge NOTIFY telemetryUpdated)
     Q_PROPERTY(QString fanStatusExplanation READ fanStatusExplanation NOTIFY telemetryUpdated)
     Q_PROPERTY(double maxNvmeTempC READ maxNvmeTempC NOTIFY telemetryUpdated)
     Q_PROPERTY(double maxBoardTempC READ maxBoardTempC NOTIFY telemetryUpdated)
@@ -105,6 +109,7 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(int kbdBrightnessLevel READ kbdBrightnessLevel NOTIFY keyboardStudioChanged)
     Q_PROPERTY(QString kbdFirmwarePacketHex READ kbdFirmwarePacketHex NOTIFY keyboardStudioChanged)
     Q_PROPERTY(bool kbdCustomPreviewDirty READ kbdCustomPreviewDirty NOTIFY keyboardStudioChanged)
+    Q_PROPERTY(QString kbdSelectionSource READ kbdSelectionSource NOTIFY keyboardStudioChanged)
     Q_PROPERTY(QString kbdNearestPresetName READ kbdNearestPresetName NOTIFY keyboardStudioChanged)
     Q_PROPERTY(QVariantList kbdPresetsModel READ kbdPresetsModel NOTIFY keyboardStudioChanged)
     Q_PROPERTY(bool kbdEnabled READ kbdEnabled WRITE setKbdEnabled NOTIFY keyboardStudioChanged)
@@ -136,10 +141,15 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(double batPowerW READ batPowerW NOTIFY telemetryUpdated)
     Q_PROPERTY(double batChargeFullAh READ batChargeFullAh NOTIFY telemetryUpdated)
     Q_PROPERTY(double batChargeDesignAh READ batChargeDesignAh NOTIFY telemetryUpdated)
+    Q_PROPERTY(double batChargeNowAh READ batChargeNowAh NOTIFY telemetryUpdated)
     Q_PROPERTY(double batWearHealthPct READ batWearHealthPct NOTIFY telemetryUpdated)
     Q_PROPERTY(int batCycleCount READ batCycleCount NOTIFY telemetryUpdated)
+    Q_PROPERTY(bool batCycleCountReported READ batCycleCountReported NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString batCycleCountText READ batCycleCountText NOTIFY telemetryUpdated)
     Q_PROPERTY(bool batChargeLimitSupported READ batChargeLimitSupported NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString batCapabilityBadge READ batCapabilityBadge NOTIFY telemetryUpdated)
     Q_PROPERTY(int batChargeThresholdPct READ batChargeThresholdPct NOTIFY telemetryUpdated)
+    Q_PROPERTY(int batPreviousThresholdPct READ batPreviousThresholdPct NOTIFY telemetryUpdated)
     Q_PROPERTY(QString batStatusExplanation READ batStatusExplanation NOTIFY telemetryUpdated)
     Q_PROPERTY(int displayBrightnessPct READ displayBrightnessPct NOTIFY telemetryUpdated)
     Q_PROPERTY(bool displayBrightnessSupported READ displayBrightnessSupported NOTIFY telemetryUpdated)
@@ -222,10 +232,13 @@ public:
     int memUsedMiB() const { return static_cast<int>(m_snapshot.memory.usedMiB); }
     int memAvailableMiB() const { return static_cast<int>(m_snapshot.memory.availableMiB); }
     int memCachedMiB() const { return static_cast<int>(m_snapshot.memory.cachedMiB); }
+    int memBuffersMiB() const { return static_cast<int>(m_snapshot.memory.buffersMiB); }
     double memUtilizationPct() const { return m_snapshot.memory.utilizationPct; }
     double psiCpuSome10() const { return m_snapshot.memory.psiCpuSomeAvg10; }
     double psiMemSome10() const { return m_snapshot.memory.psiMemSomeAvg10; }
+    double psiMemFull10() const { return m_snapshot.memory.psiMemFullAvg10; }
     double psiIoSome10() const { return m_snapshot.memory.psiIoSomeAvg10; }
+    bool psiAvailable() const { return m_snapshot.memory.psiAvailable; }
 
     QVariantList historyCpuTemp() const { return m_histCpuTemp; }
     QVariantList historyGpuTemp() const { return m_histGpuTemp; }
@@ -248,6 +261,7 @@ public:
     QString thermalStateLabel() const { return m_snapshot.thermal.thermalStateLabel; }
     QString fanControlModeLabel() const { return m_snapshot.thermal.fanControlMode; }
     bool manualFanSupported() const { return m_snapshot.thermal.manualFanSupported; }
+    QString fanCapabilityBadge() const;
     QString fanStatusExplanation() const { return m_snapshot.thermal.fanStatusExplanation; }
     double maxNvmeTempC() const { return m_snapshot.thermal.maxNvmeTempC; }
     double maxBoardTempC() const { return m_snapshot.thermal.maxBoardTempC; }
@@ -270,6 +284,7 @@ public:
     int kbdBrightnessLevel() const { return m_currentKbdProfile.clv0001BrightnessLevel; }
     QString kbdFirmwarePacketHex() const;
     bool kbdCustomPreviewDirty() const { return m_kbdCustomPreviewDirty; }
+    QString kbdSelectionSource() const { return m_kbdSelectionSource; }
     QString kbdNearestPresetName() const;
     QVariantList kbdPresetsModel() const;
     bool kbdEnabled() const { return m_currentKbdProfile.enabled; }
@@ -306,10 +321,15 @@ public:
     double batPowerW() const { return m_snapshot.battery.powerWatts; }
     double batChargeFullAh() const { return m_snapshot.battery.chargeFullAh; }
     double batChargeDesignAh() const { return m_snapshot.battery.chargeFullDesignAh; }
+    double batChargeNowAh() const { return m_snapshot.battery.chargeNowAh; }
     double batWearHealthPct() const { return m_snapshot.battery.wearHealthPct; }
     int batCycleCount() const { return m_snapshot.battery.cycleCount; }
+    bool batCycleCountReported() const { return m_snapshot.battery.cycleCountReported; }
+    QString batCycleCountText() const { return m_snapshot.battery.cycleCountLabel; }
     bool batChargeLimitSupported() const { return m_snapshot.battery.chargeLimitSupported; }
+    QString batCapabilityBadge() const;
     int batChargeThresholdPct() const { return m_snapshot.battery.chargeEndThresholdPct; }
+    int batPreviousThresholdPct() const { return m_batPreviousThresholdPct; }
     QString batStatusExplanation() const { return m_snapshot.battery.statusExplanation; }
     int displayBrightnessPct() const { return m_snapshot.displayBrightnessPct; }
     bool displayBrightnessSupported() const { return m_snapshot.displayBrightnessSupported; }
@@ -361,6 +381,8 @@ public:
     Q_INVOKABLE void selectKbdPreset(const QString& presetName);
     Q_INVOKABLE void snapToNearestKbdPreset();
     Q_INVOKABLE void setKbdBrightnessLevel(int level);
+    Q_INVOKABLE void selectRandomKbdColor();
+    Q_INVOKABLE bool applyCustomKbdRgb(int r, int g, int b, int brightnessLevel);
     Q_INVOKABLE void applyKeyboardLightingToHardware();
 
     // Thermal & Fan Actions
@@ -369,6 +391,7 @@ public:
 
     // Battery & Display Actions
     Q_INVOKABLE void applyBatteryChargeLimit(int thresholdPct);
+    Q_INVOKABLE void restorePreviousBatteryChargeLimit();
     Q_INVOKABLE void applyDisplayBrightness(int brightnessPct);
 
     // Diagnostics & Hardware Mode Actions
@@ -410,6 +433,7 @@ private:
     bool m_statusBannerIsError = false;
     bool m_lastAcOnlineState = true;
     bool m_firstPoll = true;
+    int m_batPreviousThresholdPct = 100;
 
     // 60-sample rolling history buffers
     QVariantList m_histCpuTemp;
@@ -426,6 +450,7 @@ private:
     core::HslColor m_kbdHsl{210.0, 1.0, 0.62};
     QString m_kbdPickerHex = QStringLiteral("#3B9EFF");
     bool m_kbdCustomPreviewDirty = false;
+    QString m_kbdSelectionSource = QStringLiteral("preset");
 
     std::unique_ptr<QSystemTrayIcon> m_trayIcon;
 };

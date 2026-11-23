@@ -1,6 +1,6 @@
 Name:           acer-control-center
 Version:        1.0.0
-Release:        2%{?dist}
+Release:        4%{?dist}
 Summary:        Native Hardware Telemetry & Control Center for Acer Aspire 7 A715-59G
 
 License:        GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
@@ -34,11 +34,11 @@ hardware management application engineered for the Acer Aspire 7 A715-59G
 (board RTH / Kelilu_RTH) on Fedora Linux 45 (KDE Plasma 6 & Hyprland Wayland).
 It provides real-time CPU, memory, thermal, battery, and optional NVIDIA NVML
 telemetry, verified Intel P-State and TuneD/PPD performance profiles,
-interactive fan curve visualization, a three-mode Keyboard Lighting Studio
-(clean-room CLV0001 ACPI _DSM preset backend, /sys/class/leds sysfs, and an
-unrestricted sRGB/HSV/HSL Preview Studio independent of application accent),
-clean-room out-of-tree CLV0001 driver source for optional operator build, and
-privacy-redacted hardware diagnostics.
+interactive fan curve visualization, a capability-aware Keyboard Lighting Studio
+(clean-room CLV0001 ACPI _DSM preset and Stage 17 static 24-bit custom RGB
+backend, /sys/class/leds sysfs, and unrestricted sRGB/HSV/HSL Preview Studio
+independent of application accent), clean-room out-of-tree CLV0001 driver
+source for optional operator build, and privacy-redacted hardware diagnostics.
 
 %prep
 %autosetup -n %{name}-%{version}
@@ -83,6 +83,13 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/io.github.zethasaintl
 %{_datadir}/acer-control-center/driver/dkms.conf
 
 %changelog
+* Fri Nov 20 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-4
+- Add FirmwareAutomatic fan capability modeling and read-only tachometer/PWM safety gating
+- Reconcile BAT0 cycle_count provenance (NOT REPORTED when unreported) and harden charge-limit rounding/rollback
+- Implement Endfield-inspired global bimodal UI redesign (Dark Tactical HUD & Light CAD Schematic)
+- Add multi-resolution visual QA capture, contact sheet, and expanded unit/GUI capability tests
+* Fri Nov 20 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-3
+- Extend CLV0001 ACPI _DSM 0x67 driver, HAL, daemon, controller, and Keyboard Studio for static 24-bit custom RGB with capability discovery
 * Mon Nov 16 2026 zethasaintlab <zethasaintlab@users.noreply.github.com> - 1.0.0-2
 - Integrate clean-room CLV0001 (\_SB_.DCHU) ACPI _DSM 0x67 keyboard preset backend and optional driver sources
 - Harden /proc/driver/nvidia telemetry non-fabrication and CPU governor/EPP rollback validation

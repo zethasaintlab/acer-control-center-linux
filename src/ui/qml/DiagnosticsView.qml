@@ -16,12 +16,9 @@ Flickable {
         spacing: 14
 
         // 01 // PLATFORM IDENTITY & SAFE HARDWARE MODE SWITCHER
-        Rectangle {
+        IndustrialPanel {
             width: parent.width
-            height: 178
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
+            height: modeHdr.height + modeBody.implicitHeight + 24
 
             SectionHeader {
                 id: modeHdr
@@ -29,12 +26,12 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "01"
-                title: "PLATFORM IDENTITY & HARDWARE BACKEND VERIFICATION MODE"
-                badgeText: ctrl.mockModeActive ? "MOCK FIXTURE ACTIVE" : "PHYSICAL HARDWARE"
-                badgeColor: ctrl.mockModeActive ? theme.statusWarning : theme.statusNominal
+                title: "PLATFORM IDENTITY & HARDWARE BACKEND MODE"
+                badgeText: ctrl.mockModeActive ? "MOCK HARDWARE" : "PHYSICAL HARDWARE"
             }
 
             Column {
+                id: modeBody
                 anchors.top: modeHdr.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -45,7 +42,7 @@ Flickable {
                     width: parent.width
                     elide: Text.ElideRight
                     text: "MODEL: " + ctrl.productTitle + "   |   BOARD: " + ctrl.boardTitle + "   |   BIOS: " + ctrl.biosTitle
-                    font.family: "monospace"
+                    font.family: theme.fontMono
                     font.pixelSize: 12
                     font.weight: Font.Bold
                     color: theme.textPrimary
@@ -54,9 +51,9 @@ Flickable {
                 Text {
                     width: parent.width
                     elide: Text.ElideRight
-                    text: "ODM ARCHITECTURE: " + ctrl.odmPlatformNote + "   |   WMI: " + ctrl.wmiGuidsJoined
-                    font.family: "monospace"
-                    font.pixelSize: 11
+                    text: "ODM: " + ctrl.odmPlatformNote + "   |   WMI: " + ctrl.wmiGuidsJoined
+                    font.family: theme.fontMono
+                    font.pixelSize: 10
                     color: theme.textSecondary
                 }
 
@@ -66,7 +63,7 @@ Flickable {
                     text: "KERNEL: " + (ctrl.kernelRelease.length > 0 ? ctrl.kernelRelease : "--")
                           + "   |   DAEMON: " + (ctrl.daemonReachable ? "ACTIVE" : "UNAVAILABLE")
                           + "   |   ACPI: " + (ctrl.acpiDevicesJoined.length > 0 ? ctrl.acpiDevicesJoined : "none")
-                    font.family: "monospace"
+                    font.family: theme.fontMono
                     font.pixelSize: 10
                     color: theme.textSecondary
                 }
@@ -80,25 +77,21 @@ Flickable {
                         activeState: ctrl.hardwareModeIndex === 0
                         onClicked: ctrl.switchHardwareMode(0)
                     }
-
                     AtelierButton {
                         text: "MOCK: A715-59G MIRROR"
                         activeState: ctrl.hardwareModeIndex === 1
                         onClicked: ctrl.switchHardwareMode(1)
                     }
-
                     AtelierButton {
                         text: "MOCK: CLV0001 BOUND"
                         activeState: ctrl.hardwareModeIndex === 3
                         onClicked: ctrl.switchHardwareMode(3)
                     }
-
                     AtelierButton {
                         text: "MOCK: FULL CAPABILITIES"
                         activeState: ctrl.hardwareModeIndex === 2
                         onClicked: ctrl.switchHardwareMode(2)
                     }
-
                     AtelierButton {
                         text: "EXPORT REDACTED REPORT"
                         primaryAccent: true
@@ -108,13 +101,10 @@ Flickable {
             }
         }
 
-        // 02 // COMPLETE 13-CAPABILITY EVIDENCE MATRIX
-        Rectangle {
+        // 02 // COMPLETE 13-CAPABILITY EVIDENCE MATRIX (BIMODAL CAD INSPECTION SURFACE)
+        IndustrialPanel {
             width: parent.width
-            height: 48 + ctrl.capabilitiesModel.length * 42
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
+            height: capMatHdr.height + capListCol.implicitHeight + 20
 
             SectionHeader {
                 id: capMatHdr
@@ -124,21 +114,23 @@ Flickable {
                 indexCode: "02"
                 title: "EVIDENCE-BASED HARDWARE CAPABILITY MATRIX"
                 badgeText: ctrl.capabilitiesModel.length + " INTERFACES AUDITED"
-                badgeColor: theme.statusInfo
+                accentStripeColor: theme.telemetryLime
             }
 
             Column {
+                id: capListCol
                 anchors.top: capMatHdr.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.margins: 8
-                spacing: 4
+                anchors.margins: 10
+                spacing: 5
 
                 Repeater {
                     model: ctrl.capabilitiesModel
                     delegate: Rectangle {
                         width: parent.width
-                        height: 38
+                        height: 44
+                        radius: theme.radiusStructural
                         color: theme.surfaceElevated
                         border.width: 1
                         border.color: theme.borderSubtle
@@ -147,56 +139,36 @@ Flickable {
                             anchors.fill: parent
                             anchors.leftMargin: 10
                             anchors.rightMargin: 10
-                            spacing: 10
+                            spacing: 12
 
-                            Rectangle {
-                                width: 106
-                                height: 22
+                            CapabilityBadge {
+                                width: 158
                                 anchors.verticalCenter: parent.verticalCenter
-                                color: "transparent"
-                                border.width: 1
-                                border.color: {
-                                    if (modelData.stateId === "fully_supported") return theme.statusNominal;
-                                    if (modelData.stateId === "read_only") return theme.statusInfo;
-                                    return theme.statusWarning;
-                                }
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: modelData.stateBadge
-                                    font.family: "monospace"
-                                    font.pixelSize: 10
-                                    font.weight: Font.Bold
-                                    color: {
-                                        if (modelData.stateId === "fully_supported") return theme.statusNominal;
-                                        if (modelData.stateId === "read_only") return theme.statusInfo;
-                                        return theme.statusWarning;
-                                    }
-                                }
+                                badgeText: modelData.stateBadge
                             }
 
                             Column {
-                                width: parent.width - 126
+                                width: Math.max(120, parent.width - 170)
                                 anchors.verticalCenter: parent.verticalCenter
                                 spacing: 2
 
                                 Row {
                                     width: parent.width
                                     Text {
-                                        width: parent.width * 0.46
+                                        width: parent.width * 0.48
                                         elide: Text.ElideRight
                                         text: modelData.title
-                                        font.family: "sans-serif"
+                                        font.family: theme.fontSans
                                         font.pixelSize: 12
                                         font.weight: Font.DemiBold
                                         color: theme.textPrimary
                                     }
                                     Text {
-                                        width: parent.width * 0.54
+                                        width: parent.width * 0.52
                                         horizontalAlignment: Text.AlignRight
                                         elide: Text.ElideMiddle
                                         text: modelData.interfacePath
-                                        font.family: "monospace"
+                                        font.family: theme.fontMono
                                         font.pixelSize: 10
                                         color: theme.textMuted
                                     }
@@ -206,7 +178,7 @@ Flickable {
                                     width: parent.width
                                     elide: Text.ElideRight
                                     text: modelData.summary
-                                    font.family: "sans-serif"
+                                    font.family: theme.fontSans
                                     font.pixelSize: 11
                                     color: theme.textSecondary
                                 }
@@ -218,12 +190,9 @@ Flickable {
         }
 
         // 03 // REDACTED DIAGNOSTIC LOG STREAM
-        Rectangle {
+        IndustrialPanel {
             width: parent.width
             height: 210
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
 
             SectionHeader {
                 id: logHdr
@@ -231,9 +200,8 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "03"
-                title: "REDACTED APPLICATION & HARDWARE EVENT LOG (UUID / SERIAL / MAC STRIPPED)"
+                title: "REDACTED HARDWARE & APPLICATION EVENT LOG (SERIAL / UUID / MAC STRIPPED)"
                 badgeText: ctrl.diagnosticLogsModel.length + " EVENTS"
-                badgeColor: theme.accentReadable
             }
 
             ListView {
@@ -247,7 +215,8 @@ Flickable {
                 spacing: 3
                 delegate: Rectangle {
                     width: ListView.view.width
-                    height: 22
+                    height: 24
+                    radius: theme.radiusStructural
                     color: theme.surfaceElevated
 
                     Text {
@@ -258,9 +227,9 @@ Flickable {
                         anchors.verticalCenter: parent.verticalCenter
                         elide: Text.ElideRight
                         text: "[" + modelData.timestamp + "] [" + modelData.level + "] [" + modelData.subsystem + "] " + modelData.message
-                        font.family: "monospace"
+                        font.family: theme.fontMono
                         font.pixelSize: 11
-                        color: modelData.level === "WARN" || modelData.level === "ERROR" ? theme.statusWarning : theme.textSecondary
+                        color: (modelData.level === "WARN" || modelData.level === "ERROR") ? theme.statusWarning : theme.textSecondary
                     }
                 }
             }

@@ -15,6 +15,7 @@ class KeyboardVisualizerItem : public QQuickPaintedItem {
     Q_PROPERTY(int brightnessPct READ brightnessPct WRITE setBrightnessPct NOTIFY stateChanged)
     Q_PROPERTY(bool backlightEnabled READ backlightEnabled WRITE setBacklightEnabled NOTIFY stateChanged)
     Q_PROPERTY(bool hardwareConnected READ hardwareConnected WRITE setHardwareConnected NOTIFY stateChanged)
+    Q_PROPERTY(bool multiZoneSupported READ multiZoneSupported WRITE setMultiZoneSupported NOTIFY stateChanged)
     Q_PROPERTY(QString routingBadge READ routingBadge WRITE setRoutingBadge NOTIFY stateChanged)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor NOTIFY stateChanged)
     Q_PROPERTY(QColor keycapColor READ keycapColor WRITE setKeycapColor NOTIFY stateChanged)
@@ -40,6 +41,9 @@ public:
 
     bool hardwareConnected() const { return m_hwConnected; }
     void setHardwareConnected(bool c);
+
+    bool multiZoneSupported() const { return m_multiZoneSupported; }
+    void setMultiZoneSupported(bool s);
 
     QString routingBadge() const { return m_routingBadge; }
     void setRoutingBadge(const QString& b);
@@ -67,10 +71,11 @@ private:
     QColor colorForZone(int zoneIdx) const;
 
     QVariantList m_zoneColors;
-    int m_selectedZone = 0; // -1 = All Zones, 0..3 = individual zone
+    int m_selectedZone = -1; // -1 = All / Uniform Zone, 0..3 = individual zone when multiZoneSupported
     int m_brightnessPct = 80;
     bool m_backlightEnabled = true;
     bool m_hwConnected = false;
+    bool m_multiZoneSupported = true;
     QString m_routingBadge = QStringLiteral("PREVIEW MODE — NO KERNEL LED NODE");
     QColor m_bgColor = QColor(QStringLiteral("#101318"));
     QColor m_keycapColor = QColor(QStringLiteral("#181C23"));

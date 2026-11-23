@@ -19,12 +19,9 @@ Flickable {
         spacing: 14
 
         // 01 // HARDWARE COOLING & EC CAPABILITY BANNER
-        Rectangle {
+        IndustrialPanel {
             width: parent.width
-            height: 126
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
+            height: ecHdr.height + ecBodyCol.implicitHeight + 24
 
             SectionHeader {
                 id: ecHdr
@@ -32,33 +29,96 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "01"
-                title: "COOLING SUBSYSTEM & EMBEDDED CONTROLLER (PNP0C09:00) STATUS"
-                badgeText: ctrl.manualFanSupported ? "FULL RW (HWMON PWM)" : "FIRMWARE EC AUTO (NO KERNEL PWM)"
-                badgeColor: ctrl.manualFanSupported ? theme.statusNominal : theme.statusWarning
+                title: "COOLING SUBSYSTEM & EMBEDDED CONTROLLER (PNP0C09:00)"
+                badgeText: ctrl.fanCapabilityBadge
+                hazardStripe: !ctrl.manualFanSupported
             }
 
             Column {
+                id: ecBodyCol
                 anchors.top: ecHdr.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.margins: 12
                 spacing: 10
 
-                Text {
+                // Honest safety / actuator capability box
+                Rectangle {
                     width: parent.width
-                    wrapMode: Text.WordWrap
-                    text: ctrl.fanStatusExplanation
-                    font.family: "sans-serif"
-                    font.pixelSize: 12
-                    color: theme.textSecondary
+                    height: expTxt.implicitHeight + 16
+                    radius: theme.radiusStructural
+                    color: theme.surfaceElevated
+                    border.width: 1
+                    border.color: ctrl.manualFanSupported ? theme.telemetryLime : theme.borderStrong
+
+                    Row {
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 10
+
+                        Rectangle {
+                            width: 4
+                            height: parent.height
+                            color: ctrl.manualFanSupported ? theme.telemetryLime : theme.technicalCyan
+                        }
+
+                        Text {
+                            id: expTxt
+                            width: parent.width - 18
+                            wrapMode: Text.WordWrap
+                            text: ctrl.fanStatusExplanation
+                            font.family: theme.fontSans
+                            font.pixelSize: 12
+                            color: theme.textPrimary
+                        }
+                    }
                 }
 
-                Row {
+                // Active Fan Tachometers (ONLY rendered when genuine hwmon fan*_input sensors exist)
+                Flow {
+                    visible: ctrl.fansModel.length > 0
+                    width: parent.width
+                    spacing: 10
+
+                    Repeater {
+                        model: ctrl.fansModel
+                        delegate: Rectangle {
+                            width: 240
+                            height: 46
+                            radius: theme.radiusStructural
+                            color: theme.surfaceElevated
+                            border.width: 1
+                            border.color: theme.telemetryLime
+                            Column {
+                                anchors.centerIn: parent
+                                width: parent.width - 16
+                                spacing: 2
+                                Text {
+                                    text: modelData.label.toUpperCase()
+                                    font.family: theme.fontMono
+                                    font.pixelSize: 10
+                                    color: theme.textSecondary
+                                }
+                                Text {
+                                    text: modelData.rpm + " RPM  (" + modelData.pwmPct + "% PWM)"
+                                    font.family: theme.fontMono
+                                    font.pixelSize: 14
+                                    font.weight: Font.Bold
+                                    color: theme.telemetryLime
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Controls (strictly disabled on Kelilu_RTH when no verified hwmon PWM actuator exists)
+                Flow {
+                    width: parent.width
                     spacing: 10
 
                     AtelierButton {
-                        text: "RESTORE FIRMWARE AUTO"
-                        activeState: !ctrl.manualFanSupported
+                        text: "FIRMWARE AUTO"
+                        activeState: !ctrl.manualFanSupported || ctrl.fanControlModeLabel.indexOf("Auto") >= 0
                         enabledState: ctrl.manualFanSupported
                         onClicked: ctrl.setFanMode("auto", 50)
                     }
@@ -76,9 +136,9 @@ Flickable {
                     }
 
                     AtelierSlider {
-                        width: 240
-                        height: 36
-                        label: "Manual Duty Target"
+                        width: 260
+                        height: 40
+                        label: ctrl.manualFanSupported ? "PWM Duty Override" : "PWM Override (Unavailable)"
                         unit: "%"
                         minValue: 25
                         maxValue: 100
@@ -90,18 +150,15 @@ Flickable {
             }
         }
 
-        // 02 // INTERACTIVE FAN CURVE EDITOR & LIVE SENSOR TABLE
+        // 02 // INTERACTIVE THERMAL RESPONSE SCHEMATIC & VERIFIED SENSOR GAUGES
         Grid {
             width: parent.width
             columns: width >= 920 ? 2 : 1
             spacing: 12
 
-            Rectangle {
-                width: parent.columns === 2 ? (parent.width - 12) * 0.54 : parent.width
-                height: 320
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+            IndustrialPanel {
+                width: parent.columns === 2 ? (parent.width - 12) * 0.52 : parent.width
+                height: 360
 
                 SectionHeader {
                     id: curveHdr
@@ -109,9 +166,9 @@ Flickable {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     indexCode: "02.A"
-                    title: "PIECEWISE THERMAL RESPONSE CURVE (°C VS PWM %)"
-                    badgeText: ctrl.manualFanSupported ? "LIVE PWM" : "PREVIEW / SIM"
-                    badgeColor: ctrl.manualFanSupported ? theme.statusNominal : theme.statusWarning
+                    title: "PIECEWISE THERMAL RESPONSE SCHEMATIC (°C VS PWM %)"
+                    badgeText: ctrl.manualFanSupported ? ctrl.fanCapabilityBadge : "PREVIEW ONLY"
+                    hazardStripe: !ctrl.manualFanSupported
                 }
 
                 FanCurveEditor {
@@ -128,9 +185,7 @@ Flickable {
                     backgroundColor: theme.surfacePrimary
                     gridColor: theme.borderSubtle
                     textColor: theme.textSecondary
-                    onCurveEdited: function(updatedPts) {
-                        ctrl.updateFanCurvePoints(updatedPts);
-                    }
+                    onCurveEdited: function(updatedPts) { ctrl.updateFanCurvePoints(updatedPts); }
                 }
 
                 Row {
@@ -139,16 +194,18 @@ Flickable {
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.margins: 10
-                    height: 32
+                    height: 34
                     spacing: 10
 
                     AtelierButton {
-                        text: "RESET DEFAULT CURVE"
+                        text: "RESET DEFAULT SCHEMATIC"
                         onClicked: curveEditor.resetToDefaultCurve()
                     }
 
                     AtelierButton {
-                        text: "APPLY CURVE TARGET (" + curveEditor.interpolatedDutyPct + "%)"
+                        text: ctrl.manualFanSupported
+                              ? ("APPLY CURVE TARGET (" + curveEditor.interpolatedDutyPct + "%)")
+                              : ("PREVIEW TARGET ONLY (" + curveEditor.interpolatedDutyPct + "%)")
                         enabledState: ctrl.manualFanSupported
                         primaryAccent: ctrl.manualFanSupported
                         onClicked: ctrl.setFanMode("curve", curveEditor.interpolatedDutyPct)
@@ -156,12 +213,9 @@ Flickable {
                 }
             }
 
-            Rectangle {
-                width: parent.columns === 2 ? (parent.width - 12) * 0.46 : parent.width
-                height: 320
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+            IndustrialPanel {
+                width: parent.columns === 2 ? (parent.width - 12) * 0.48 : parent.width
+                height: 360
 
                 SectionHeader {
                     id: sensHdr
@@ -170,61 +224,34 @@ Flickable {
                     anchors.right: parent.right
                     indexCode: "02.B"
                     title: "VERIFIED HARDWARE THERMAL DIODES & ZONES"
-                    badgeText: ctrl.thermalSensorsModel.length + " SENSORS"
-                    badgeColor: theme.statusInfo
+                    badgeText: "READ-ONLY"
                 }
 
-                Column {
+                Flickable {
                     anchors.top: sensHdr.bottom
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.bottom: parent.bottom
                     anchors.margins: 10
-                    spacing: 6
+                    contentWidth: width
+                    contentHeight: sensCol.implicitHeight
+                    clip: true
 
-                    Repeater {
-                        model: ctrl.thermalSensorsModel
-                        delegate: Rectangle {
-                            width: parent.width
-                            height: 30
-                            color: theme.surfaceElevated
-                            border.width: 1
-                            border.color: theme.borderSubtle
+                    Column {
+                        id: sensCol
+                        width: parent.width
+                        spacing: 6
 
-                            Row {
-                                anchors.fill: parent
-                                anchors.leftMargin: 10
-                                anchors.rightMargin: 10
-
-                                Text {
-                                    width: parent.width * 0.52
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    elide: Text.ElideRight
-                                    text: modelData.label
-                                    font.family: "sans-serif"
-                                    font.pixelSize: 12
-                                    color: theme.textPrimary
-                                }
-
-                                Text {
-                                    width: parent.width * 0.24
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: "[" + modelData.sourceDriver + "]"
-                                    font.family: "monospace"
-                                    font.pixelSize: 10
-                                    color: theme.textMuted
-                                }
-
-                                Text {
-                                    width: parent.width * 0.24
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    horizontalAlignment: Text.AlignRight
-                                    text: modelData.tempC.toFixed(1) + " °C"
-                                    font.family: "monospace"
-                                    font.pixelSize: 12
-                                    font.weight: Font.Bold
-                                    color: modelData.tempC >= 80 ? theme.statusWarning : theme.accentReadable
-                                }
+                        Repeater {
+                            model: ctrl.thermalSensorsModel
+                            delegate: TelemetryLoadRow {
+                                width: parent.width
+                                label: modelData.label
+                                sourceTag: modelData.sourceDriver
+                                fraction: Math.max(0.0, (modelData.tempC - 25.0) / 75.0)
+                                warningThreshold: 0.67
+                                criticalThreshold: 0.80
+                                valueText: modelData.tempC.toFixed(1) + " °C"
                             }
                         }
                     }

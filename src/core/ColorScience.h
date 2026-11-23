@@ -46,6 +46,7 @@ public:
 
     static QString rgbToHex(const RgbColor& rgb);
     static bool parseHexToRgb(const QString& hexString, RgbColor& outRgb);
+    static bool parseStrictHex6ToRgb(const QString& hexString, RgbColor& outRgb);
 
     // WCAG 2.1 relative luminance in [0.0, 1.0]
     static double relativeLuminance(const QColor& color);

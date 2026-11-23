@@ -10,6 +10,15 @@ Flickable {
 
     property int stagedThreshold: ctrl.batChargeThresholdPct
 
+    Connections {
+        target: ctrl
+        function onTelemetryUpdated() {
+            if (ctrl.batChargeLimitSupported) {
+                root.stagedThreshold = ctrl.batChargeThresholdPct;
+            }
+        }
+    }
+
     Column {
         id: batCol
         anchors.top: parent.top
@@ -18,13 +27,10 @@ Flickable {
         anchors.margins: 16
         spacing: 14
 
-        // 01 // POWER SUPPLY & BATTERY TELEMETRY
-        Rectangle {
+        // 01 // POWER SUPPLY & BATTERY TELEMETRY WITH PROVENANCE TAGS (Section 3.2)
+        IndustrialPanel {
             width: parent.width
-            height: 156
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
+            height: batHdr.height + batTelCol.implicitHeight + 24
 
             SectionHeader {
                 id: batHdr
@@ -32,65 +38,110 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "01"
-                title: "BATTERY & POWER SUPPLY SUBSYSTEM (/SYS/CLASS/POWER_SUPPLY/BAT0 & AC)"
-                badgeText: ctrl.acOnline ? "AC ADAPTER ONLINE" : "ON BATTERY POWER"
-                badgeColor: ctrl.acOnline ? theme.statusNominal : theme.statusWarning
+                title: "BATTERY TELEMETRY & PROVENANCE (/SYS/CLASS/POWER_SUPPLY/BAT0 & AC)"
+                badgeText: "READ-ONLY"
             }
 
-            Row {
+            Column {
+                id: batTelCol
                 anchors.top: batHdr.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.margins: 14
-                spacing: 20
+                anchors.margins: 12
+                spacing: 10
 
-                Column {
-                    width: parent.width * 0.23
-                    spacing: 4
-                    Text { text: "STATE OF CHARGE"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.batCapacityPct + " %"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: theme.accentReadable }
-                    Text { text: "STATUS: " + ctrl.batStatus.toUpperCase(); font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
+                Grid {
+                    width: parent.width
+                    columns: width >= 880 ? 4 : 2
+                    spacing: 10
+
+                    Rectangle {
+                        width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                        height: 82
+                        radius: theme.radiusStructural
+                        color: theme.surfaceElevated
+                        border.width: 1; border.color: theme.borderSubtle
+                        Column {
+                            anchors.fill: parent; anchors.margins: 10; spacing: 3
+                            Text { text: "DIRECT FUEL-GAUGE SOC"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.technicalCyan }
+                            Text { text: ctrl.batCapacityPct + " %"; font.family: theme.fontMono; font.pixelSize: 26; font.weight: Font.Bold; color: theme.accentReadable }
+                            Text { text: ctrl.batStatus.toUpperCase() + " (" + ctrl.batChargeNowAh.toFixed(2) + " Ah)"; font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary }
+                        }
+                    }
+
+                    Rectangle {
+                        width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                        height: 82
+                        radius: theme.radiusStructural
+                        color: theme.surfaceElevated
+                        border.width: 1; border.color: theme.borderSubtle
+                        Column {
+                            anchors.fill: parent; anchors.margins: 10; spacing: 3
+                            Text { text: "DERIVED POWER (V × I)"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.textMuted }
+                            Text { text: ctrl.batPowerW.toFixed(1) + " W"; font.family: theme.fontMono; font.pixelSize: 26; font.weight: Font.Bold; color: theme.textPrimary }
+                            Text { text: ctrl.batVoltageV.toFixed(2) + " V  |  " + ctrl.batCurrentA.toFixed(2) + " A"; font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary }
+                        }
+                    }
+
+                    Rectangle {
+                        width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                        height: 82
+                        radius: theme.radiusStructural
+                        color: theme.surfaceElevated
+                        border.width: 1; border.color: theme.borderSubtle
+                        Column {
+                            anchors.fill: parent; anchors.margins: 10; spacing: 3
+                            Text { text: "EST. CAPACITY RATIO"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.statusWarning }
+                            Text {
+                                text: ctrl.batWearHealthPct.toFixed(1) + " %"
+                                font.family: theme.fontMono; font.pixelSize: 26; font.weight: Font.Bold
+                                color: ctrl.batWearHealthPct >= 75 ? theme.telemetryLime : theme.statusWarning
+                            }
+                            Text { text: ctrl.batChargeFullAh.toFixed(2) + " / " + ctrl.batChargeDesignAh.toFixed(2) + " Ah (Est.)"; font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary }
+                        }
+                    }
+
+                    Rectangle {
+                        width: (parent.width - (parent.columns - 1) * 10) / parent.columns
+                        height: 82
+                        radius: theme.radiusStructural
+                        color: theme.surfaceElevated
+                        border.width: 1; border.color: theme.borderSubtle
+                        Column {
+                            anchors.fill: parent; anchors.margins: 10; spacing: 3
+                            Text { text: "AC MAINS & CHEMISTRY"; font.family: theme.fontMono; font.pixelSize: 9; color: theme.textMuted }
+                            Text {
+                                text: ctrl.acOnline ? "AC ONLINE" : "ON BATTERY"
+                                font.family: theme.fontMono; font.pixelSize: 20; font.weight: Font.Bold
+                                color: ctrl.acOnline ? theme.telemetryLime : theme.statusWarning
+                            }
+                            Text { text: ctrl.batTechnology + "  ·  CYCLES: " + ctrl.batCycleCountText; font.family: theme.fontMono; font.pixelSize: 10; color: theme.textSecondary }
+                        }
+                    }
                 }
 
-                Column {
-                    width: parent.width * 0.24
-                    spacing: 4
-                    Text { text: "ELECTRICAL TELEMETRY"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.batPowerW.toFixed(1) + " W"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: theme.textPrimary }
-                    Text { text: ctrl.batVoltageV.toFixed(2) + " V  |  " + ctrl.batCurrentA.toFixed(2) + " A"; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                }
-
-                Column {
-                    width: parent.width * 0.25
-                    spacing: 4
-                    Text { text: "EST. CAPACITY RATIO (FULL / DESIGN)"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.batWearHealthPct.toFixed(1) + " %"; font.family: "monospace"; font.pixelSize: 28; font.weight: Font.Bold; color: ctrl.batWearHealthPct >= 75 ? theme.statusNominal : theme.statusWarning }
-                    Text { text: "Full: " + ctrl.batChargeFullAh.toFixed(2) + " Ah | Design: " + ctrl.batChargeDesignAh.toFixed(2) + " Ah"; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
-                }
-
-                Column {
-                    width: parent.width * 0.20
-                    spacing: 4
-                    Text { text: "CHEMISTRY & CYCLES"; font.family: "monospace"; font.pixelSize: 10; color: theme.textSecondary }
-                    Text { text: ctrl.batTechnology; font.family: "monospace"; font.pixelSize: 24; font.weight: Font.Bold; color: theme.textPrimary }
-                    Text { text: "CYCLE COUNT: " + ctrl.batCycleCount; font.family: "monospace"; font.pixelSize: 11; color: theme.textSecondary }
+                TelemetryLoadRow {
+                    width: parent.width
+                    label: "Current State of Charge vs Configured Policy Limit"
+                    sourceTag: ctrl.batChargeLimitSupported ? ("LIMIT " + ctrl.batChargeThresholdPct + "%") : "UNCONFIGURED (100%)"
+                    fraction: ctrl.batCapacityPct / 100.0
+                    customFillColor: theme.telemetryLimeBar
+                    valueText: ctrl.batCapacityPct + "%  (SOC)"
                 }
             }
         }
 
-        // 02 // CHARGE THRESHOLD & DISPLAY BACKLIGHT CONTROLS
+        // 02 // CHARGE THRESHOLD CONTROL & INTERNAL DISPLAY LUMINANCE
         Grid {
             width: parent.width
             columns: width >= 920 ? 2 : 1
             spacing: 12
 
-            Rectangle {
+            IndustrialPanel {
                 width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
-                height: 224
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+                height: parent.columns === 2
+                        ? Math.max(limHdr.height + limBody.implicitHeight + 24, blHdr.height + blBody.implicitHeight + 24)
+                        : (limHdr.height + limBody.implicitHeight + 24)
 
                 SectionHeader {
                     id: limHdr
@@ -98,30 +149,59 @@ Flickable {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     indexCode: "02.A"
-                    title: "BATTERY CHARGE LIMIT THRESHOLD (80% CARE MODE)"
-                    badgeText: ctrl.batChargeLimitSupported ? "FULL RW" : "NOT DETECTED"
-                    badgeColor: ctrl.batChargeLimitSupported ? theme.statusNominal : theme.statusWarning
+                    title: "BATTERY CARE CHARGE THRESHOLD"
+                    badgeText: ctrl.batCapabilityBadge
+                    hazardStripe: !ctrl.batChargeLimitSupported
                 }
 
                 Column {
+                    id: limBody
                     anchors.top: limHdr.bottom
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.margins: 14
-                    spacing: 12
+                    anchors.margins: 12
+                    spacing: 10
 
                     Text {
                         width: parent.width
                         wrapMode: Text.WordWrap
                         text: ctrl.batStatusExplanation
-                        font.family: "sans-serif"
+                        font.family: theme.fontSans
                         font.pixelSize: 12
                         color: theme.textSecondary
                     }
 
+                    Row {
+                        width: parent.width
+                        spacing: 12
+
+                        Text {
+                            height: 34
+                            verticalAlignment: Text.AlignVCenter
+                            text: "80% BATTERY CARE MODE:"
+                            font.family: theme.fontMono
+                            font.pixelSize: 11
+                            font.weight: Font.Bold
+                            color: theme.textPrimary
+                        }
+
+                        SegmentedPillToggle {
+                            width: 190
+                            leftLabel: "100% FULL"
+                            rightLabel: "80% CARE"
+                            rightActive: ctrl.batChargeLimitSupported && ctrl.batChargeThresholdPct <= 80
+                            enabledState: ctrl.batChargeLimitSupported
+                            onToggled: function(careOn) {
+                                var target = careOn ? 80 : 100;
+                                root.stagedThreshold = target;
+                                ctrl.applyBatteryChargeLimit(target);
+                            }
+                        }
+                    }
+
                     AtelierSlider {
                         width: parent.width
-                        label: "Charge Control End Threshold"
+                        label: ctrl.batChargeLimitSupported ? "Charge Control End Threshold" : "Charge End Threshold (Not Exposed)"
                         unit: "%"
                         minValue: 50
                         maxValue: 100
@@ -130,40 +210,31 @@ Flickable {
                         onValueCommitted: function(v) { root.stagedThreshold = v; }
                     }
 
-                    Row {
-                        spacing: 10
-                        AtelierButton {
-                            text: "80% BATTERY CARE"
-                            enabledState: ctrl.batChargeLimitSupported
-                            onClicked: {
-                                root.stagedThreshold = 80;
-                                ctrl.applyBatteryChargeLimit(80);
-                            }
-                        }
-                        AtelierButton {
-                            text: "100% FULL TRAVEL CHARGE"
-                            enabledState: ctrl.batChargeLimitSupported
-                            onClicked: {
-                                root.stagedThreshold = 100;
-                                ctrl.applyBatteryChargeLimit(100);
-                            }
-                        }
+                    Flow {
+                        width: parent.width
+                        spacing: 8
+
                         AtelierButton {
                             text: "APPLY THRESHOLD (" + root.stagedThreshold + "%)"
                             enabledState: ctrl.batChargeLimitSupported
                             primaryAccent: ctrl.batChargeLimitSupported
                             onClicked: ctrl.applyBatteryChargeLimit(root.stagedThreshold)
                         }
+
+                        AtelierButton {
+                            text: "RESTORE PREVIOUS (" + ctrl.batPreviousThresholdPct + "%)"
+                            enabledState: ctrl.batChargeLimitSupported
+                            onClicked: ctrl.restorePreviousBatteryChargeLimit()
+                        }
                     }
                 }
             }
 
-            Rectangle {
+            IndustrialPanel {
                 width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
-                height: 224
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+                height: parent.columns === 2
+                        ? Math.max(limHdr.height + limBody.implicitHeight + 24, blHdr.height + blBody.implicitHeight + 24)
+                        : (blHdr.height + blBody.implicitHeight + 24)
 
                 SectionHeader {
                     id: blHdr
@@ -171,23 +242,23 @@ Flickable {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     indexCode: "02.B"
-                    title: "INTERNAL eDP BACKLIGHT (INTEL_BACKLIGHT)"
-                    badgeText: ctrl.displayBrightnessSupported ? "FULL RW (48,000 STEPS)" : "NOT DETECTED"
-                    badgeColor: ctrl.displayBrightnessSupported ? theme.statusNominal : theme.textMuted
+                    title: "INTERNAL eDP DISPLAY LUMINANCE (INTEL_BACKLIGHT)"
+                    badgeText: ctrl.displayBrightnessSupported ? "FULL RW" : "NOT DETECTED"
                 }
 
                 Column {
+                    id: blBody
                     anchors.top: blHdr.bottom
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.margins: 14
-                    spacing: 14
+                    anchors.margins: 12
+                    spacing: 12
 
                     Text {
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        text: "Controls `/sys/class/backlight/intel_backlight` via `systemd-logind` (`org.freedesktop.login1.Session.SetBrightness`) with zero custom root escalation."
-                        font.family: "sans-serif"
+                        text: "Controls `/sys/class/backlight/intel_backlight` via unprivileged `systemd-logind` (`org.freedesktop.login1.Session.SetBrightness`, 48,000 hardware steps)."
+                        font.family: theme.fontSans
                         font.pixelSize: 12
                         color: theme.textSecondary
                     }
@@ -203,40 +274,22 @@ Flickable {
                         onValueCommitted: function(v) { ctrl.applyDisplayBrightness(v); }
                     }
 
-                    Row {
-                        spacing: 10
-                        AtelierButton {
-                            text: "25% LOW LIGHT"
-                            enabledState: ctrl.displayBrightnessSupported
-                            onClicked: ctrl.applyDisplayBrightness(25)
-                        }
-                        AtelierButton {
-                            text: "50% STUDIO"
-                            enabledState: ctrl.displayBrightnessSupported
-                            onClicked: ctrl.applyDisplayBrightness(50)
-                        }
-                        AtelierButton {
-                            text: "80% DAYLIGHT"
-                            enabledState: ctrl.displayBrightnessSupported
-                            onClicked: ctrl.applyDisplayBrightness(80)
-                        }
-                        AtelierButton {
-                            text: "100% PEAK"
-                            enabledState: ctrl.displayBrightnessSupported
-                            onClicked: ctrl.applyDisplayBrightness(100)
-                        }
+                    Flow {
+                        width: parent.width
+                        spacing: 8
+                        AtelierButton { text: "25% LOW"; enabledState: ctrl.displayBrightnessSupported; onClicked: ctrl.applyDisplayBrightness(25) }
+                        AtelierButton { text: "50% CAD"; enabledState: ctrl.displayBrightnessSupported; onClicked: ctrl.applyDisplayBrightness(50) }
+                        AtelierButton { text: "80% DAY"; enabledState: ctrl.displayBrightnessSupported; onClicked: ctrl.applyDisplayBrightness(80) }
+                        AtelierButton { text: "100% MAX"; enabledState: ctrl.displayBrightnessSupported; onClicked: ctrl.applyDisplayBrightness(100) }
                     }
                 }
             }
         }
 
         // 03 // BATTERY DISCHARGE / CHARGE POWER HISTORY
-        Rectangle {
+        IndustrialPanel {
             width: parent.width
             height: 224
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
 
             SectionHeader {
                 id: pwrChartHdr
@@ -246,7 +299,6 @@ Flickable {
                 indexCode: "03"
                 title: "BATTERY ELECTRICAL POWER TRACE (V × I WATTS, 60S ROLLING)"
                 badgeText: "WATTS (W)"
-                badgeColor: theme.accentReadable
             }
 
             TelemetryStripChart {

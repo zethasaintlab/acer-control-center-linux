@@ -333,7 +333,7 @@ core::ControlResult ControlOperations::applyKeyboardLighting(
         return res;
     }
 
-    // Backend B: Clean-room CLV0001 ACPI _DSM 0x67 preset driver
+    // Backend B: Clean-room CLV0001 ACPI _DSM 0x67 driver (17 presets + Stage 17 static 24-bit custom RGB)
     const core::DmiIdentity dmi = HardwareDiscovery::probeDmiAndWmi();
     const Clv0001Topology clvTopo = Clv0001KeyboardBackend::probeTopology(dmi);
     if (!clvTopo.devicePresent) {
@@ -346,93 +346,179 @@ core::ControlResult ControlOperations::applyKeyboardLighting(
         return res;
     }
 
-    QString presetName;
-    const QString normMode = mode.trimmed();
+    const QString normMode = mode.trimmed().toLower();
     const QString trimmedCsv = zonesHexCsv.trimmed();
     core::Clv0001PresetInfo pInfo;
-    if (normMode.startsWith(QLatin1String("preset:"), Qt::CaseInsensitive)) {
-        presetName = normMode.mid(7).trimmed().toLower();
-    } else if (!trimmedCsv.isEmpty() && Clv0001KeyboardBackend::findPreset(trimmedCsv, pInfo)) {
-        presetName = pInfo.name;
-    } else {
-        if (!clvTopo.driverBound) {
-            res.applied = false;
-            res.errorCode = QStringLiteral("ERR_KEYBOARD_LED_NOT_DETECTED");
-            res.message = QStringLiteral(
-                "No physical keyboard LED device exists under /sys/class/leds and CLV0001 kernel driver `acer_clv0001_kbd` is not bound. "
-                "Profile saved to Keyboard Studio Preview without performing unverified hardware writes."
-            );
-            return res;
-        }
-        const QStringList hexParts = zonesHexCsv.split(QLatin1Char(','), Qt::SkipEmptyParts);
-        std::vector<core::RgbColor> parsedZones;
-        for (const QString& hp : hexParts) {
-            core::RgbColor c;
-            if (!core::ColorScience::parseHexToRgb(hp, c)) {
-                res.errorCode = QStringLiteral("ERR_INVALID_COLOR_HEX");
-                res.message = QStringLiteral("Malformed zone color hex '%1'.").arg(hp);
-                return res;
-            }
-            parsedZones.push_back(c);
-        }
-        if (brightnessPct == 0) {
-            presetName = QStringLiteral("off");
-        } else {
-            const core::RgbColor primary = parsedZones.empty() ? core::RgbColor{0, 255, 255} : parsedZones.front();
-            bool exactMatch = false;
-            const QString candidate = Clv0001KeyboardBackend::findNearestPresetName(primary, &exactMatch);
-            if (!exactMatch) {
-                res.applied = false;
-                res.errorCode = QStringLiteral("ERR_CLV0001_PRESET_REQUIRED");
-                res.verificationStatusId = QStringLiteral("rejected_before_execution");
-                res.message = QStringLiteral(
-                    "CLV0001 ACPI _DSM 0x67 only accepts the 17 verified named presets "
-                    "(nearest preset to %1 is '%2'). Arbitrary 24-bit RGB is not supported by hardware."
-                ).arg(zonesHexCsv, candidate);
-                return res;
-            }
-            presetName = candidate;
-        }
+    if (normMode.startsWith(QLatin1String("preset:"))) {
+        const QString presetName = normMode.mid(7).trimmed().toLower();
+        const int level = (presetName == QLatin1String("off"))
+                              ? 0
+                              : Clv0001KeyboardBackend::brightnessPctToLevel(brightnessPct);
+        return Clv0001KeyboardBackend::applyPresetCommand(dmi, presetName, level);
     }
 
-    const int level = (presetName == QLatin1String("off"))
-                          ? 0
-                          : Clv0001KeyboardBackend::brightnessPctToLevel(brightnessPct);
-    return Clv0001KeyboardBackend::applyPresetCommand(dmi, presetName, level);
+    if (normMode == QLatin1String("off")) {
+        return Clv0001KeyboardBackend::applyPresetCommand(dmi, QStringLiteral("off"), 0);
+    }
+
+    const bool isStaticOrCustomRgb =
+        (normMode == QLatin1String("static") ||
+         normMode == QLatin1String("custom_rgb") ||
+         normMode == QLatin1String("rgb"));
+    if (!isStaticOrCustomRgb) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_UNSUPPORTED_KEYBOARD_MODE");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral(
+            "Keyboard mode '%1' is not supported on CLV0001 hardware (only static presets and static custom RGB are implemented in Stage 18; temporal effects remain deferred)."
+        ).arg(mode);
+        return res;
+    }
+
+    if (normMode == QLatin1String("static") && !trimmedCsv.isEmpty() && Clv0001KeyboardBackend::findPreset(trimmedCsv, pInfo)) {
+        const int level = (pInfo.name == QLatin1String("off"))
+                              ? 0
+                              : Clv0001KeyboardBackend::brightnessPctToLevel(brightnessPct);
+        return Clv0001KeyboardBackend::applyPresetCommand(dmi, pInfo.name, level);
+    }
+
+    if (!clvTopo.driverBound) {
+        res.applied = false;
+        res.errorCode = (normMode == QLatin1String("static"))
+                            ? QStringLiteral("ERR_KEYBOARD_LED_NOT_DETECTED")
+                            : QStringLiteral("ERR_CLV0001_DRIVER_NOT_BOUND");
+        res.message = QStringLiteral(
+            "No physical keyboard LED device exists under /sys/class/leds and CLV0001 kernel driver `acer_clv0001_kbd` is not bound. "
+            "Profile saved to Keyboard Studio Preview without performing unverified hardware writes."
+        );
+        return res;
+    }
+
+    // Parse either explicit RGB triple ("R,G,B" or "R G B") or strict #RRGGBB HEX
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+    const QString firstToken = trimmedCsv.split(QLatin1Char(','), Qt::SkipEmptyParts).value(0).trimmed();
+    const QStringList commaParts = trimmedCsv.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    const QStringList spaceParts = trimmedCsv.simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    const bool looksLikeNumericTriple =
+        (commaParts.size() == 3 && !trimmedCsv.contains(QLatin1Char('#'))) ||
+        (commaParts.size() == 1 && spaceParts.size() == 3 && !trimmedCsv.contains(QLatin1Char('#')));
+
+    if (looksLikeNumericTriple) {
+        const QStringList& rgbTokens = (commaParts.size() == 3) ? commaParts : spaceParts;
+        bool okR = false, okG = false, okB = false;
+        red = rgbTokens.at(0).trimmed().toInt(&okR);
+        green = rgbTokens.at(1).trimmed().toInt(&okG);
+        blue = rgbTokens.at(2).trimmed().toInt(&okB);
+        if (!okR || !okG || !okB || red < 0 || red > 255 || green < 0 || green > 255 || blue < 0 || blue > 255) {
+            res.applied = false;
+            res.errorCode = QStringLiteral("ERR_INVALID_RGB_CHANNEL");
+            res.verificationStatusId = QStringLiteral("rejected_before_execution");
+            res.message = QStringLiteral("Invalid RGB triple '%1' (channels must be integers in [0, 255]).").arg(trimmedCsv);
+            return res;
+        }
+    } else {
+        core::RgbColor parsed;
+        if (!core::ColorScience::parseStrictHex6ToRgb(firstToken, parsed)) {
+            res.applied = false;
+            res.errorCode = QStringLiteral("ERR_INVALID_COLOR_HEX");
+            res.verificationStatusId = QStringLiteral("rejected_before_execution");
+            res.message = QStringLiteral("Malformed HEX color '%1' — expected #RRGGBB (six hexadecimal digits after '#').").arg(firstToken);
+            return res;
+        }
+        red = parsed.r;
+        green = parsed.g;
+        blue = parsed.b;
+    }
+
+    const int level = Clv0001KeyboardBackend::brightnessPctToLevel(brightnessPct);
+    return Clv0001KeyboardBackend::applyCustomRgbCommand(dmi, red, green, blue, level);
 }
 
 core::ControlResult ControlOperations::applyBatteryChargeLimit(int endThresholdPct, int& outReadbackPct) {
     core::ControlResult res;
     outReadbackPct = 100;
 
-    if (endThresholdPct < 50 || endThresholdPct > 100) {
-        res.errorCode = QStringLiteral("ERR_INVALID_THRESHOLD");
-        res.message = QStringLiteral("Battery charge threshold %1% is outside safe range [50%, 100%].").arg(endThresholdPct);
-        return res;
-    }
-
-    const QString limitPath = SysfsRoot::instance().resolvePath(
-        QStringLiteral("/sys/class/power_supply/BAT0/charge_control_end_threshold")
-    );
+    const auto& root = SysfsRoot::instance();
+    const QString batBase = root.resolvePath(QStringLiteral("/sys/class/power_supply/BAT0"));
+    const QString limitPath = batBase + QStringLiteral("/charge_control_end_threshold");
     if (!QFileInfo::exists(limitPath)) {
         res.applied = false;
         res.errorCode = QStringLiteral("ERR_CHARGE_LIMIT_NOT_DETECTED");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
         res.message = QStringLiteral("charge_control_end_threshold is not exposed by the kernel on BAT0.");
         return res;
     }
 
-    QString rb, err;
-    if (!SysfsRoot::writeFileVerified(limitPath, QString::number(endThresholdPct), &rb, &err)) {
-        res.errorCode = QStringLiteral("ERR_CHARGE_LIMIT_WRITE");
-        res.message = err;
+    int minAllowed = 50;
+    bool okStart = false;
+    const int startThreshold = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/charge_control_start_threshold"), &okStart).toInt(&okStart);
+    if (okStart && startThreshold >= 50 && startThreshold <= 95) {
+        minAllowed = startThreshold;
+    }
+
+    if (endThresholdPct < minAllowed || endThresholdPct > 100) {
+        res.errorCode = QStringLiteral("ERR_INVALID_THRESHOLD");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral("Battery charge threshold %1% is outside safe supported range [%2%, 100%].")
+                          .arg(endThresholdPct)
+                          .arg(minAllowed);
         return res;
     }
 
-    outReadbackPct = rb.toInt();
+    bool okPrev = false;
+    const int parsedPrev = SysfsRoot::readFileTrimmed(limitPath, &okPrev).toInt(&okPrev);
+    const int prevPct = (okPrev && parsedPrev >= 50 && parsedPrev <= 100) ? parsedPrev : 100;
+
+    int writeValue = endThresholdPct;
+    if (root.isMockActive()) {
+        bool okStep = false;
+        const int step = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/mock_charge_limit_step"), &okStep).toInt(&okStep);
+        if (okStep && step > 1) {
+            writeValue = std::clamp(((endThresholdPct + step / 2) / step) * step, minAllowed, 100);
+        }
+    }
+
+    QString rb, err;
+    const bool exactWriteOk = SysfsRoot::writeFileVerified(limitPath, QString::number(writeValue), &rb, &err);
+    bool okRb = false;
+    const int rbPct = rb.trimmed().toInt(&okRb);
+    const bool validDriverRoundedReadback =
+        !exactWriteOk &&
+        err.startsWith(QLatin1String("Readback mismatch")) &&
+        okRb &&
+        rbPct >= minAllowed &&
+        rbPct <= 100 &&
+        std::abs(rbPct - endThresholdPct) <= 10;
+
+    if ((!exactWriteOk && !validDriverRoundedReadback) || !okRb || rbPct < minAllowed || rbPct > 100) {
+        SysfsRoot::writeFileVerified(limitPath, QString::number(prevPct));
+        res.errorCode = QStringLiteral("ERR_CHARGE_LIMIT_WRITE");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = err.isEmpty()
+                          ? QStringLiteral("Invalid battery charge limit readback '%1'; restored previous %2%.").arg(rb).arg(prevPct)
+                          : err;
+        return res;
+    }
+
+    outReadbackPct = rbPct;
     res.applied = true;
+    res.physicalStateVerified = true;
     res.errorCode = QStringLiteral("OK");
-    res.readbackSummary = rb;
-    res.message = QStringLiteral("Battery charge end threshold verified at %1%.").arg(outReadbackPct);
+    res.readbackSummary = QString::number(rbPct);
+    const bool rounded = (rbPct != endThresholdPct);
+    res.verificationStatusId = rounded
+                                   ? QStringLiteral("verified_physical_readback_rounded")
+                                   : QStringLiteral("verified_physical_readback");
+    res.message = rounded
+                      ? QStringLiteral("Battery charge end threshold verified at %1% (driver rounded requested %2%; previous=%3%).")
+                            .arg(outReadbackPct)
+                            .arg(endThresholdPct)
+                            .arg(prevPct)
+                      : QStringLiteral("Battery charge end threshold verified at %1% (previous=%2%).")
+                            .arg(outReadbackPct)
+                            .arg(prevPct);
     core::DiagnosticRedactor::instance().appendLog(QStringLiteral("INFO"), QStringLiteral("POWER"), res.message);
     return res;
 }

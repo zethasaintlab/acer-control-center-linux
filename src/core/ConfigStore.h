@@ -12,7 +12,7 @@ namespace acc::core {
 struct AppSettings {
     int schemaVersion = 1;
     bool darkTheme = true;
-    QString accentColorHex = QStringLiteral("#3B9EFF");
+    QString accentColorHex = QStringLiteral("#FFEA00");
     int pollingIntervalMs = 1000; // 500, 1000, 2000, 5000
     bool reducedMotion = false;
     bool compactNavigation = false;

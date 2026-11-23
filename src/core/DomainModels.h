@@ -160,8 +160,11 @@ struct BatteryTelemetry {
     double chargeFullDesignAh = 0.0;
     double wearHealthPct = 0.0;
     int cycleCount = 0;
+    bool cycleCountReported = false;
+    QString cycleCountLabel = QStringLiteral("NOT REPORTED");
     bool chargeLimitSupported = false;
     int chargeEndThresholdPct = 100;
+    int previousChargeEndThresholdPct = 100;
     QString chargeLimitSysfsPath;
     QString statusExplanation;
 };

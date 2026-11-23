@@ -195,6 +195,24 @@ bool ColorScience::parseHexToRgb(const QString& hexString, RgbColor& outRgb) {
     return true;
 }
 
+bool ColorScience::parseStrictHex6ToRgb(const QString& hexString, RgbColor& outRgb) {
+    const QString trimmed = hexString.trimmed();
+    static const QRegularExpression kStrictHex6Regex(QStringLiteral("^#[0-9A-Fa-f]{6}$"));
+    if (!kStrictHex6Regex.match(trimmed).hasMatch()) {
+        return false;
+    }
+
+    bool okR = false, okG = false, okB = false;
+    const int r = trimmed.mid(1, 2).toInt(&okR, 16);
+    const int g = trimmed.mid(3, 2).toInt(&okG, 16);
+    const int b = trimmed.mid(5, 2).toInt(&okB, 16);
+    if (!okR || !okG || !okB) {
+        return false;
+    }
+    outRgb = clampRgb(r, g, b);
+    return true;
+}
+
 double ColorScience::relativeLuminance(const QColor& color) {
     if (!color.isValid()) {
         return 0.0;
@@ -214,9 +232,9 @@ double ColorScience::contrastRatio(const QColor& c1, const QColor& c2) {
 }
 
 AccentTokenSet ColorScience::deriveAccessibleAccentTokens(const QColor& rawAccent, bool darkTheme) {
-    const QColor validAccent = rawAccent.isValid() ? rawAccent : QColor(QStringLiteral("#3B9EFF"));
-    const QColor surfaceBg = darkTheme ? QColor(QStringLiteral("#13161B")) : QColor(QStringLiteral("#FFFFFF"));
-    const QColor darkInk(QStringLiteral("#0D0F12"));
+    const QColor validAccent = rawAccent.isValid() ? rawAccent : QColor(QStringLiteral("#FFEA00"));
+    const QColor surfaceBg = darkTheme ? QColor(QStringLiteral("#222524")) : QColor(QStringLiteral("#D8DCDF"));
+    const QColor darkInk(QStringLiteral("#141618"));
     const QColor lightInk(QStringLiteral("#FFFFFF"));
 
     AccentTokenSet tokens;

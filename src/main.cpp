@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPainter>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -181,6 +182,9 @@ int main(int argc, char* argv[]) {
         batObj.insert(QStringLiteral("chargeFullAh"), controller.batChargeFullAh());
         batObj.insert(QStringLiteral("chargeDesignAh"), controller.batChargeDesignAh());
         batObj.insert(QStringLiteral("wearHealthPct"), controller.batWearHealthPct());
+        batObj.insert(QStringLiteral("cycleCount"), controller.batCycleCount());
+        batObj.insert(QStringLiteral("cycleCountReported"), controller.batCycleCountReported());
+        batObj.insert(QStringLiteral("cycleCountLabel"), controller.batCycleCountText());
         batObj.insert(QStringLiteral("chargeLimitSupported"), controller.batChargeLimitSupported());
         batObj.insert(QStringLiteral("explanation"), controller.batStatusExplanation());
         root.insert(QStringLiteral("battery"), batObj);
@@ -276,34 +280,133 @@ int main(int argc, char* argv[]) {
 
         themeEngine.setReducedMotion(true);
         themeEngine.setDarkTheme(true);
-        themeEngine.setAccentFromHex(QStringLiteral("#3B9EFF"));
+        themeEngine.setAccentFromHex(QStringLiteral("#FFEA00"));
 
         QTimer::singleShot(250, &app, [dir, viewNames, topWin, &controller, &themeEngine]() {
+            QStringList canonicalShots;
+            auto captureView = [&](const QString& fileName, bool recordInSheet = false) {
+                QCoreApplication::processEvents();
+                QCoreApplication::processEvents();
+                topWin->grabWindow().save(dir.filePath(fileName));
+                if (recordInSheet) {
+                    canonicalShots.append(fileName);
+                }
+            };
+
+            topWin->resize(1920, 1080);
             for (int i = 0; i < viewNames.size(); ++i) {
                 controller.setCurrentTabIndex(i);
-                QCoreApplication::processEvents();
-                const QImage img = topWin->grabWindow();
-                img.save(dir.filePath(viewNames.at(i) + QStringLiteral("-dark.png")));
+                captureView(viewNames.at(i) + QStringLiteral("-dark.png"), true);
             }
 
-            // Capture Light Theme ("Anodized Aluminum") + Custom Emerald Accent on Overview, Keyboard Studio, and Settings
+            // Capture full-resolution (1920x1080) Light CAD Schematic ("#D8DCDF") for all 8 views + canonical Light captures
             themeEngine.setDarkTheme(false);
-            themeEngine.setAccentFromHex(QStringLiteral("#168A56"));
+            themeEngine.setAccentFromHex(QStringLiteral("#FFEA00"));
+            for (int i = 0; i < viewNames.size(); ++i) {
+                controller.setCurrentTabIndex(i);
+                captureView(viewNames.at(i) + QStringLiteral("-light.png"), false);
+            }
+
             controller.setCurrentTabIndex(0);
-            QCoreApplication::processEvents();
-            topWin->grabWindow().save(dir.filePath(QStringLiteral("09-overview-light-custom-accent.png")));
+            captureView(QStringLiteral("09-overview-light-custom-accent.png"), true);
 
             controller.setCurrentTabIndex(3);
-            QCoreApplication::processEvents();
-            topWin->grabWindow().save(dir.filePath(QStringLiteral("10-keyboard-studio-light.png")));
+            captureView(QStringLiteral("10-keyboard-studio-light.png"), true);
 
             controller.setCurrentTabIndex(7);
-            QCoreApplication::processEvents();
-            topWin->grabWindow().save(dir.filePath(QStringLiteral("11-settings-light-wcag.png")));
+            captureView(QStringLiteral("11-settings-light-wcag.png"), true);
 
-            // Restore Dark theme default before exit
+            // Multi-resolution & state QA captures (1366x768, 1600x900, 1920x1080, 2560x1440)
             themeEngine.setDarkTheme(true);
-            themeEngine.setAccentFromHex(QStringLiteral("#3B9EFF"));
+            themeEngine.setAccentFromHex(QStringLiteral("#FFEA00"));
+
+            topWin->resize(1366, 768);
+            controller.setCurrentTabIndex(0);
+            captureView(QStringLiteral("12-overview-1366x768.png"), true);
+
+            topWin->resize(1600, 900);
+            controller.setCurrentTabIndex(2);
+            captureView(QStringLiteral("13-thermal-1600x900.png"), true);
+
+            topWin->resize(1920, 1080);
+            controller.setCurrentTabIndex(4);
+            captureView(QStringLiteral("14-battery-1920x1080.png"), true);
+
+            topWin->resize(2560, 1440);
+            controller.setCurrentTabIndex(6);
+            captureView(QStringLiteral("15-diagnostics-2560x1440.png"), true);
+
+            topWin->resize(1920, 1080);
+            controller.setCurrentTabIndex(3);
+            controller.setKbdColorFromHex(QStringLiteral("#12A7E3"));
+            controller.setKbdBrightnessLevel(4);
+            captureView(QStringLiteral("16-keyboard-clv0001-rgb-1920x1080.png"), true);
+
+            // Generate 4x4 readable contact sheet containing all 16 canonical QA images
+            constexpr int kSheetW = 3200;
+            constexpr int kSheetH = 2048;
+            constexpr int kCols = 4;
+            constexpr int kRows = 4;
+            constexpr int kOuterPad = 24;
+            constexpr int kHeaderH = 44;
+            constexpr int kGap = 18;
+            const int cellW = (kSheetW - 2 * kOuterPad - (kCols - 1) * kGap) / kCols;
+            const int cellH = (kSheetH - 2 * kOuterPad - kHeaderH - (kRows - 1) * kGap) / kRows;
+
+            QImage sheet(kSheetW, kSheetH, QImage::Format_ARGB32);
+            sheet.fill(QColor(QStringLiteral("#161818")));
+            QPainter sp(&sheet);
+            sp.setRenderHint(QPainter::Antialiasing, true);
+            sp.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+            QFont hdrFont(QStringLiteral("JetBrains Mono"), 13, QFont::Bold);
+            sp.setFont(hdrFont);
+            sp.setPen(QColor(QStringLiteral("#FFEA00")));
+            sp.drawText(QRect(kOuterPad, kOuterPad, kSheetW - 2 * kOuterPad, 30),
+                        Qt::AlignLeft | Qt::AlignVCenter,
+                        QStringLiteral("ACER CONTROL CENTER // STAGE 21.1 VISUAL ACCEPTANCE CONTACT SHEET (16 CANONICAL VIEWS)"));
+
+            QFont labelFont(QStringLiteral("JetBrains Mono"), 10, QFont::Bold);
+            sp.setFont(labelFont);
+            for (int idx = 0; idx < canonicalShots.size() && idx < kCols * kRows; ++idx) {
+                const int col = idx % kCols;
+                const int row = idx / kCols;
+                const int cx = kOuterPad + col * (cellW + kGap);
+                const int cy = kOuterPad + kHeaderH + row * (cellH + kGap);
+                const QRect cellRect(cx, cy, cellW, cellH);
+
+                sp.fillRect(cellRect, QColor(QStringLiteral("#222524")));
+                sp.fillRect(QRect(cx, cy, cellW, 26), QColor(QStringLiteral("#1B1E1D")));
+
+                const QRect badgeRect(cx + 6, cy + 4, 28, 18);
+                sp.fillRect(badgeRect, QColor(QStringLiteral("#FFEA00")));
+                sp.setPen(QColor(QStringLiteral("#141618")));
+                sp.drawText(badgeRect, Qt::AlignCenter, QStringLiteral("%1").arg(idx + 1, 2, 10, QLatin1Char('0')));
+
+                sp.setPen(QColor(QStringLiteral("#F0F2F2")));
+                sp.drawText(QRect(cx + 42, cy + 2, cellW - 48, 22),
+                            Qt::AlignLeft | Qt::AlignVCenter,
+                            canonicalShots.at(idx));
+
+                const QImage thumb(dir.filePath(canonicalShots.at(idx)));
+                if (!thumb.isNull()) {
+                    const QRect imgTarget(cx + 4, cy + 30, cellW - 8, cellH - 34);
+                    const QSize scaled = thumb.size().scaled(imgTarget.size(), Qt::KeepAspectRatio);
+                    const QRect aligned(
+                        imgTarget.x() + (imgTarget.width() - scaled.width()) / 2,
+                        imgTarget.y() + (imgTarget.height() - scaled.height()) / 2,
+                        scaled.width(),
+                        scaled.height()
+                    );
+                    sp.drawImage(aligned, thumb);
+                }
+
+                sp.setPen(QPen(QColor(QStringLiteral("#3E4443")), 1));
+                sp.drawRect(cellRect.adjusted(0, 0, -1, -1));
+            }
+            sp.end();
+            sheet.save(dir.filePath(QStringLiteral("00-contact-sheet-stage21.png")));
+
             QCoreApplication::quit();
         });
     }

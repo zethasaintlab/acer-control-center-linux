@@ -143,6 +143,38 @@ bool Clv0001KeyboardBackend::buildFirmwarePayload(
     return true;
 }
 
+bool Clv0001KeyboardBackend::buildCustomRgbFirmwarePayload(
+    int r,
+    int g,
+    int b,
+    int brightnessLevel,
+    std::array<uint8_t, 4>& outPayload,
+    QString* outError
+) {
+    outPayload = { 0x00U, 0x00U, 0x00U, kCommandByte };
+
+    if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255) {
+        if (outError) {
+            *outError = QStringLiteral("RGB channels (%1, %2, %3) are out of range [0..255].").arg(r).arg(g).arg(b);
+        }
+        return false;
+    }
+
+    if (brightnessLevel < 0 || brightnessLevel > 4) {
+        if (outError) {
+            *outError = QStringLiteral("CLV0001 discrete brightness level %1 is out of range [0..4].").arg(brightnessLevel);
+        }
+        return false;
+    }
+
+    const uint8_t scale = brightnessScaleForLevel(brightnessLevel);
+    outPayload[0] = static_cast<uint8_t>((static_cast<uint32_t>(g) * scale) / 0xBFU);
+    outPayload[1] = static_cast<uint8_t>((static_cast<uint32_t>(r) * scale) / 0xBFU);
+    outPayload[2] = static_cast<uint8_t>((static_cast<uint32_t>(b) * scale) / 0xBFU);
+    outPayload[3] = kCommandByte;
+    return true;
+}
+
 QString Clv0001KeyboardBackend::formatPayloadHex(const std::array<uint8_t, 4>& payload) {
     return QStringLiteral("%1 %2 %3 %4")
         .arg(payload[0], 2, 16, QLatin1Char('0'))
@@ -296,6 +328,15 @@ Clv0001Topology Clv0001KeyboardBackend::probeTopology(const core::DmiIdentity& d
         QFileInfo(topo.statePath).isFile() &&
         QFileInfo(topo.presetsPath).isFile()) {
         topo.driverBound = true;
+        const QString presetsText = SysfsRoot::readFileTrimmed(topo.presetsPath);
+        const QMap<QString, QString> presetsKv = parseKeyValueState(presetsText);
+        const bool hasBasePresets = !presetsKv.value(QStringLiteral("presets")).isEmpty();
+        const bool hasValidLevels = (presetsKv.value(QStringLiteral("brightness_levels")) == QLatin1String("0,1,2,3,4"));
+        if (hasBasePresets && hasValidLevels) {
+            topo.supportsPresets = (presetsKv.value(QStringLiteral("supports_presets")) != QLatin1String("0"));
+            topo.supportsCustomRgb = (presetsKv.value(QStringLiteral("supports_custom_rgb")) == QLatin1String("1"));
+        }
+
         const QString stateText = SysfsRoot::readFileTrimmed(topo.statePath);
         const QMap<QString, QString> kv = parseKeyValueState(stateText);
         topo.lastAppliedStatus = kv.value(QStringLiteral("status"), QStringLiteral("uninitialized"));
@@ -320,6 +361,172 @@ void Clv0001KeyboardBackend::resetRateLimiterForTesting() {
     g_lastCommandMs = -1;
 }
 
+namespace {
+
+bool isValidGrbHexPayload(const QString& payloadHex) {
+    static const QRegularExpression kGrbRegex(QStringLiteral("^[0-9A-F]{2} [0-9A-F]{2} [0-9A-F]{2} F0$"));
+    return kGrbRegex.match(payloadHex.trimmed()).hasMatch();
+}
+
+core::ControlResult executeValidatedClv0001Write(
+    const Clv0001Topology& topo,
+    const QString& cmdStr,
+    const QString& expectedStateLabel,
+    int expectedLevel,
+    const QString& optionalExpectedPayloadHex,
+    const QJsonObject& extraSummaryFields,
+    const QString& acceptedMessage
+) {
+    core::ControlResult res;
+    res.physicalStateVerified = false;
+
+    // Rate limit firmware _DSM calls
+    const qint64 nowMs = rateTimer().elapsed();
+    if (g_minIntervalMs > 0 && g_lastCommandMs >= 0 && (nowMs - g_lastCommandMs) < g_minIntervalMs) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_RATE_LIMITED");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral(
+            "CLV0001 ACPI _DSM command rate-limited (minimum %1 ms between firmware updates)."
+        ).arg(g_minIntervalMs);
+        return res;
+    }
+
+    QString stateOutput, writeErr;
+    const bool writeOk = SysfsRoot::writeCommandAndReadState(
+        topo.commandPath,
+        topo.statePath,
+        cmdStr,
+        &stateOutput,
+        &writeErr
+    );
+    g_lastCommandMs = rateTimer().elapsed();
+
+    const QMap<QString, QString> kv = parseKeyValueState(stateOutput);
+    const QString drvStatus = kv.value(QStringLiteral("status"));
+    const QString acpiRetType = kv.value(QStringLiteral("acpi_return_type"), QStringLiteral("none"));
+
+    if (drvStatus == QLatin1String("error:acpi_eval_failed")) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_ACPI_DSM_EVAL_FAILED");
+        res.verificationStatusId = QStringLiteral("acpi_eval_failed");
+        res.message = QStringLiteral(
+            "CLV0001 _DSM 0x67 evaluation failed (ACPI returned NULL) for '%1'."
+        ).arg(cmdStr);
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("ERROR"), QStringLiteral("HAL"), res.message);
+        return res;
+    }
+
+    if (drvStatus == QLatin1String("error:unexpected_return_type") ||
+        acpiRetType == QLatin1String("unexpected")) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_ACPI_UNEXPECTED_RETURN_TYPE");
+        res.verificationStatusId = QStringLiteral("unexpected_acpi_return_type");
+        res.message = QStringLiteral(
+            "CLV0001 _DSM 0x67 returned an unexpected ACPI object type for '%1'."
+        ).arg(cmdStr);
+        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("HAL"), res.message);
+        return res;
+    }
+
+    if (drvStatus == QLatin1String("error:rate_limited")) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_RATE_LIMITED");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral("CLV0001 kernel driver rate-limited command '%1' (-EBUSY).").arg(cmdStr);
+        return res;
+    }
+
+    if (!writeOk) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_CLV0001_WRITE_FAILED");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = writeErr.isEmpty() ? QStringLiteral("Failed writing clv0001_kbd_command.") : writeErr;
+        return res;
+    }
+
+    const QString rbPreset = kv.value(QStringLiteral("preset"));
+    const QString rbLevel = kv.value(QStringLiteral("brightness_level"));
+    const QString rbPayload = kv.value(QStringLiteral("payload_grb"));
+    const bool payloadOk = optionalExpectedPayloadHex.isEmpty()
+                               ? isValidGrbHexPayload(rbPayload)
+                               : (rbPayload == optionalExpectedPayloadHex);
+    if (drvStatus != QLatin1String("accepted_no_hw_readback") ||
+        rbPreset != expectedStateLabel ||
+        rbLevel != QString::number(expectedLevel) ||
+        !payloadOk) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_CLV0001_STATE_MISMATCH");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral(
+            "CLV0001 driver state mismatch after command '%1' (status='%2', preset='%3', level='%4', payload='%5')."
+        ).arg(cmdStr, drvStatus, rbPreset, rbLevel, rbPayload);
+        return res;
+    }
+
+    QJsonObject rbObj = extraSummaryFields;
+    rbObj.insert(QStringLiteral("backend"), QStringLiteral("clv0001_acpi_dsm"));
+    rbObj.insert(QStringLiteral("acpi_hid"), QString::fromLatin1(Clv0001KeyboardBackend::kAcpiHid));
+    rbObj.insert(QStringLiteral("acpi_path"), topo.acpiPath);
+    rbObj.insert(QStringLiteral("dsm_uuid"), QString::fromLatin1(Clv0001KeyboardBackend::kDsmUuid));
+    rbObj.insert(QStringLiteral("dsm_function"), QStringLiteral("0x67"));
+    rbObj.insert(QStringLiteral("preset"), expectedStateLabel);
+    rbObj.insert(QStringLiteral("brightness_level"), expectedLevel);
+    rbObj.insert(QStringLiteral("payload_grb"), rbPayload);
+    rbObj.insert(QStringLiteral("acpi_return_type"), acpiRetType);
+    rbObj.insert(QStringLiteral("physical_readback"), false);
+    rbObj.insert(QStringLiteral("verification_status"), QStringLiteral("accepted_no_hw_readback"));
+
+    res.applied = true;
+    res.physicalStateVerified = false;
+    res.errorCode = QStringLiteral("OK");
+    res.verificationStatusId = QStringLiteral("accepted_no_hw_readback");
+    res.readbackSummary = QString::fromUtf8(QJsonDocument(rbObj).toJson(QJsonDocument::Compact));
+    res.message = acceptedMessage.arg(rbPayload);
+    core::DiagnosticRedactor::instance().appendLog(QStringLiteral("INFO"), QStringLiteral("HAL"), res.message);
+    return res;
+}
+
+bool probeAndRequireDriver(
+    const core::DmiIdentity& dmi,
+    Clv0001Topology& outTopo,
+    core::ControlResult& outErrorResult
+) {
+    QString dmiErr;
+    if (!Clv0001KeyboardBackend::isDmiEligible(dmi, &dmiErr)) {
+        outErrorResult.applied = false;
+        outErrorResult.physicalStateVerified = false;
+        outErrorResult.errorCode = QStringLiteral("ERR_UNSUPPORTED_MODEL");
+        outErrorResult.verificationStatusId = QStringLiteral("rejected_before_execution");
+        outErrorResult.message = dmiErr;
+        return false;
+    }
+
+    outTopo = Clv0001KeyboardBackend::probeTopology(dmi);
+    if (!outTopo.devicePresent) {
+        outErrorResult.applied = false;
+        outErrorResult.physicalStateVerified = false;
+        outErrorResult.errorCode = QStringLiteral("ERR_CLV0001_NOT_DETECTED");
+        outErrorResult.verificationStatusId = QStringLiteral("rejected_before_execution");
+        outErrorResult.message = QStringLiteral("ACPI device CLV0001 (\\_SB_.DCHU) was not detected.");
+        return false;
+    }
+    if (!outTopo.driverBound) {
+        outErrorResult.applied = false;
+        outErrorResult.physicalStateVerified = false;
+        outErrorResult.errorCode = QStringLiteral("ERR_CLV0001_DRIVER_NOT_BOUND");
+        outErrorResult.verificationStatusId = QStringLiteral("rejected_before_execution");
+        outErrorResult.message = QStringLiteral(
+            "ACPI device CLV0001:00 (\\_SB_.DCHU) is present, but kernel driver `acer_clv0001_kbd` is not bound. "
+            "Profile saved in Keyboard Studio Preview."
+        );
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 core::ControlResult Clv0001KeyboardBackend::applyPresetCommand(
     const core::DmiIdentity& dmi,
     const QString& presetName,
@@ -329,17 +536,6 @@ core::ControlResult Clv0001KeyboardBackend::applyPresetCommand(
     core::ControlResult res;
     res.physicalStateVerified = false;
 
-    // 1. Validate DMI eligibility
-    QString dmiErr;
-    if (!isDmiEligible(dmi, &dmiErr)) {
-        res.applied = false;
-        res.errorCode = QStringLiteral("ERR_UNSUPPORTED_MODEL");
-        res.verificationStatusId = QStringLiteral("rejected_before_execution");
-        res.message = dmiErr;
-        return res;
-    }
-
-    // 2. Validate preset and discrete brightness level before touching sysfs/ACPI
     const QString normPreset = presetName.trimmed().toLower();
     const int effectiveLevel = (normPreset == QLatin1String("off")) ? 0 : brightnessLevel;
     std::array<uint8_t, 4> expectedPayload{};
@@ -354,138 +550,82 @@ core::ControlResult Clv0001KeyboardBackend::applyPresetCommand(
         return res;
     }
 
-    // 3. Probe CLV0001 ACPI device and kernel driver binding
-    const Clv0001Topology topo = probeTopology(dmi);
-    if (!topo.devicePresent) {
-        res.applied = false;
-        res.errorCode = QStringLiteral("ERR_CLV0001_NOT_DETECTED");
-        res.verificationStatusId = QStringLiteral("rejected_before_execution");
-        res.message = QStringLiteral("ACPI device CLV0001 (\\_SB_.DCHU) was not detected.");
-        return res;
-    }
-    if (!topo.driverBound) {
-        res.applied = false;
-        res.errorCode = QStringLiteral("ERR_CLV0001_DRIVER_NOT_BOUND");
-        res.verificationStatusId = QStringLiteral("rejected_before_execution");
-        res.message = QStringLiteral(
-            "ACPI device CLV0001:00 (\\_SB_.DCHU) is present, but kernel driver `acer_clv0001_kbd` is not bound. "
-            "Profile saved in Keyboard Studio Preview."
-        );
+    Clv0001Topology topo;
+    if (!probeAndRequireDriver(dmi, topo, res)) {
         return res;
     }
 
-    // 4. Rate limit firmware _DSM calls
-    const qint64 nowMs = rateTimer().elapsed();
-    if (g_minIntervalMs > 0 && g_lastCommandMs >= 0 && (nowMs - g_lastCommandMs) < g_minIntervalMs) {
-        res.applied = false;
-        res.errorCode = QStringLiteral("ERR_RATE_LIMITED");
-        res.verificationStatusId = QStringLiteral("rejected_before_execution");
-        res.message = QStringLiteral(
-            "CLV0001 ACPI _DSM command rate-limited (minimum %1 ms between firmware updates)."
-        ).arg(g_minIntervalMs);
-        return res;
-    }
-
-    // 5. Write strictly allowlisted preset + discrete brightness command and read driver state
     const QString cmdStr = QStringLiteral("%1 %2").arg(normPreset).arg(effectiveLevel);
-    QString stateOutput, writeErr;
-    const bool writeOk = SysfsRoot::writeCommandAndReadState(
-        topo.commandPath,
-        topo.statePath,
-        cmdStr,
-        &stateOutput,
-        &writeErr
-    );
-    g_lastCommandMs = rateTimer().elapsed();
-
-    const QMap<QString, QString> kv = parseKeyValueState(stateOutput);
-    const QString drvStatus = kv.value(QStringLiteral("status"));
-    const QString acpiRetType = kv.value(QStringLiteral("acpi_return_type"), QStringLiteral("none"));
     const QString payloadHex = formatPayloadHex(expectedPayload);
-
-    if (drvStatus == QLatin1String("error:acpi_eval_failed")) {
-        res.applied = false;
-        res.physicalStateVerified = false;
-        res.errorCode = QStringLiteral("ERR_ACPI_DSM_EVAL_FAILED");
-        res.verificationStatusId = QStringLiteral("acpi_eval_failed");
-        res.message = QStringLiteral(
-            "CLV0001 _DSM 0x67 evaluation failed (ACPI returned NULL) for '%1'."
-        ).arg(cmdStr);
-        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("ERROR"), QStringLiteral("HAL"), res.message);
-        return res;
-    }
-
-    if (drvStatus == QLatin1String("error:unexpected_return_type") ||
-        acpiRetType == QLatin1String("unexpected")) {
-        res.applied = false;
-        res.physicalStateVerified = false;
-        res.errorCode = QStringLiteral("ERR_ACPI_UNEXPECTED_RETURN_TYPE");
-        res.verificationStatusId = QStringLiteral("unexpected_acpi_return_type");
-        res.message = QStringLiteral(
-            "CLV0001 _DSM 0x67 returned an unexpected ACPI object type for '%1'."
-        ).arg(cmdStr);
-        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("HAL"), res.message);
-        return res;
-    }
-
-    if (drvStatus == QLatin1String("error:rate_limited")) {
-        res.applied = false;
-        res.physicalStateVerified = false;
-        res.errorCode = QStringLiteral("ERR_RATE_LIMITED");
-        res.verificationStatusId = QStringLiteral("rejected_before_execution");
-        res.message = QStringLiteral("CLV0001 kernel driver rate-limited command '%1' (-EBUSY).").arg(cmdStr);
-        return res;
-    }
-
-    if (!writeOk) {
-        res.applied = false;
-        res.physicalStateVerified = false;
-        res.errorCode = QStringLiteral("ERR_CLV0001_WRITE_FAILED");
-        res.verificationStatusId = QStringLiteral("rejected_before_execution");
-        res.message = writeErr.isEmpty() ? QStringLiteral("Failed writing clv0001_kbd_command.") : writeErr;
-        return res;
-    }
-
-    const QString rbPreset = kv.value(QStringLiteral("preset"));
-    const QString rbLevel = kv.value(QStringLiteral("brightness_level"));
-    const QString rbPayload = kv.value(QStringLiteral("payload_grb"));
-    if (drvStatus != QLatin1String("accepted_no_hw_readback") ||
-        rbPreset != normPreset ||
-        rbLevel != QString::number(effectiveLevel) ||
-        rbPayload != payloadHex) {
-        res.applied = false;
-        res.physicalStateVerified = false;
-        res.errorCode = QStringLiteral("ERR_CLV0001_STATE_MISMATCH");
-        res.verificationStatusId = QStringLiteral("rejected_before_execution");
-        res.message = QStringLiteral(
-            "CLV0001 driver state mismatch after command '%1' (status='%2', preset='%3', level='%4', payload='%5')."
-        ).arg(cmdStr, drvStatus, rbPreset, rbLevel, rbPayload);
-        return res;
-    }
-
-    QJsonObject rbObj;
-    rbObj.insert(QStringLiteral("backend"), QStringLiteral("clv0001_acpi_dsm"));
-    rbObj.insert(QStringLiteral("acpi_hid"), QString::fromLatin1(kAcpiHid));
-    rbObj.insert(QStringLiteral("acpi_path"), topo.acpiPath);
-    rbObj.insert(QStringLiteral("dsm_uuid"), QString::fromLatin1(kDsmUuid));
-    rbObj.insert(QStringLiteral("dsm_function"), QStringLiteral("0x67"));
-    rbObj.insert(QStringLiteral("preset"), normPreset);
-    rbObj.insert(QStringLiteral("brightness_level"), effectiveLevel);
-    rbObj.insert(QStringLiteral("payload_grb"), payloadHex);
-    rbObj.insert(QStringLiteral("acpi_return_type"), acpiRetType);
-    rbObj.insert(QStringLiteral("physical_readback"), false);
-    rbObj.insert(QStringLiteral("verification_status"), QStringLiteral("accepted_no_hw_readback"));
-
-    res.applied = true;
-    res.physicalStateVerified = false;
-    res.errorCode = QStringLiteral("OK");
-    res.verificationStatusId = QStringLiteral("accepted_no_hw_readback");
-    res.readbackSummary = QString::fromUtf8(QJsonDocument(rbObj).toJson(QJsonDocument::Compact));
-    res.message = QStringLiteral(
+    const QString msgTemplate = QStringLiteral(
         "Accepted by CLV0001 _DSM 0x67 (preset=%1, level=%2/4, GRB=%3; physical hardware readback not exposed by firmware)."
-    ).arg(normPreset).arg(effectiveLevel).arg(payloadHex);
-    core::DiagnosticRedactor::instance().appendLog(QStringLiteral("INFO"), QStringLiteral("HAL"), res.message);
-    return res;
+    ).arg(normPreset).arg(effectiveLevel).arg(QStringLiteral("%1"));
+
+    return executeValidatedClv0001Write(
+        topo, cmdStr, normPreset, effectiveLevel, payloadHex, QJsonObject(), msgTemplate
+    );
+}
+
+core::ControlResult Clv0001KeyboardBackend::applyCustomRgbCommand(
+    const core::DmiIdentity& dmi,
+    int red,
+    int green,
+    int blue,
+    int brightnessLevel
+) {
+    QMutexLocker locker(&clvBackendMutex());
+    core::ControlResult res;
+    res.physicalStateVerified = false;
+
+    if (red < 0 || red > 255 || green < 0 || green > 255 || blue < 0 || blue > 255) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_INVALID_RGB_CHANNEL");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral(
+            "RGB channel values (%1, %2, %3) must be within [0, 255]."
+        ).arg(red).arg(green).arg(blue);
+        return res;
+    }
+
+    if (brightnessLevel < 0 || brightnessLevel > 4) {
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_INVALID_BRIGHTNESS");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral(
+            "CLV0001 discrete brightness level %1 is out of range [0..4]."
+        ).arg(brightnessLevel);
+        return res;
+    }
+
+    Clv0001Topology topo;
+    if (!probeAndRequireDriver(dmi, topo, res)) {
+        return res;
+    }
+
+    if (!topo.supportsCustomRgb) {
+        const QString nearest = findNearestPresetName(core::RgbColor{red, green, blue});
+        res.applied = false;
+        res.errorCode = QStringLiteral("ERR_CLV0001_PRESET_REQUIRED");
+        res.verificationStatusId = QStringLiteral("rejected_before_execution");
+        res.message = QStringLiteral(
+            "Loaded CLV0001 kernel driver does not advertise supports_custom_rgb=1 "
+            "(preset-only module active; nearest of the 17 verified named presets is '%1')."
+        ).arg(nearest);
+        return res;
+    }
+
+    const QString hexStr = core::ColorScience::rgbToHex(core::RgbColor{red, green, blue});
+    const QString cmdStr = QStringLiteral("rgb %1 %2 %3 %4").arg(red).arg(green).arg(blue).arg(brightnessLevel);
+    QJsonObject extra;
+    extra.insert(QStringLiteral("rgb"), QStringLiteral("%1,%2,%3").arg(red).arg(green).arg(blue));
+    extra.insert(QStringLiteral("hex"), hexStr);
+    const QString msgTemplate = QStringLiteral(
+        "Command accepted by CLV0001 _DSM 0x67 (custom_rgb %1 [%2, %3, %4], level=%5/4, GRB=%6 — physical hardware readback not exposed by firmware)."
+    ).arg(hexStr).arg(red).arg(green).arg(blue).arg(brightnessLevel).arg(QStringLiteral("%1"));
+
+    return executeValidatedClv0001Write(
+        topo, cmdStr, QStringLiteral("custom_rgb"), brightnessLevel, QString(), extra, msgTemplate
+    );
 }
 
 } // namespace acc::hal

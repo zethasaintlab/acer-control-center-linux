@@ -18,12 +18,9 @@ Flickable {
         spacing: 14
 
         // 01 // HARDWARE CAPABILITY & SEPARATION NOTICE
-        Rectangle {
+        IndustrialPanel {
             width: parent.width
-            height: 98
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
+            height: kbdCapHdr.height + kbdCapTxt.implicitHeight + 22
 
             SectionHeader {
                 id: kbdCapHdr
@@ -33,29 +30,27 @@ Flickable {
                 indexCode: "01"
                 title: "KEYBOARD LIGHTING ROUTING // " + ctrl.kbdControlModeBadge
                 badgeText: ctrl.kbdCapabilityBadge
-                badgeColor: ctrl.kbdHardwareConnected ? theme.statusNominal : theme.statusWarning
+                hazardStripe: !ctrl.kbdPhysicalReadbackSupported
             }
 
             Text {
+                id: kbdCapTxt
                 anchors.top: kbdCapHdr.bottom
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.margins: 10
                 wrapMode: Text.WordWrap
                 text: ctrl.kbdHardwareExplanation
-                font.family: "sans-serif"
+                font.family: theme.fontSans
                 font.pixelSize: 12
                 color: theme.textSecondary
             }
         }
 
-        // 02 // INTERACTIVE ACER ASPIRE 7 CHASSIS DECK VISUALIZER
-        Rectangle {
+        // 02 // ORTHOGRAPHIC CHASSIS KEYBOARD DECK SCHEMATIC (CMP-0010)
+        IndustrialPanel {
             width: parent.width
-            height: 238
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
+            height: 246
 
             SectionHeader {
                 id: deckHdr
@@ -63,9 +58,9 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "02"
-                title: "INTERACTIVE CHASSIS KEYBOARD DECK & 4-ZONE SELECTOR"
+                title: "ORTHOGRAPHIC CHASSIS KEYBOARD DECK SCHEMATIC"
                 badgeText: ctrl.kbdEnabled ? ("BRIGHTNESS " + ctrl.kbdBrightnessPct + "%") : "BACKLIGHT OFF"
-                badgeColor: ctrl.kbdEnabled ? theme.accentReadable : theme.textMuted
+                badgeColor: ctrl.kbdEnabled ? theme.telemetryLime : theme.textMuted
             }
 
             KeyboardVisualizer {
@@ -80,64 +75,93 @@ Flickable {
                 brightnessPct: ctrl.kbdBrightnessPct
                 backlightEnabled: ctrl.kbdEnabled
                 hardwareConnected: ctrl.kbdHardwareConnected
+                multiZoneSupported: ctrl.kbdRgbSupported
                 routingBadge: ctrl.kbdRoutingBadge
                 backgroundColor: theme.canvasBg
                 keycapColor: theme.surfaceElevated
                 borderColor: theme.borderSubtle
                 textColor: theme.textSecondary
-                onSelectedZoneChanged: function(zIdx) {
-                    ctrl.kbdSelectedZone = zIdx;
-                }
+                onSelectedZoneChanged: function(zIdx) { ctrl.kbdSelectedZone = zIdx; }
             }
 
-            Row {
+            Flow {
                 id: zoneBar
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 anchors.margins: 8
-                height: 30
                 spacing: 8
 
                 AtelierButton {
+                    visible: ctrl.kbdRgbSupported
+                    pillShape: false
+                    height: 28
                     text: "ALL ZONES (SYNC)"
                     activeState: ctrl.kbdSelectedZone === -1
                     onClicked: ctrl.kbdSelectedZone = -1
                 }
                 AtelierButton {
-                    text: "ZONE 1 (WASD)"
+                    visible: ctrl.kbdRgbSupported
+                    pillShape: false
+                    height: 28
+                    text: "Z1 (WASD)"
                     activeState: ctrl.kbdSelectedZone === 0
                     enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 0
                 }
                 AtelierButton {
-                    text: "ZONE 2 (ALPHA)"
+                    visible: ctrl.kbdRgbSupported
+                    pillShape: false
+                    height: 28
+                    text: "Z2 (ALPHA)"
                     activeState: ctrl.kbdSelectedZone === 1
                     enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 1
                 }
                 AtelierButton {
-                    text: "ZONE 3 (NAV)"
+                    visible: ctrl.kbdRgbSupported
+                    pillShape: false
+                    height: 28
+                    text: "Z3 (NAV)"
                     activeState: ctrl.kbdSelectedZone === 2
                     enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 2
                 }
                 AtelierButton {
-                    text: "ZONE 4 (NUMPAD)"
+                    visible: ctrl.kbdRgbSupported
+                    pillShape: false
+                    height: 28
+                    text: "Z4 (NUMPAD)"
                     activeState: ctrl.kbdSelectedZone === 3
                     enabledState: ctrl.kbdRgbSupported
                     onClicked: ctrl.kbdSelectedZone = 3
                 }
+
+                AtelierButton {
+                    visible: !ctrl.kbdRgbSupported
+                    pillShape: false
+                    height: 28
+                    text: "UNIFORM SINGLE-ZONE"
+                    activeState: true
+                    onClicked: ctrl.kbdSelectedZone = -1
+                }
+
+                Text {
+                    visible: !ctrl.kbdRgbSupported
+                    height: 28
+                    verticalAlignment: Text.AlignVCenter
+                    text: "PER-ZONE SPLIT UNSUPPORTED ON CLV0001 (_DSM 0x67 SINGLE 4-BYTE GRB PAYLOAD)"
+                    font.family: theme.fontMono
+                    font.pixelSize: 10
+                    color: theme.textSecondary
+                }
             }
         }
 
-        // 02.B // VERIFIED CLV0001 HARDWARE PRESETS & 5-LEVEL BRIGHTNESS MATRIX
-        Rectangle {
+        // 02.B // VERIFIED CLV0001 HARDWARE PRESETS & 5-LEVEL BRIGHTNESS MATRIX (CMP-0005)
+        IndustrialPanel {
             width: parent.width
             height: clvHdr.height + clvBodyCol.implicitHeight + 22
-            color: theme.surfacePrimary
-            border.width: 1
-            border.color: theme.borderSubtle
 
             SectionHeader {
                 id: clvHdr
@@ -145,13 +169,19 @@ Flickable {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 indexCode: "02.B"
-                title: "VERIFIED CLV0001 PRESETS (17) & DISCRETE LEVELS (ACPI _DSM 0x67)"
-                badgeText: ctrl.kbdCustomPreviewDirty
-                           ? ("CUSTOM RGB PREVIEW (NEAREST: " + ctrl.kbdNearestPresetName.toUpperCase() + ")")
-                           : ("GRB [" + ctrl.kbdFirmwarePacketHex + "]")
-                badgeColor: ctrl.kbdCustomPreviewDirty
-                            ? theme.statusWarning
-                            : (ctrl.kbdSupportsPresetColors ? theme.statusNominal : theme.statusWarning)
+                title: ctrl.kbdSupportsArbitraryRgb
+                       ? "CLV0001 PRESETS (17) + STATIC 24-BIT RGB (ACPI _DSM 0x67)"
+                       : "VERIFIED CLV0001 PRESETS (17) & DISCRETE LEVELS"
+                badgeText: {
+                    if (!ctrl.kbdCustomPreviewDirty)
+                        return "PRESET: " + ctrl.kbdPresetName.toUpperCase() + " // GRB [" + ctrl.kbdFirmwarePacketHex + "]";
+                    if (ctrl.kbdSelectionSource === "random_rgb")
+                        return "RANDOM RGB: " + ctrl.kbdPickerHex + " // GRB [" + ctrl.kbdFirmwarePacketHex + "]";
+                    return "CUSTOM RGB: " + ctrl.kbdPickerHex + " // GRB [" + ctrl.kbdFirmwarePacketHex + "]";
+                }
+                badgeColor: !ctrl.kbdCustomPreviewDirty
+                            ? (ctrl.kbdSupportsPresetColors ? theme.telemetryLime : theme.statusWarning)
+                            : (ctrl.kbdSupportsArbitraryRgb ? theme.technicalCyan : theme.statusWarning)
             }
 
             Column {
@@ -171,14 +201,14 @@ Flickable {
                         delegate: Rectangle {
                             id: presetChip
                             width: chipRow.implicitWidth + 16
-                            height: 26
-                            radius: 2
+                            height: 28
+                            radius: theme.radiusStructural
                             activeFocusOnTab: true
-                            color: modelData.selected ? theme.surfaceElevated : theme.surfaceHeader
+                            color: modelData.selected ? theme.surfaceSelectedDark : theme.surfaceElevated
                             border.width: (presetChip.activeFocus || modelData.selected) ? 2 : 1
                             border.color: presetChip.activeFocus
                                               ? theme.accentBorder
-                                              : (modelData.selected ? theme.accentReadable : theme.borderSubtle)
+                                              : (modelData.selected ? theme.brandYellow : theme.borderSubtle)
 
                             Row {
                                 id: chipRow
@@ -191,16 +221,16 @@ Flickable {
                                     anchors.verticalCenter: parent.verticalCenter
                                     color: modelData.previewHex
                                     border.width: 1
-                                    border.color: theme.borderSubtle
+                                    border.color: theme.darkInk
                                 }
 
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: modelData.name.toUpperCase()
-                                    font.family: "monospace"
+                                    font.family: theme.fontMono
                                     font.pixelSize: 10
-                                    font.weight: modelData.selected ? Font.Bold : Font.Normal
-                                    color: modelData.selected ? theme.textPrimary : theme.textSecondary
+                                    font.weight: modelData.selected ? Font.Bold : Font.Medium
+                                    color: modelData.selected ? theme.brandYellow : theme.textPrimary
                                 }
                             }
 
@@ -232,6 +262,7 @@ Flickable {
                             "4: 100% (0xBF)"
                         ]
                         delegate: AtelierButton {
+                            pillShape: false
                             height: 28
                             text: modelData
                             activeState: ctrl.kbdBrightnessLevel === index
@@ -240,7 +271,7 @@ Flickable {
                     }
 
                     AtelierButton {
-                        visible: ctrl.kbdCustomPreviewDirty
+                        visible: ctrl.kbdCustomPreviewDirty && !ctrl.kbdSupportsArbitraryRgb
                         height: 28
                         text: "SNAP TO " + ctrl.kbdNearestPresetName.toUpperCase()
                         primaryAccent: true
@@ -252,33 +283,32 @@ Flickable {
                         verticalAlignment: Text.AlignVCenter
                         leftPadding: 8
                         text: ctrl.kbdBackendKindId === "clv0001_acpi_dsm"
-                              ? "CLV0001 BOUND // WRITE-ONLY (_DSM 0x67 — NO HW READBACK)"
+                              ? (ctrl.kbdSupportsArbitraryRgb
+                                 ? "STATIC RGB + 17 PRESETS // WRITE-ONLY _DSM // EFFECTS PAUSED"
+                                 : "PRESET-ONLY MODULE // NO HW READBACK")
                               : (ctrl.kbdPhysicalReadbackSupported
                                      ? "SYSFS LED ACTIVE (VERIFIED READBACK)"
-                                     : "CLV0001 PROTOCOL PREVIEW (_DSM 0x67 — WRITE-ONLY)")
-                        font.family: "monospace"
+                                     : "CLV0001 PROTOCOL PREVIEW (WRITE-ONLY)")
+                        font.family: theme.fontMono
                         font.pixelSize: 10
                         color: ctrl.kbdPhysicalReadbackSupported
-                               ? theme.statusNominal
-                               : (ctrl.kbdBackendKindId === "clv0001_acpi_dsm" ? theme.statusInfo : theme.textSecondary)
+                               ? theme.telemetryLime
+                               : (ctrl.kbdBackendKindId === "clv0001_acpi_dsm" ? theme.technicalCyan : theme.textSecondary)
                     }
                 }
             }
         }
 
-        // 03 // STUDIO PREVIEW & SYSFS LED COLOR PICKER
+        // 03 // STATIC 24-BIT CUSTOM RGB STUDIO
         Grid {
             width: parent.width
-            columns: width >= 960 ? 3 : 1
+            columns: width >= 980 ? 3 : 1
             spacing: 12
 
-            // COLUMN A: HSV/HSL COLOR WHEEL & VALUE/LIGHTNESS SLIDERS
-            Rectangle {
+            // COLUMN A: HSV/HSL COLOR WHEEL
+            IndustrialPanel {
                 width: parent.columns === 3 ? (parent.width - 24) / 3 : parent.width
-                height: 310
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+                height: 318
 
                 SectionHeader {
                     id: wheelHdr
@@ -286,24 +316,21 @@ Flickable {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     indexCode: "03.A"
-                    title: "UNRESTRICTED HSV / HSL WHEEL"
+                    title: "STATIC HSV / HSL WHEEL"
                     badgeText: "H:" + ctrl.kbdPickerHue.toFixed(0) + "°"
-                    badgeColor: theme.accentReadable
                 }
 
                 HsvColorWheel {
                     anchors.top: wheelHdr.bottom
                     anchors.topMargin: 8
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: 164
-                    height: 164
+                    width: 160
+                    height: 160
                     hue: ctrl.kbdPickerHue
                     saturation: ctrl.kbdPickerSat
                     value: ctrl.kbdPickerVal
                     focusRingColor: theme.accentBorder
-                    onColorEdited: function(h, s, v) {
-                        ctrl.setKbdColorFromHsv(h, s, v);
-                    }
+                    onColorEdited: function(h, s, v) { ctrl.setKbdColorFromHsv(h, s, v); }
                 }
 
                 Column {
@@ -315,7 +342,7 @@ Flickable {
 
                     AtelierSlider {
                         width: parent.width
-                        label: "HSV Value (Brightness)"
+                        label: "HSV Value (Luminance)"
                         unit: "%"
                         minValue: 0
                         maxValue: 100
@@ -339,13 +366,10 @@ Flickable {
                 }
             }
 
-            // COLUMN B: RGB SLIDERS, NUMERICAL STEPPERS, HEX INPUT & SWATCHES
-            Rectangle {
+            // COLUMN B: sRGB CHANNELS, HEX INPUT & SWATCHES
+            IndustrialPanel {
                 width: parent.columns === 3 ? (parent.width - 24) / 3 : parent.width
-                height: 310
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+                height: 318
 
                 SectionHeader {
                     id: rgbHdr
@@ -353,9 +377,8 @@ Flickable {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     indexCode: "03.B"
-                    title: "sRGB CHANNELS & SWATCHES"
+                    title: "sRGB CHANNELS & HEX"
                     badgeText: ctrl.kbdPickerHex
-                    badgeColor: theme.accentReadable
                 }
 
                 Column {
@@ -373,10 +396,8 @@ Flickable {
                         minValue: 0
                         maxValue: 255
                         value: ctrl.kbdPickerR
-                        fillColor: "#E04F5F"
-                        onValueCommitted: function(v) {
-                            ctrl.setKbdColorFromRgb(v, ctrl.kbdPickerG, ctrl.kbdPickerB);
-                        }
+                        fillColor: theme.statusCritical
+                        onValueCommitted: function(v) { ctrl.setKbdColorFromRgb(v, ctrl.kbdPickerG, ctrl.kbdPickerB); }
                     }
 
                     AtelierSlider {
@@ -386,10 +407,8 @@ Flickable {
                         minValue: 0
                         maxValue: 255
                         value: ctrl.kbdPickerG
-                        fillColor: "#2EBE7E"
-                        onValueCommitted: function(v) {
-                            ctrl.setKbdColorFromRgb(ctrl.kbdPickerR, v, ctrl.kbdPickerB);
-                        }
+                        fillColor: theme.telemetryLimeBar
+                        onValueCommitted: function(v) { ctrl.setKbdColorFromRgb(ctrl.kbdPickerR, v, ctrl.kbdPickerB); }
                     }
 
                     AtelierSlider {
@@ -399,20 +418,18 @@ Flickable {
                         minValue: 0
                         maxValue: 255
                         value: ctrl.kbdPickerB
-                        fillColor: "#3B9EFF"
-                        onValueCommitted: function(v) {
-                            ctrl.setKbdColorFromRgb(ctrl.kbdPickerR, ctrl.kbdPickerG, v);
-                        }
+                        fillColor: theme.technicalCyan
+                        onValueCommitted: function(v) { ctrl.setKbdColorFromRgb(ctrl.kbdPickerR, ctrl.kbdPickerG, v); }
                     }
 
                     Row {
                         width: parent.width
-                        spacing: 8
+                        spacing: 6
 
                         Rectangle {
-                            width: 34
+                            width: 30
                             height: 30
-                            radius: 2
+                            radius: theme.radiusStructural
                             color: ctrl.kbdPickerHex
                             border.width: 1
                             border.color: theme.borderStrong
@@ -420,25 +437,44 @@ Flickable {
 
                         TextField {
                             id: kbdHexField
-                            width: 104
+                            property bool hexInvalid: false
+                            width: 84
                             height: 30
                             text: ctrl.kbdPickerHex
-                            font.family: "monospace"
+                            font.family: theme.fontMono
                             font.pixelSize: 12
-                            color: theme.textPrimary
+                            color: hexInvalid ? theme.statusCritical : theme.textPrimary
                             selectByMouse: true
                             background: Rectangle {
+                                radius: theme.radiusStructural
                                 color: theme.surfaceElevated
-                                border.width: kbdHexField.activeFocus ? 2 : 1
-                                border.color: kbdHexField.activeFocus ? theme.accentBorder : theme.borderSubtle
+                                border.width: (kbdHexField.activeFocus || kbdHexField.hexInvalid) ? 2 : 1
+                                border.color: kbdHexField.hexInvalid
+                                              ? theme.statusCritical
+                                              : (kbdHexField.activeFocus ? theme.accentBorder : theme.borderSubtle)
                             }
-                            onEditingFinished: ctrl.setKbdColorFromHex(text)
+                            onTextEdited: hexInvalid = false
+                            onEditingFinished: { hexInvalid = !ctrl.setKbdColorFromHex(text); }
+                        }
+
+                        Connections {
+                            target: ctrl
+                            function onKeyboardStudioChanged() {
+                                kbdHexField.hexInvalid = false;
+                                kbdHexField.text = ctrl.kbdPickerHex;
+                            }
                         }
 
                         AtelierButton {
                             height: 30
-                            text: "SAVE SWATCH"
+                            text: "SAVE"
                             onClicked: ctrl.saveCurrentKbdColorToSwatches()
+                        }
+
+                        AtelierButton {
+                            height: 30
+                            text: "RANDOM"
+                            onClicked: ctrl.selectRandomKbdColor()
                         }
                     }
 
@@ -452,11 +488,11 @@ Flickable {
                                 id: kbdSwatch
                                 width: 22
                                 height: 22
-                                radius: 2
+                                radius: theme.radiusStructural
                                 activeFocusOnTab: true
                                 color: modelData
                                 border.width: (kbdSwatch.activeFocus || ctrl.kbdPickerHex === modelData) ? 2 : 1
-                                border.color: kbdSwatch.activeFocus ? theme.accentBorder : (ctrl.kbdPickerHex === modelData ? theme.textPrimary : theme.borderSubtle)
+                                border.color: kbdSwatch.activeFocus ? theme.brandYellow : (ctrl.kbdPickerHex === modelData ? theme.textPrimary : theme.borderSubtle)
 
                                 MouseArea {
                                     anchors.fill: parent
@@ -475,13 +511,10 @@ Flickable {
                 }
             }
 
-            // COLUMN C: HARDWARE ILLUMINATION & PROFILE PERSISTENCE
-            Rectangle {
+            // COLUMN C: HARDWARE ILLUMINATION & EXPLICIT APPLY CTA (CMP-0007)
+            IndustrialPanel {
                 width: parent.columns === 3 ? (parent.width - 24) / 3 : parent.width
-                height: 310
-                color: theme.surfacePrimary
-                border.width: 1
-                border.color: theme.borderSubtle
+                height: 318
 
                 SectionHeader {
                     id: profColHdr
@@ -490,8 +523,7 @@ Flickable {
                     anchors.right: parent.right
                     indexCode: "03.C"
                     title: "PROFILES & HARDWARE APPLY"
-                    badgeText: ctrl.kbdMode.toUpperCase()
-                    badgeColor: theme.statusInfo
+                    badgeText: ctrl.kbdRgbSupported ? ctrl.kbdMode.toUpperCase() : "STATIC ONLY"
                 }
 
                 Column {
@@ -507,15 +539,17 @@ Flickable {
                         spacing: 8
 
                         AtelierButton {
-                            width: (parent.width - 8) * 0.5
+                            width: (parent.width - 8) * 0.48
                             text: ctrl.kbdEnabled ? "BACKLIGHT: ON" : "BACKLIGHT: OFF"
                             activeState: ctrl.kbdEnabled
                             onClicked: ctrl.kbdEnabled = !ctrl.kbdEnabled
                         }
 
                         AtelierButton {
-                            width: (parent.width - 8) * 0.5
-                            text: ctrl.kbdRgbSupported ? ("MODE: " + ctrl.kbdMode.toUpperCase()) : "MODE: STATIC ONLY"
+                            width: (parent.width - 8) * 0.52
+                            text: ctrl.kbdRgbSupported
+                                  ? ("MODE: " + ctrl.kbdMode.toUpperCase())
+                                  : "EFFECTS PAUSED (STATIC)"
                             enabledState: ctrl.kbdRgbSupported
                             onClicked: {
                                 if (ctrl.kbdMode === "static") ctrl.kbdMode = "breathing";
@@ -527,7 +561,7 @@ Flickable {
 
                     AtelierSlider {
                         width: parent.width
-                        label: "Master Illumination Brightness"
+                        label: "Master Brightness Level"
                         unit: "%"
                         minValue: 0
                         maxValue: 100
@@ -542,6 +576,7 @@ Flickable {
                         Repeater {
                             model: ctrl.kbdProfilesModel
                             delegate: AtelierButton {
+                                pillShape: false
                                 width: (parent.width - 12) / 3
                                 height: 28
                                 text: modelData.name
@@ -559,12 +594,13 @@ Flickable {
                             id: newProfNameField
                             width: parent.width - 118
                             height: 30
-                            placeholderText: "Custom profile name..."
+                            placeholderText: "Profile name..."
                             placeholderTextColor: theme.textMuted
-                            font.family: "sans-serif"
+                            font.family: theme.fontSans
                             font.pixelSize: 12
                             color: theme.textPrimary
                             background: Rectangle {
+                                radius: theme.radiusStructural
                                 color: theme.surfaceElevated
                                 border.width: newProfNameField.activeFocus ? 2 : 1
                                 border.color: newProfNameField.activeFocus ? theme.accentBorder : theme.borderSubtle
@@ -584,10 +620,20 @@ Flickable {
 
                     AtelierButton {
                         width: parent.width
-                        height: 36
+                        height: 38
                         text: {
-                            if (ctrl.kbdBackendKindId === "clv0001_acpi_dsm")
-                                return "SEND CLV0001 _DSM 0x67 PRESET (NO HW READBACK)";
+                            if (ctrl.kbdBackendKindId === "clv0001_acpi_dsm") {
+                                if (!ctrl.kbdEnabled)
+                                    return "APPLY CLV0001 BACKLIGHT OFF (NO HW READBACK)";
+                                if (ctrl.kbdCustomPreviewDirty) {
+                                    if (!ctrl.kbdSupportsArbitraryRgb)
+                                        return "PRESET-ONLY DRIVER MODULE (SNAP TO PRESET)";
+                                    if (ctrl.kbdSelectionSource === "random_rgb")
+                                        return "APPLY RANDOM RGB " + ctrl.kbdPickerHex + " (NO READBACK)";
+                                    return "APPLY CUSTOM RGB " + ctrl.kbdPickerHex + " (NO READBACK)";
+                                }
+                                return "APPLY PRESET '" + ctrl.kbdPresetName.toUpperCase() + "' (NO READBACK)";
+                            }
                             if (ctrl.kbdHardwareConnected)
                                 return "APPLY TO HARDWARE & VERIFY READBACK";
                             if (ctrl.kbdBackendKindId === "clv0001_unbound")

@@ -16,6 +16,7 @@
  *                       [2] Blue  (0x00..0xFF, scaled by discrete brightness level)
  *                       [3] 0xF0  (fixed command/zone byte)
  *   - Brightness:     5 discrete levels: 0 (0x00), 1 (0x2F), 2 (0x5F), 3 (0x8F), 4 (0xBF)
+ *   - Commands:       `<preset_name> [<brightness_level>]` or `rgb <R> <G> <B> <brightness_level>`
  *
  * Safety invariants:
  *   1. ONLY function 0x67 is ever invoked. Firmware functions 0x68, 0x69, 0x6A
@@ -29,6 +30,7 @@
  *      `accepted_no_hw_readback` status rather than claiming verified readback.
  */
 
+#ifdef __KERNEL__
 #include <linux/acpi.h>
 #include <linux/ctype.h>
 #include <linux/device.h>
@@ -42,28 +44,30 @@
 #include <linux/string.h>
 #include <linux/sysfs.h>
 #include <linux/uuid.h>
+#else
+#ifndef __cplusplus
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+#endif
+
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+#endif
+#endif
 
 #define CLV0001_DSM_REVISION		0
 #define CLV0001_DSM_FUNC_SET_COLOR	0x67
 #define CLV0001_MIN_INTERVAL_NS		40000000ULL /* 40 ms (max 25 Hz) */
 #define CLV0001_CMD_BYTE		0xF0
-
-static const struct dmi_system_id acer_clv0001_dmi_table[] = {
-	{
-		.ident = "Acer Aspire A715-59G (Kelilu_RTH)",
-		.matches = {
-			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Acer"),
-			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Aspire A715-59G"),
-			DMI_EXACT_MATCH(DMI_BOARD_NAME, "RTH"),
-			DMI_EXACT_MATCH(DMI_BOARD_VENDOR, "Kelilu_RTH"),
-		},
-	},
-	{ }
-};
-
-static const guid_t clv0001_dsm_guid = GUID_INIT(
-	0x93f224e4, 0xfbdc, 0x4bbf,
-	0xad, 0xd6, 0xdb, 0x71, 0xbd, 0xc0, 0xaf, 0xad);
+#define CLV0001_CMD_BUF_SIZE		64
 
 struct clv0001_preset {
 	const char *name;
@@ -96,18 +100,13 @@ static const u8 clv0001_brightness_scales[5] = {
 	0x00, 0x2F, 0x5F, 0x8F, 0xBF
 };
 
-struct acer_clv0001_ctx {
-	struct mutex lock;
-	struct acpi_device *adev;
-	acpi_handle dchu_handle;
-	char acpi_path[64];
-	u64 last_eval_ns;
-	bool has_applied;
-	const struct clv0001_preset *current_preset;
-	int current_brightness;
-	u8 last_payload[4];
-	char last_status[48];
-	char last_acpi_return_type[24];
+struct clv0001_parsed_cmd {
+	bool is_custom_rgb;
+	const struct clv0001_preset *preset;
+	u8 r;
+	u8 g;
+	u8 b;
+	int brightness;
 };
 
 static const struct clv0001_preset *find_preset_by_name(const char *name)
@@ -120,6 +119,211 @@ static const struct clv0001_preset *find_preset_by_name(const char *name)
 	}
 	return NULL;
 }
+
+static int clv0001_parse_u8_or_level(const char *tok, int max_val, int *out_val)
+{
+	unsigned int acc = 0;
+	size_t i;
+
+	if (!tok || tok[0] == '\0' || !out_val)
+		return -EINVAL;
+
+	for (i = 0; tok[i] != '\0'; i++) {
+		unsigned char ch = (unsigned char)tok[i];
+
+		if (ch < '0' || ch > '9')
+			return -EINVAL;
+
+		acc = (acc * 10U) + (unsigned int)(ch - '0');
+		if (acc > (unsigned int)max_val)
+			return -EINVAL;
+	}
+
+	*out_val = (int)acc;
+	return 0;
+}
+
+static int clv0001_parse_command(const char *buf, size_t count,
+				 struct clv0001_parsed_cmd *out_cmd)
+{
+	char kbuf[CLV0001_CMD_BUF_SIZE];
+	char *tokens[6];
+	char *p;
+	size_t len;
+	size_t start;
+	size_t i;
+	size_t ntokens;
+	int r_val;
+	int g_val;
+	int b_val;
+	int brightness = 4;
+	const struct clv0001_preset *preset;
+
+	if (!buf || !out_cmd || count == 0 || count >= sizeof(kbuf))
+		return -EINVAL;
+
+	for (i = 0; i < count; i++) {
+		if (buf[i] == '\0')
+			return -EINVAL;
+	}
+
+	memcpy(kbuf, buf, count);
+	kbuf[count] = '\0';
+
+	len = count;
+	while (len > 0 && (kbuf[len - 1] == ' ' || kbuf[len - 1] == '\t' ||
+			   kbuf[len - 1] == '\r' || kbuf[len - 1] == '\n'))
+		len--;
+	kbuf[len] = '\0';
+
+	start = 0;
+	while (kbuf[start] == ' ' || kbuf[start] == '\t')
+		start++;
+	if (kbuf[start] == '\0')
+		return -EINVAL;
+
+	p = &kbuf[start];
+	for (i = 0; p[i] != '\0'; i++) {
+		unsigned char ch = (unsigned char)p[i];
+
+		if ((ch < 0x20 && ch != '\t') || ch == 0x7F)
+			return -EINVAL;
+	}
+
+	ntokens = 0;
+	while (*p != '\0') {
+		while (*p == ' ' || *p == '\t')
+			p++;
+		if (*p == '\0')
+			break;
+		if (ntokens >= ARRAY_SIZE(tokens))
+			return -EINVAL;
+		tokens[ntokens++] = p;
+		while (*p != '\0' && *p != ' ' && *p != '\t')
+			p++;
+		if (*p != '\0') {
+			*p = '\0';
+			p++;
+		}
+	}
+
+	if (ntokens == 0)
+		return -EINVAL;
+
+	if (strcmp(tokens[0], "rgb") == 0) {
+		if (ntokens != 5)
+			return -EINVAL;
+		if (clv0001_parse_u8_or_level(tokens[1], 255, &r_val) != 0 ||
+		    clv0001_parse_u8_or_level(tokens[2], 255, &g_val) != 0 ||
+		    clv0001_parse_u8_or_level(tokens[3], 255, &b_val) != 0 ||
+		    clv0001_parse_u8_or_level(tokens[4], 4, &brightness) != 0)
+			return -EINVAL;
+
+		out_cmd->is_custom_rgb = true;
+		out_cmd->preset = NULL;
+		out_cmd->r = (u8)r_val;
+		out_cmd->g = (u8)g_val;
+		out_cmd->b = (u8)b_val;
+		out_cmd->brightness = brightness;
+		return 0;
+	}
+
+	if (ntokens > 2)
+		return -EINVAL;
+
+	preset = find_preset_by_name(tokens[0]);
+	if (!preset)
+		return -EINVAL;
+
+	if (ntokens == 2) {
+		if (clv0001_parse_u8_or_level(tokens[1], 4, &brightness) != 0)
+			return -EINVAL;
+	}
+
+	if (strcmp(preset->name, "off") == 0)
+		brightness = 0;
+
+	out_cmd->is_custom_rgb = false;
+	out_cmd->preset = preset;
+	out_cmd->r = preset->r;
+	out_cmd->g = preset->g;
+	out_cmd->b = preset->b;
+	out_cmd->brightness = brightness;
+	return 0;
+}
+
+static int clv0001_build_payload(u8 r, u8 g, u8 b, int brightness,
+				 u8 out_payload[4])
+{
+	u8 scale;
+
+	if (!out_payload || brightness < 0 || brightness > 4)
+		return -EINVAL;
+
+	scale = clv0001_brightness_scales[brightness];
+	out_payload[0] = (u8)(((u32)g * scale) / 0xBFU);
+	out_payload[1] = (u8)(((u32)r * scale) / 0xBFU);
+	out_payload[2] = (u8)(((u32)b * scale) / 0xBFU);
+	out_payload[3] = CLV0001_CMD_BYTE;
+	return 0;
+}
+
+static int clv0001_parse_and_build_payload(const char *buf, size_t count,
+					   struct clv0001_parsed_cmd *out_cmd,
+					   u8 out_payload[4])
+{
+	int ret;
+
+	ret = clv0001_parse_command(buf, count, out_cmd);
+	if (ret)
+		return ret;
+
+	return clv0001_build_payload(out_cmd->r, out_cmd->g, out_cmd->b,
+				     out_cmd->brightness, out_payload);
+}
+
+static const char *clv0001_parsed_cmd_preset_label(const struct clv0001_parsed_cmd *cmd)
+{
+	if (!cmd)
+		return "none";
+	if (cmd->is_custom_rgb)
+		return "custom_rgb";
+	if (cmd->preset && cmd->preset->name)
+		return cmd->preset->name;
+	return "none";
+}
+
+#ifdef __KERNEL__
+
+static const struct dmi_system_id acer_clv0001_dmi_table[] = {
+	{
+		.ident = "Acer Aspire A715-59G (Kelilu_RTH)",
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Acer"),
+			DMI_EXACT_MATCH(DMI_PRODUCT_NAME, "Aspire A715-59G"),
+			DMI_EXACT_MATCH(DMI_BOARD_NAME, "RTH"),
+			DMI_EXACT_MATCH(DMI_BOARD_VENDOR, "Kelilu_RTH"),
+		},
+	},
+	{ }
+};
+
+static const guid_t clv0001_dsm_guid = GUID_INIT(
+	0x93f224e4, 0xfbdc, 0x4bbf,
+	0xad, 0xd6, 0xdb, 0x71, 0xbd, 0xc0, 0xaf, 0xad);
+
+struct acer_clv0001_ctx {
+	struct mutex lock;
+	struct acpi_device *adev;
+	acpi_handle dchu_handle;
+	char acpi_path[64];
+	u64 last_eval_ns;
+	bool has_applied;
+	struct clv0001_parsed_cmd current_cmd;
+	u8 last_payload[4];
+	char last_status[48];
+	char last_acpi_return_type[24];
+};
 
 static const char *acpi_obj_type_name(const union acpi_object *obj)
 {
@@ -148,31 +352,26 @@ static bool is_allowed_acpi_return(const union acpi_object *obj)
 	       obj->type == ACPI_TYPE_PACKAGE;
 }
 
-static int clv0001_send_preset_locked(struct acer_clv0001_ctx *ctx,
-				      const struct clv0001_preset *preset,
-				      int brightness)
+static int clv0001_apply_command_locked(struct acer_clv0001_ctx *ctx,
+					const struct clv0001_parsed_cmd *cmd,
+					const u8 payload[4])
 {
-	u8 payload[4];
+	u8 dsm_payload[4];
 	union acpi_object buf_obj;
 	union acpi_object pkg_elements[1];
 	union acpi_object pkg_obj;
 	union acpi_object *out;
-	u8 scale;
 	int ret = 0;
 
-	if (brightness < 0 || brightness > 4 || !preset)
+	if (!ctx || !cmd || !payload)
 		return -EINVAL;
 
-	scale = clv0001_brightness_scales[brightness];
-	payload[0] = (u8)(((u16)preset->g * scale) / 0xBF);
-	payload[1] = (u8)(((u16)preset->r * scale) / 0xBF);
-	payload[2] = (u8)(((u16)preset->b * scale) / 0xBF);
-	payload[3] = CLV0001_CMD_BYTE;
+	memcpy(dsm_payload, payload, sizeof(dsm_payload));
 
 	memset(&buf_obj, 0, sizeof(buf_obj));
 	buf_obj.type = ACPI_TYPE_BUFFER;
-	buf_obj.buffer.length = sizeof(payload);
-	buf_obj.buffer.pointer = payload;
+	buf_obj.buffer.length = sizeof(dsm_payload);
+	buf_obj.buffer.pointer = dsm_payload;
 
 	pkg_elements[0] = buf_obj;
 	memset(&pkg_obj, 0, sizeof(pkg_obj));
@@ -206,9 +405,8 @@ static int clv0001_send_preset_locked(struct acer_clv0001_ctx *ctx,
 	} else {
 		strscpy(ctx->last_status, "accepted_no_hw_readback",
 			sizeof(ctx->last_status));
-		ctx->current_preset = preset;
-		ctx->current_brightness = brightness;
-		memcpy(ctx->last_payload, payload, sizeof(payload));
+		ctx->current_cmd = *cmd;
+		memcpy(ctx->last_payload, payload, sizeof(ctx->last_payload));
 		ctx->has_applied = true;
 	}
 
@@ -240,10 +438,16 @@ static ssize_t clv0001_kbd_command_show(struct kobject *kobj,
 		return -ENODEV;
 
 	mutex_lock(&ctx->lock);
-	if (ctx->has_applied && ctx->current_preset)
+	if (ctx->has_applied && ctx->current_cmd.is_custom_rgb)
+		len = sysfs_emit(buf, "rgb %u %u %u %d\n",
+				 ctx->current_cmd.r,
+				 ctx->current_cmd.g,
+				 ctx->current_cmd.b,
+				 ctx->current_cmd.brightness);
+	else if (ctx->has_applied && ctx->current_cmd.preset)
 		len = sysfs_emit(buf, "%s %d\n",
-				 ctx->current_preset->name,
-				 ctx->current_brightness);
+				 ctx->current_cmd.preset->name,
+				 ctx->current_cmd.brightness);
 	else
 		len = sysfs_emit(buf, "none\n");
 	mutex_unlock(&ctx->lock);
@@ -256,56 +460,17 @@ static ssize_t clv0001_kbd_command_store(struct kobject *kobj,
 					 size_t count)
 {
 	struct acer_clv0001_ctx *ctx = ctx_from_kobj(kobj);
-	char kbuf[64];
-	char *p;
-	char *tok1;
-	char *tok2;
-	char *tok3;
-	const struct clv0001_preset *preset;
-	int brightness = 4;
+	struct clv0001_parsed_cmd cmd;
+	u8 payload[4];
 	u64 now_ns;
 	int ret;
 
 	if (!ctx)
 		return -ENODEV;
-	if (count == 0 || count >= sizeof(kbuf))
-		return -EINVAL;
 
-	memcpy(kbuf, buf, count);
-	kbuf[count] = '\0';
-	p = strim(kbuf);
-	if (*p == '\0')
-		return -EINVAL;
-
-	tok1 = strsep(&p, " \t");
-	if (!tok1 || *tok1 == '\0')
-		return -EINVAL;
-
-	if (p) {
-		p = skip_spaces(p);
-		if (*p != '\0') {
-			tok2 = strsep(&p, " \t");
-			if (p) {
-				p = skip_spaces(p);
-				tok3 = (*p != '\0') ? p : NULL;
-				if (tok3)
-					return -EINVAL;
-			}
-			if (!tok2 || kstrtoint(tok2, 10, &brightness) != 0)
-				return -EINVAL;
-			if (brightness < 0 || brightness > 4)
-				return -EINVAL;
-		}
-	} else if (strcmp(tok1, "off") == 0) {
-		brightness = 0;
-	}
-
-	if (strcmp(tok1, "off") == 0)
-		brightness = 0;
-
-	preset = find_preset_by_name(tok1);
-	if (!preset)
-		return -EINVAL;
+	ret = clv0001_parse_and_build_payload(buf, count, &cmd, payload);
+	if (ret)
+		return ret;
 
 	if (mutex_lock_interruptible(&ctx->lock))
 		return -ERESTARTSYS;
@@ -320,7 +485,7 @@ static ssize_t clv0001_kbd_command_store(struct kobject *kobj,
 		return -EBUSY;
 	}
 
-	ret = clv0001_send_preset_locked(ctx, preset, brightness);
+	ret = clv0001_apply_command_locked(ctx, &cmd, payload);
 	mutex_unlock(&ctx->lock);
 
 	return ret ? ret : (ssize_t)count;
@@ -346,8 +511,8 @@ static ssize_t clv0001_kbd_state_show(struct kobject *kobj,
 		"acpi_return_type=%s\n"
 		"physical_readback=unsupported\n",
 		ctx->last_status,
-		ctx->current_preset ? ctx->current_preset->name : "none",
-		ctx->current_brightness,
+		ctx->has_applied ? clv0001_parsed_cmd_preset_label(&ctx->current_cmd) : "none",
+		ctx->current_cmd.brightness,
 		ctx->last_payload[0],
 		ctx->last_payload[1],
 		ctx->last_payload[2],
@@ -370,7 +535,12 @@ static ssize_t clv0001_kbd_presets_show(struct kobject *kobj,
 				     (i == 0) ? "" : ",",
 				     clv0001_presets[i].name);
 	}
-	len += sysfs_emit_at(buf, len, "\nbrightness_levels=0,1,2,3,4\n");
+	len += sysfs_emit_at(buf, len,
+			     "\nbrightness_levels=0,1,2,3,4\n"
+			     "supports_presets=1\n"
+			     "supports_custom_rgb=1\n"
+			     "custom_rgb_grammar=rgb R G B brightness_level\n"
+			     "physical_readback=0\n");
 	return len;
 }
 
@@ -455,7 +625,7 @@ static int acer_clv0001_probe(struct platform_device *pdev)
 	strscpy(ctx->last_status, "uninitialized", sizeof(ctx->last_status));
 	strscpy(ctx->last_acpi_return_type, "none",
 		sizeof(ctx->last_acpi_return_type));
-	ctx->current_brightness = 0;
+	ctx->current_cmd.brightness = 0;
 	ctx->last_payload[3] = CLV0001_CMD_BYTE;
 
 	ret = acpi_bus_attach_private_data(adev->handle, ctx);
@@ -510,3 +680,5 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("zethasaintlab");
 MODULE_DESCRIPTION("Clean-room CLV0001 (_DSM 0x67) keyboard backlight driver for Acer Aspire A715-59G");
 MODULE_VERSION("1.0.0");
+
+#endif /* __KERNEL__ */

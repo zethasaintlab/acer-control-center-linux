@@ -5,6 +5,10 @@
         <file>qml/AtelierIcon.qml</file>
         <file>qml/AtelierButton.qml</file>
         <file>qml/AtelierSlider.qml</file>
+        <file>qml/CapabilityBadge.qml</file>
+        <file>qml/IndustrialPanel.qml</file>
+        <file>qml/TelemetryLoadRow.qml</file>
+        <file>qml/SegmentedPillToggle.qml</file>
         <file>qml/SectionHeader.qml</file>
         <file>qml/OverviewView.qml</file>
         <file>qml/PerformanceView.qml</file>

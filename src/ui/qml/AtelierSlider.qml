@@ -10,12 +10,13 @@ Item {
     property int value: 50
     property int stepSize: 1
     property bool enabledState: true
-    property color fillColor: theme.accentPrimary
+    property color fillColor: theme.telemetryLimeBar
     signal valueCommitted(int newValue)
 
     implicitWidth: 240
-    implicitHeight: 44
+    implicitHeight: 46
     activeFocusOnTab: root.enabledState
+    opacity: root.enabledState ? 1.0 : 0.6
 
     function clampAndEmit(v) {
         var c = Math.max(root.minValue, Math.min(root.maxValue, Math.round(v)));
@@ -33,7 +34,7 @@ Item {
             text: root.label
             width: parent.width * 0.68
             elide: Text.ElideRight
-            font.family: "sans-serif"
+            font.family: theme.fontSans
             font.pixelSize: 12
             font.weight: Font.Medium
             color: root.enabledState ? theme.textPrimary : theme.textMuted
@@ -43,7 +44,7 @@ Item {
             text: root.value + (root.unit.length > 0 ? (" " + root.unit) : "")
             width: parent.width * 0.32
             horizontalAlignment: Text.AlignRight
-            font.family: "monospace"
+            font.family: theme.fontMono
             font.pixelSize: 12
             font.weight: Font.Bold
             color: root.enabledState ? theme.accentReadable : theme.textMuted
@@ -56,11 +57,24 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 6
-        height: 8
-        radius: 2
+        height: 10
+        radius: 1
         color: theme.surfaceHeader
         border.width: root.activeFocus ? 2 : 1
-        border.color: root.activeFocus ? theme.accentBorder : theme.borderSubtle
+        border.color: root.activeFocus ? theme.accentBorder : theme.borderStrong
+
+        // 25% / 50% / 75% CAD calibration ticks
+        Repeater {
+            model: [0.25, 0.50, 0.75]
+            delegate: Rectangle {
+                x: Math.round(track.width * modelData)
+                y: 0
+                width: 1
+                height: track.height
+                color: theme.borderSubtle
+                z: 1
+            }
+        }
 
         Rectangle {
             width: {
@@ -69,22 +83,24 @@ Item {
                 return Math.max(4, parent.width * frac);
             }
             height: parent.height
-            radius: 2
+            radius: 1
             color: root.enabledState ? root.fillColor : theme.borderStrong
+            z: 2
         }
 
         Rectangle {
             id: thumb
-            width: 10
-            height: 16
-            radius: 2
+            width: 8
+            height: 18
+            radius: 1
+            z: 3
             anchors.verticalCenter: parent.verticalCenter
             x: {
                 var span = Math.max(1, root.maxValue - root.minValue);
                 var frac = Math.max(0.0, Math.min(1.0, (root.value - root.minValue) / span));
                 return Math.max(0, Math.min(track.width - width, track.width * frac - width * 0.5));
             }
-            color: root.enabledState ? theme.textPrimary : theme.textMuted
+            color: root.enabledState ? theme.brandYellow : theme.textMuted
             border.width: 1
             border.color: theme.canvasBg
         }

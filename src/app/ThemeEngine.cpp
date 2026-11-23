@@ -6,14 +6,14 @@ namespace acc::app {
 ThemeEngine::ThemeEngine(QObject* parent)
     : QObject(parent) {
     m_swatches = {
-        QStringLiteral("#3B9EFF"),
-        QStringLiteral("#2EBE7E"),
-        QStringLiteral("#E5A024"),
-        QStringLiteral("#E04F5F"),
-        QStringLiteral("#00B8D9"),
-        QStringLiteral("#D97706"),
-        QStringLiteral("#84CC16"),
-        QStringLiteral("#94A3B8")
+        QStringLiteral("#FFEA00"),
+        QStringLiteral("#A4E61D"),
+        QStringLiteral("#F5D328"),
+        QStringLiteral("#2596FF"),
+        QStringLiteral("#F5B82E"),
+        QStringLiteral("#9B6BFF"),
+        QStringLiteral("#E06C65"),
+        QStringLiteral("#68C938")
     };
     recomputeAccentTokens();
 }
@@ -42,44 +42,83 @@ void ThemeEngine::setCompactNavigation(bool compact) {
 }
 
 QColor ThemeEngine::canvasBg() const {
-    return m_darkTheme ? QColor(QStringLiteral("#0D0F12")) : QColor(QStringLiteral("#F3F5F8"));
+    return m_darkTheme ? QColor(QStringLiteral("#161818")) : QColor(QStringLiteral("#C8CFD4"));
 }
 QColor ThemeEngine::surfacePrimary() const {
-    return m_darkTheme ? QColor(QStringLiteral("#13161B")) : QColor(QStringLiteral("#FFFFFF"));
+    return m_darkTheme ? QColor(QStringLiteral("#222524")) : QColor(QStringLiteral("#D8DCDF"));
 }
 QColor ThemeEngine::surfaceElevated() const {
-    return m_darkTheme ? QColor(QStringLiteral("#191D24")) : QColor(QStringLiteral("#EAEEF4"));
+    return m_darkTheme ? QColor(QStringLiteral("#333736")) : QColor(QStringLiteral("#E6EAED"));
 }
 QColor ThemeEngine::surfaceHeader() const {
-    return m_darkTheme ? QColor(QStringLiteral("#101318")) : QColor(QStringLiteral("#E3E8F0"));
+    return m_darkTheme ? QColor(QStringLiteral("#1B1E1D")) : QColor(QStringLiteral("#F2F4F5"));
+}
+QColor ThemeEngine::surfaceRecessed() const {
+    return m_darkTheme ? QColor(QStringLiteral("#4A5056")) : QColor(QStringLiteral("#B8C0C6"));
+}
+QColor ThemeEngine::surfaceCadLight() const {
+    return QColor(QStringLiteral("#D8DCDF"));
+}
+QColor ThemeEngine::surfacePillLight() const {
+    return QColor(QStringLiteral("#F2F4F5"));
+}
+QColor ThemeEngine::surfaceSelectedDark() const {
+    return QColor(QStringLiteral("#242629"));
+}
+QColor ThemeEngine::textOnLightCad() const {
+    return QColor(QStringLiteral("#23272A"));
+}
+QColor ThemeEngine::textOnSelectedDark() const {
+    return QColor(QStringLiteral("#F0F2F2"));
+}
+QColor ThemeEngine::darkInk() const {
+    return QColor(QStringLiteral("#141618"));
+}
+QColor ThemeEngine::borderCadSubtle() const {
+    return QColor(QStringLiteral("#9DA7B0"));
 }
 QColor ThemeEngine::borderSubtle() const {
-    return m_darkTheme ? QColor(QStringLiteral("#232832")) : QColor(QStringLiteral("#D2D9E4"));
+    return m_darkTheme ? QColor(QStringLiteral("#3E4443")) : QColor(QStringLiteral("#AEB7BE"));
 }
 QColor ThemeEngine::borderStrong() const {
-    return m_darkTheme ? QColor(QStringLiteral("#343C4A")) : QColor(QStringLiteral("#B4BFCE"));
+    return m_darkTheme ? QColor(QStringLiteral("#5C6463")) : QColor(QStringLiteral("#7C868E"));
 }
 QColor ThemeEngine::textPrimary() const {
-    return m_darkTheme ? QColor(QStringLiteral("#ECEFF4")) : QColor(QStringLiteral("#12161F"));
+    return m_darkTheme ? QColor(QStringLiteral("#F0F2F2")) : QColor(QStringLiteral("#23272A"));
 }
 QColor ThemeEngine::textSecondary() const {
-    return m_darkTheme ? QColor(QStringLiteral("#9AA4B5")) : QColor(QStringLiteral("#4A5568"));
+    return m_darkTheme ? QColor(QStringLiteral("#B8C0C4")) : QColor(QStringLiteral("#3E454B"));
 }
 QColor ThemeEngine::textMuted() const {
-    return m_darkTheme ? QColor(QStringLiteral("#646E80")) : QColor(QStringLiteral("#718096"));
+    return m_darkTheme ? QColor(QStringLiteral("#8C9398")) : QColor(QStringLiteral("#5D656C"));
 }
 
 QColor ThemeEngine::statusNominal() const {
-    return m_darkTheme ? QColor(QStringLiteral("#2EBE7E")) : QColor(QStringLiteral("#168A56"));
+    return m_darkTheme ? QColor(QStringLiteral("#A4E61D")) : QColor(QStringLiteral("#4A7A00"));
 }
 QColor ThemeEngine::statusWarning() const {
-    return m_darkTheme ? QColor(QStringLiteral("#E5A024")) : QColor(QStringLiteral("#B87503"));
+    return m_darkTheme ? QColor(QStringLiteral("#F5B82E")) : QColor(QStringLiteral("#A86400"));
 }
 QColor ThemeEngine::statusCritical() const {
-    return m_darkTheme ? QColor(QStringLiteral("#E04F5F")) : QColor(QStringLiteral("#C5283D"));
+    return m_darkTheme ? QColor(QStringLiteral("#E06C65")) : QColor(QStringLiteral("#C5283D"));
 }
 QColor ThemeEngine::statusInfo() const {
-    return m_darkTheme ? QColor(QStringLiteral("#3B9EFF")) : QColor(QStringLiteral("#0066CC"));
+    return m_darkTheme ? QColor(QStringLiteral("#2596FF")) : QColor(QStringLiteral("#0066CC"));
+}
+QColor ThemeEngine::brandYellow() const {
+    return QColor(QStringLiteral("#FFEA00"));
+}
+QColor ThemeEngine::industrialAmber() const {
+    return QColor(QStringLiteral("#F5D328"));
+}
+QColor ThemeEngine::telemetryLime() const {
+    return m_darkTheme ? QColor(QStringLiteral("#A4E61D")) : QColor(QStringLiteral("#4A7A00"));
+}
+QColor ThemeEngine::telemetryLimeBar() const {
+    return QColor(QStringLiteral("#A4E61D"));
+}
+QColor ThemeEngine::technicalCyan() const {
+    return m_darkTheme ? QColor(QStringLiteral("#2596FF")) : QColor(QStringLiteral("#0066CC"));
 }
 
 void ThemeEngine::setAccentSwatches(const QStringList& list) {

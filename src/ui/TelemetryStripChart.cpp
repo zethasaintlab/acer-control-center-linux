@@ -121,10 +121,22 @@ void TelemetryStripChart::paint(QPainter* painter) {
     const double bottomPad = 18.0;
     const QRectF plotRect(leftPad, topPad, std::max(10.0, w - leftPad - rightPad), std::max(10.0, h - topPad - bottomPad));
 
-    // 1. Draw architectural 1px gridlines & y-axis labels
-    QFont axisFont(QStringLiteral("monospace"));
+    // 1. Draw architectural 1px gridlines, corner registration crosshairs & y-axis labels
+    QFont axisFont(QStringLiteral("JetBrains Mono"));
     axisFont.setPixelSize(10);
     painter->setFont(axisFont);
+
+    const bool isLightBg = m_bgColor.lightness() > 128;
+    const QColor crosshairCol = isLightBg ? QColor(QStringLiteral("#7C868E")) : QColor(QStringLiteral("#5C6463"));
+    auto drawCrosshair = [&](double cx, double cy) {
+        painter->setPen(QPen(crosshairCol, 1.0));
+        painter->drawLine(QPointF(cx - 4.0, cy), QPointF(cx + 4.0, cy));
+        painter->drawLine(QPointF(cx, cy - 4.0), QPointF(cx, cy + 4.0));
+    };
+    drawCrosshair(plotRect.left(), plotRect.top());
+    drawCrosshair(plotRect.right(), plotRect.top());
+    drawCrosshair(plotRect.left(), plotRect.bottom());
+    drawCrosshair(plotRect.right(), plotRect.bottom());
 
     const double span = std::max(1.0, m_maxValue - m_minValue);
     for (int i = 0; i <= 4; ++i) {
@@ -188,13 +200,30 @@ void TelemetryStripChart::paint(QPainter* painter) {
         painter->drawPath(linePath);
     };
 
-    drawSeries(m_seriesA, m_seriesAColor, true);
+    auto readableSeriesColor = [&](const QColor& raw) {
+        if (!isLightBg) {
+            return raw;
+        }
+        // Darken bright saturated hues (such as #FFEA00) when plotting on Light CAD (#D8DCDF)
+        const double lum = 0.2126 * raw.redF() + 0.7152 * raw.greenF() + 0.0722 * raw.blueF();
+        if (lum > 0.34) {
+            return QColor::fromHslF(std::max(0.0f, raw.hslHueF()),
+                                    std::min(1.0f, raw.hslSaturationF()),
+                                    0.30f);
+        }
+        return raw;
+    };
+
+    const QColor drawColorA = readableSeriesColor(m_seriesAColor);
+    const QColor drawColorB = readableSeriesColor(m_seriesBColor);
+
+    drawSeries(m_seriesA, drawColorA, true);
     if (!m_seriesB.isEmpty()) {
-        drawSeries(m_seriesB, m_seriesBColor, false);
+        drawSeries(m_seriesB, drawColorB, false);
     }
 
     // Top legend & latest value readout
-    painter->setPen(m_seriesAColor);
+    painter->setPen(drawColorA);
     const double lastA = m_seriesA.isEmpty() ? 0.0 : m_seriesA.last().toDouble();
     const QString headerA = QStringLiteral("%1: %2 %3")
                                 .arg(m_seriesALabel)
@@ -203,7 +232,7 @@ void TelemetryStripChart::paint(QPainter* painter) {
     painter->drawText(QRectF(plotRect.left(), 3.0, 200.0, 16.0), Qt::AlignLeft | Qt::AlignVCenter, headerA);
 
     if (!m_seriesBLabel.isEmpty() && !m_seriesB.isEmpty()) {
-        painter->setPen(m_seriesBColor);
+        painter->setPen(drawColorB);
         const double lastB = m_seriesB.last().toDouble();
         const QString headerB = QStringLiteral("%1: %2 %3")
                                     .arg(m_seriesBLabel)
