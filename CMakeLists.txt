@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.26)
 project(acer-control-center-linux
     VERSION 1.0.0
-    DESCRIPTION "Acer Control Center — Linux Edition (Precision Hardware Atelier)"
+    DESCRIPTION "Industrial-Technical Hardware Command Center for Acer Aspire 7 A715-59G"
     LANGUAGES CXX
 )
 
@@ -77,7 +77,7 @@ add_executable(acer-control-daemon
 )
 target_link_libraries(acer-control-daemon PRIVATE acc_daemon_lib)
 
-# 4. Precision Hardware Atelier GUI & ViewModels Library
+# 4. Industrial-Technical Command Center GUI & ViewModels Library
 add_library(acc_gui_lib STATIC
     src/ui/TelemetryStripChart.h
     src/ui/TelemetryStripChart.cpp
@@ -89,6 +89,10 @@ add_library(acc_gui_lib STATIC
     src/ui/KeyboardVisualizerItem.cpp
     src/app/ThemeEngine.h
     src/app/ThemeEngine.cpp
+    src/app/AsyncControlClient.h
+    src/app/AsyncControlClient.cpp
+    src/app/TelemetryCoordinator.h
+    src/app/TelemetryCoordinator.cpp
     src/app/ControlCenterController.h
     src/app/ControlCenterController.cpp
     src/ui/resources.qrc
@@ -121,7 +125,7 @@ add_test(NAME test_core_and_hal COMMAND test_core_and_hal)
 add_executable(test_gui_atelier
     tests/gui/test_gui_atelier.cpp
 )
-target_link_libraries(test_gui_atelier PRIVATE acc_gui_lib Qt6::Test)
+target_link_libraries(test_gui_atelier PRIVATE acc_gui_lib acc_daemon_lib Qt6::Test)
 add_test(NAME test_gui_atelier COMMAND test_gui_atelier -platform offscreen)
 
 # 7. Installation Targets (Fedora 45 / RPM compatible)
@@ -156,7 +160,7 @@ install(FILES data/polkit/io.github.zethasaintlab.acercontrol.policy
     DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/actions
 )
 install(FILES data/systemd/acer-control-daemon.service
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/systemd/system
+    DESTINATION lib/systemd/system
 )
 install(FILES
     driver/acer_clv0001_kbd.c

@@ -7,32 +7,35 @@ Rectangle {
     property bool activeState: false
     property bool primaryAccent: false
     property bool enabledState: true
+    property bool pendingState: false
     property bool pillShape: true
     signal clicked()
 
-    implicitWidth: Math.max(88, labelItem.implicitWidth + 28)
+    readonly property bool interactive: root.enabledState && !root.pendingState
+
+    implicitWidth: Math.max(82, labelItem.implicitWidth + 26)
     implicitHeight: 32
     radius: pillShape ? (height / 2) : theme.radiusStructural
     clip: true
-    activeFocusOnTab: root.enabledState
-    opacity: root.enabledState ? 1.0 : 0.55
+    activeFocusOnTab: root.interactive
+    opacity: root.enabledState ? (root.pendingState ? 0.85 : 1.0) : 0.48
 
     color: {
         if (!root.enabledState) return theme.surfaceHeader;
-        if (root.primaryAccent) return mouseArea.containsMouse ? Qt.lighter(theme.accentPrimary, 1.08) : theme.accentPrimary;
+        if (root.pendingState) return theme.surfaceElevated;
+        if (root.primaryAccent)
+            return mouseArea.containsMouse ? Qt.lighter(theme.accentPrimary, 1.07) : theme.accentPrimary;
         if (root.activeState) {
-            if (!pillShape && !theme.darkTheme) return theme.surfaceSelectedDark;
+            if (!pillShape) return theme.darkTheme ? theme.surfaceOverlay : theme.surfaceSelectedDark;
             return theme.accentSurfaceTint;
         }
-        if (pillShape && !theme.darkTheme) {
-            return mouseArea.containsMouse ? theme.surfaceElevated : theme.surfacePillLight;
-        }
-        return mouseArea.containsMouse ? theme.surfaceElevated : theme.surfacePrimary;
+        return mouseArea.containsMouse ? theme.surfaceOverlay : theme.surfaceElevated;
     }
 
     border.width: root.activeFocus ? 2 : 1
     border.color: {
-        if (!root.enabledState) return theme.borderSubtle;
+        if (!root.enabledState) return theme.hairlineRule;
+        if (root.pendingState) return theme.industrialAmber;
         if (root.activeFocus || root.activeState || root.primaryAccent) return theme.accentBorder;
         return mouseArea.containsMouse ? theme.borderStrong : theme.borderSubtle;
     }
@@ -41,32 +44,34 @@ Rectangle {
         ColorAnimation { duration: theme.transitionDurationMs }
     }
 
-    // Active status indicator marker (for tactical square pills & dark/light consistency)
     Rectangle {
-        visible: root.activeState && !root.primaryAccent && !root.pillShape
+        visible: (root.activeState || root.pendingState) && !root.primaryAccent
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 3
-        color: theme.brandYellow
+        color: root.pendingState ? theme.industrialAmber : theme.brandYellow
     }
 
     Text {
         id: labelItem
         anchors.centerIn: parent
-        width: Math.min(implicitWidth, Math.max(24, root.width - 16))
+        width: Math.min(implicitWidth, Math.max(24, root.width - 18))
         horizontalAlignment: Text.AlignHCenter
         elide: Text.ElideRight
-        text: (root.activeState && !root.primaryAccent ? "● " : "") + root.text
-        font.family: theme.fontSans
-        font.pixelSize: 12
-        font.weight: (root.primaryAccent || root.activeState) ? Font.Bold : Font.Medium
+        text: root.pendingState
+              ? ("... " + root.text)
+              : ((root.activeState && !root.primaryAccent ? "● " : "") + root.text)
+        font.family: pillShape ? theme.fontSans : theme.fontMono
+        font.pixelSize: pillShape ? 12 : 11
+        font.weight: (root.primaryAccent || root.activeState || root.pendingState) ? Font.Bold : Font.Medium
         color: {
             if (!root.enabledState) return theme.textMuted;
+            if (root.pendingState) return theme.statusWarning;
             if (root.primaryAccent) return theme.accentOnText;
             if (root.activeState) {
                 if (!pillShape && !theme.darkTheme) return theme.brandYellow;
-                return theme.accentReadable;
+                return pillShape ? theme.accentReadable : theme.brandYellow;
             }
             return theme.textPrimary;
         }
@@ -75,19 +80,15 @@ Rectangle {
     MouseArea {
         id: mouseArea
         anchors.fill: parent
-        hoverEnabled: root.enabledState
-        enabled: root.enabledState
-        cursorShape: root.enabledState ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+        hoverEnabled: root.interactive
+        enabled: root.interactive
+        cursorShape: root.interactive ? Qt.PointingHandCursor : Qt.ForbiddenCursor
         onClicked: {
             root.forceActiveFocus();
             root.clicked();
         }
     }
 
-    Keys.onReturnPressed: {
-        if (root.enabledState) root.clicked();
-    }
-    Keys.onSpacePressed: {
-        if (root.enabledState) root.clicked();
-    }
+    Keys.onReturnPressed: if (root.interactive) root.clicked()
+    Keys.onSpacePressed: if (root.interactive) root.clicked()
 }

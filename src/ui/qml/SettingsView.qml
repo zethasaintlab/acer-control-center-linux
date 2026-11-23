@@ -9,195 +9,86 @@ Flickable {
     contentHeight: setCol.implicitHeight + 28
     clip: true
 
+    readonly property bool splitStudio: width >= 900
+
     Column {
         id: setCol
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.margins: 16
-        spacing: 14
+        anchors.margins: 14
+        spacing: 12
 
-        // 01 // BIMODAL SURFACE THEME, MOTION & TELEMETRY CADENCE (SCR-0016 54px rows)
-        IndustrialPanel {
+        // 01 // BIMODAL SURFACE THEME, MOTION, NAVIGATION & TELEMETRY CADENCE
+        CommandModule {
             width: parent.width
-            height: appThemeHdr.height + setRowsCol.implicitHeight + 20
+            indexCode: "01"
+            title: "BIMODAL SURFACE THEME, MOTION & CADENCE"
+            badgeText: theme.darkTheme ? "DARK TACTICAL HUD" : "LIGHT CAD SHEET"
+            contentSpacing: 6
 
-            SectionHeader {
-                id: appThemeHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "01"
-                title: "INTERFACE THEME (BIMODAL), MOTION & TELEMETRY CADENCE"
-                badgeText: theme.darkTheme ? "DARK TACTICAL HUD" : "LIGHT CAD SCHEMATIC"
-            }
-
-            Column {
-                id: setRowsCol
-                anchors.top: appThemeHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 10
-                spacing: 6
-
-                // Row 1: Bimodal Dark HUD vs Light CAD Schematic
-                Rectangle {
+            // Adaptive setting rows (wrap cleanly below 780px!)
+            Repeater {
+                model: 4
+                delegate: Rectangle {
                     width: parent.width
-                    height: 54
+                    height: rowContent.implicitHeight + 16
                     radius: theme.radiusStructural
-                    color: theme.surfaceElevated
+                    color: theme.surfaceOverlay
                     border.width: 1
                     border.color: theme.borderSubtle
 
-                    Row {
-                        anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
+                    Flow {
+                        id: rowContent
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.margins: 8
+                        spacing: 12
 
                         Column {
-                            width: Math.max(180, parent.width - 348)
-                            anchors.verticalCenter: parent.verticalCenter
+                            width: Math.max(220, parent.width >= 660 ? (parent.width - 332) : parent.width)
                             spacing: 2
+
                             Text {
-                                text: "Bimodal Engineering Surface Polarity"
+                                width: parent.width; elide: Text.ElideRight
                                 font.family: theme.fontSans; font.pixelSize: 13; font.weight: Font.Medium; color: theme.textPrimary
+                                text: index === 0 ? "Bimodal Surface Polarity"
+                                    : (index === 1 ? "Reduced Motion Transitions"
+                                    : (index === 2 ? "Command Rail Geometry" : "Async Telemetry Cadence"))
                             }
                             Text {
-                                text: "Switches between Dark Tactical HUD (#222524) and Light CAD Instrument Surface (#D8DCDF)"
-                                elide: Text.ElideRight; width: parent.width
+                                width: parent.width; elide: Text.ElideRight
                                 font.family: theme.fontMono; font.pixelSize: 10; color: theme.textMuted
+                                text: index === 0 ? "Switch Dark Tactical HUD (#222524) vs Light CAD Engineering Sheet (#D8DCDF)"
+                                    : (index === 1 ? "Zero-latency digital switches (0 ms) vs smooth transitions (140 ms)"
+                                    : (index === 2 ? "Expand full telemetry nav rail (222 px) or lock compact square rail (64 px)"
+                                                   : "Worker thread /proc, hwmon, NVML, and async D-Bus interval"))
                             }
                         }
 
                         SegmentedPillToggle {
-                            width: 336
-                            anchors.verticalCenter: parent.verticalCenter
-                            leftLabel: "LIGHT CAD (#D8DCDF)"
-                            rightLabel: "DARK HUD (#222524)"
-                            rightActive: theme.darkTheme
-                            onToggled: function(isDark) { theme.darkTheme = isDark; }
-                        }
-                    }
-                }
-
-                // Row 2: Accessibility Motion
-                Rectangle {
-                    width: parent.width
-                    height: 54
-                    radius: theme.radiusStructural
-                    color: theme.surfaceElevated
-                    border.width: 1
-                    border.color: theme.borderSubtle
-
-                    Row {
-                        anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
-
-                        Column {
-                            width: Math.max(180, parent.width - 348)
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 2
-                            Text {
-                                text: "Reduced Motion & Instant State Switching"
-                                font.family: theme.fontSans; font.pixelSize: 13; font.weight: Font.Medium; color: theme.textPrimary
-                            }
-                            Text {
-                                text: "Zero-latency digital shutter transitions (0 ms vs 140 ms)"
-                                elide: Text.ElideRight; width: parent.width
-                                font.family: theme.fontMono; font.pixelSize: 10; color: theme.textMuted
+                            visible: index < 3
+                            width: Math.min(316, parent.width)
+                            leftLabel: index === 0 ? "LIGHT CAD" : (index === 1 ? "140ms MOTION" : "EXPANDED")
+                            rightLabel: index === 0 ? "DARK HUD" : (index === 1 ? "REDUCED (0ms)" : "COMPACT (64px)")
+                            rightActive: index === 0 ? theme.darkTheme : (index === 1 ? theme.reducedMotion : theme.compactNavigation)
+                            onToggled: function(val) {
+                                if (index === 0) theme.darkTheme = val;
+                                else if (index === 1) theme.reducedMotion = val;
+                                else theme.compactNavigation = val;
                             }
                         }
 
-                        SegmentedPillToggle {
-                            width: 336
-                            anchors.verticalCenter: parent.verticalCenter
-                            leftLabel: "STANDARD (140ms)"
-                            rightLabel: "REDUCED (0ms)"
-                            rightActive: theme.reducedMotion
-                            onToggled: function(red) { theme.reducedMotion = red; }
-                        }
-                    }
-                }
-
-                // Row 3: Navigation Density
-                Rectangle {
-                    width: parent.width
-                    height: 54
-                    radius: theme.radiusStructural
-                    color: theme.surfaceElevated
-                    border.width: 1
-                    border.color: theme.borderSubtle
-
-                    Row {
-                        anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
-
-                        Column {
-                            width: Math.max(180, parent.width - 348)
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 2
-                            Text {
-                                text: "Command Navigation Rail Geometry"
-                                font.family: theme.fontSans; font.pixelSize: 13; font.weight: Font.Medium; color: theme.textPrimary
-                            }
-                            Text {
-                                text: "Expand workspace labels or lock compact 64px square icon rail"
-                                elide: Text.ElideRight; width: parent.width
-                                font.family: theme.fontMono; font.pixelSize: 10; color: theme.textMuted
-                            }
-                        }
-
-                        SegmentedPillToggle {
-                            width: 336
-                            anchors.verticalCenter: parent.verticalCenter
-                            leftLabel: "EXPANDED (224px)"
-                            rightLabel: "COMPACT (64px)"
-                            rightActive: theme.compactNavigation
-                            onToggled: function(cmp) { theme.compactNavigation = cmp; }
-                        }
-                    }
-                }
-
-                // Row 4: Telemetry Polling Cadence
-                Rectangle {
-                    width: parent.width
-                    height: 54
-                    radius: theme.radiusStructural
-                    color: theme.surfaceElevated
-                    border.width: 1
-                    border.color: theme.borderSubtle
-
-                    Row {
-                        anchors.fill: parent
-                        anchors.leftMargin: 14
-                        anchors.rightMargin: 14
-
-                        Column {
-                            width: Math.max(180, parent.width - 376)
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 2
-                            Text {
-                                text: "Telemetry Sampling Cadence"
-                                font.family: theme.fontSans; font.pixelSize: 13; font.weight: Font.Medium; color: theme.textPrimary
-                            }
-                            Text {
-                                text: "Controls /proc, hwmon, NVML, and RAPL polling frequency"
-                                elide: Text.ElideRight; width: parent.width
-                                font.family: theme.fontMono; font.pixelSize: 10; color: theme.textMuted
-                            }
-                        }
-
-                        Row {
-                            anchors.verticalCenter: parent.verticalCenter
+                        Flow {
+                            visible: index === 3
+                            width: Math.min(316, parent.width)
                             spacing: 6
                             Repeater {
                                 model: [500, 1000, 2000, 5000]
                                 delegate: AtelierButton {
                                     pillShape: false
-                                    width: 86
-                                    height: 30
+                                    width: 74; height: 32
                                     text: modelData + "ms"
                                     activeState: ctrl.pollingIntervalMs === modelData
                                     onClicked: ctrl.pollingIntervalMs = modelData
@@ -209,58 +100,103 @@ Flickable {
             }
         }
 
-        // 02 // UNRESTRICTED APPLICATION THEME ACCENT COLOR STUDIO (WCAG 2.2 AA GUARDRAILED)
-        IndustrialPanel {
+        // 02 // APPLICATION THEME ACCENT STUDIO (INDEPENDENT OF PHYSICAL KEYBOARD RGB)
+        CommandModule {
             width: parent.width
-            height: accHdr.height + accRow.implicitHeight + 28
+            indexCode: "02"
+            title: "APPLICATION ACCENT STUDIO (INDEPENDENT OF KEYBOARD LEDS)"
+            provenanceText: "ColorScience WCAG 2.2"
+            badgeText: "WCAG " + theme.contrastOnSurface.toFixed(2) + ":1 (" + (theme.wcagAaaPass ? "AAA" : (theme.wcagAaPass ? "AA PASS" : "GUARDRAIL")) + ")"
+            badgeColor: theme.wcagAaPass ? theme.telemetryLime : theme.statusWarning
 
-            SectionHeader {
-                id: accHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "02"
-                title: "APPLICATION THEME ACCENT STUDIO (INDEPENDENT OF PHYSICAL KEYBOARD LEDS)"
-                badgeText: "WCAG " + theme.contrastOnSurface.toFixed(2) + ":1 (" + (theme.wcagAaaPass ? "AAA" : (theme.wcagAaPass ? "AA PASS" : "GUARDRAIL")) + ")"
-                badgeColor: theme.wcagAaPass ? theme.telemetryLime : theme.statusWarning
-            }
+            Grid {
+                width: parent.width
+                columns: root.splitStudio ? 2 : 1
+                spacing: 14
 
-            Row {
-                id: accRow
-                anchors.top: accHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                spacing: 18
-
+                // Left: HSV Wheel + Swatches + WCAG Verification Card
                 Column {
-                    width: 176
-                    spacing: 8
+                    width: root.splitStudio ? (parent.width - 14) * 0.44 : parent.width
+                    spacing: 10
 
-                    HsvColorWheel {
-                        width: 170
-                        height: 170
-                        hue: theme.accentHue
-                        saturation: theme.accentSat
-                        value: theme.accentVal
-                        focusRingColor: theme.accentBorder
-                        onColorEdited: function(h, s, v) { theme.setAccentFromHsv(h, s, v); }
+                    Flow {
+                        width: parent.width
+                        spacing: 14
+
+                        HsvColorWheel {
+                            width: 162; height: 162
+                            hue: theme.accentHue
+                            saturation: theme.accentSat
+                            value: theme.accentVal
+                            focusRingColor: theme.accentBorder
+                            onColorEdited: function(h, s, v) { theme.setAccentFromHsv(h, s, v); }
+                        }
+
+                        Column {
+                            width: Math.max(170, parent.width - 180)
+                            spacing: 8
+
+                            AtelierSlider {
+                                width: parent.width
+                                label: "HSV Value"
+                                unit: "%"
+                                minValue: 10; maxValue: 100
+                                value: Math.round(theme.accentVal * 100)
+                                onValueCommitted: function(v) { theme.setAccentFromHsv(theme.accentHue, theme.accentSat, v / 100.0); }
+                            }
+
+                            Rectangle {
+                                width: parent.width
+                                height: 66
+                                radius: theme.radiusStructural
+                                color: theme.surfaceOverlay
+                                border.width: 1; border.color: theme.accentBorder
+                                Column {
+                                    anchors.fill: parent; anchors.margins: 8; spacing: 3
+                                    Text {
+                                        text: "SURFACE: " + theme.contrastOnSurface.toFixed(2) + ":1"
+                                        font.family: theme.fontMono; font.pixelSize: 11; font.weight: Font.Bold; color: theme.accentReadable
+                                    }
+                                    Text {
+                                        text: "ON-ACCENT CTA: " + theme.contrastOnAccent.toFixed(2) + ":1"
+                                        font.family: theme.fontMono; font.pixelSize: 11; color: theme.textSecondary
+                                    }
+                                    Text {
+                                        text: "KEYBOARD RGB ISOLATED"
+                                        font.family: theme.fontMono; font.pixelSize: 9; color: theme.textMuted
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    AtelierSlider {
-                        width: 170
-                        label: "HSV Value"
-                        unit: "%"
-                        minValue: 10
-                        maxValue: 100
-                        value: Math.round(theme.accentVal * 100)
-                        onValueCommitted: function(v) { theme.setAccentFromHsv(theme.accentHue, theme.accentSat, v / 100.0); }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: theme.accentSwatches
+                            delegate: Rectangle {
+                                id: accSwatch
+                                width: 24; height: 24; radius: theme.radiusStructural
+                                activeFocusOnTab: true
+                                color: modelData
+                                border.width: (accSwatch.activeFocus || theme.accentHex === modelData) ? 2 : 1
+                                border.color: accSwatch.activeFocus ? theme.brandYellow : (theme.accentHex === modelData ? theme.textPrimary : theme.borderSubtle)
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: { accSwatch.forceActiveFocus(); theme.setAccentFromHex(modelData); }
+                                }
+                                Keys.onReturnPressed: theme.setAccentFromHex(modelData)
+                                Keys.onSpacePressed: theme.setAccentFromHex(modelData)
+                            }
+                        }
                     }
                 }
 
+                // Right: RGB Sliders & Hex Entry
                 Column {
-                    width: Math.max(240, (parent.width - 216) * 0.54)
-                    spacing: 8
+                    width: root.splitStudio ? (parent.width - 14) * 0.56 : parent.width
+                    spacing: 9
 
                     AtelierSlider {
                         width: parent.width; label: "Accent Red (R)"; unit: ""; minValue: 0; maxValue: 255
@@ -289,111 +225,57 @@ Flickable {
 
                         TextField {
                             id: appHexInput
-                            width: 96; height: 30
+                            width: 92; height: 30
                             text: theme.accentHex
                             font.family: theme.fontMono; font.pixelSize: 12; color: theme.textPrimary
                             selectByMouse: true
                             background: Rectangle {
                                 radius: theme.radiusStructural
-                                color: theme.surfaceElevated
+                                color: theme.surfaceSunken
                                 border.width: appHexInput.activeFocus ? 2 : 1
                                 border.color: appHexInput.activeFocus ? theme.accentBorder : theme.borderSubtle
                             }
                             onEditingFinished: theme.setAccentFromHex(text)
                         }
 
-                        AtelierButton { height: 30; text: "SAVE SWATCH"; onClicked: theme.saveCurrentAccentToSwatches() }
-                        AtelierButton { height: 30; text: "ENDFIELD #FFEA00"; onClicked: theme.setAccentFromHex("#FFEA00") }
+                        AtelierButton { height: 30; pillShape: false; text: "SAVE SWATCH"; onClicked: theme.saveCurrentAccentToSwatches() }
+                        AtelierButton { height: 30; pillShape: false; text: "ENDFIELD #FFEA00"; onClicked: theme.setAccentFromHex("#FFEA00") }
                     }
-
-                    Row {
-                        spacing: 6
-                        Repeater {
-                            model: theme.accentSwatches
-                            delegate: Rectangle {
-                                id: accSwatch
-                                width: 24; height: 24; radius: theme.radiusStructural
-                                activeFocusOnTab: true
-                                color: modelData
-                                border.width: (accSwatch.activeFocus || theme.accentHex === modelData) ? 2 : 1
-                                border.color: accSwatch.activeFocus ? theme.brandYellow : (theme.accentHex === modelData ? theme.textPrimary : theme.borderSubtle)
-                                MouseArea {
-                                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                    onClicked: { accSwatch.forceActiveFocus(); theme.setAccentFromHex(modelData); }
-                                }
-                                Keys.onReturnPressed: theme.setAccentFromHex(modelData)
-                                Keys.onSpacePressed: theme.setAccentFromHex(modelData)
-                            }
-                        }
-                    }
-                }
-
-                Column {
-                    width: Math.max(200, (parent.width - 216) * 0.42)
-                    spacing: 10
 
                     Text {
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        text: "WCAG 2.2 Contrast Guardrail Engine: Selecting any custom sRGB application accent automatically computes readable surface text (>= 4.5:1 AA against #222524 Dark HUD or #D8DCDF Light CAD) without affecting physical keyboard LEDs."
+                        text: "WCAG 2.2 Guardrail: Custom accent colors automatically derive accessible readable text tokens (>= 4.5:1 AA against #222524 Dark HUD or #D8DCDF Light CAD) without modifying physical keyboard lighting."
                         font.family: theme.fontSans
-                        font.pixelSize: 12
+                        font.pixelSize: 11
                         color: theme.textSecondary
-                    }
-
-                    Rectangle {
-                        width: parent.width
-                        height: 68
-                        radius: theme.radiusStructural
-                        color: theme.surfaceElevated
-                        border.width: 1
-                        border.color: theme.accentBorder
-
-                        Column {
-                            anchors.fill: parent; anchors.margins: 10; spacing: 4
-                            Text {
-                                text: "SURFACE TEXT CONTRAST: " + theme.contrastOnSurface.toFixed(2) + ":1"
-                                font.family: theme.fontMono; font.pixelSize: 11; font.weight: Font.Bold; color: theme.accentReadable
-                            }
-                            Text {
-                                text: "ON-ACCENT CTA CONTRAST: " + theme.contrastOnAccent.toFixed(2) + ":1"
-                                font.family: theme.fontMono; font.pixelSize: 11; color: theme.textSecondary
-                            }
-                        }
                     }
                 }
             }
         }
 
-        // 03 // CONFIGURATION & PROFILE BUNDLE IMPORT / EXPORT
-        IndustrialPanel {
+        // 03 // VERSIONED PROFILE BUNDLE PERSISTENCE
+        CommandModule {
             width: parent.width
-            height: 98
+            indexCode: "03"
+            title: "PROFILE BUNDLE PERSISTENCE (SCHEMA V1)"
+            provenanceText: "~/.config/acer-control-center"
+            badgeText: "JSON SCHEMA V1"
 
-            SectionHeader {
-                id: expHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "03"
-                title: "VERSIONED PROFILE BUNDLE PERSISTENCE (SCHEMA V1)"
-                badgeText: "~/.config/acer-control-center"
-            }
-
-            Row {
-                anchors.top: expHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                spacing: 12
+            Flow {
+                width: parent.width
+                spacing: 10
 
                 AtelierButton {
+                    height: 32
                     text: "EXPORT PROFILE BUNDLE JSON"
                     primaryAccent: true
                     onClicked: ctrl.exportProfileBundle("")
                 }
 
                 AtelierButton {
+                    height: 32
+                    pillShape: false
                     text: "IMPORT & VALIDATE PROFILE BUNDLE"
                     onClicked: ctrl.importProfileBundle("")
                 }

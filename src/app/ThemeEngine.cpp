@@ -42,19 +42,28 @@ void ThemeEngine::setCompactNavigation(bool compact) {
 }
 
 QColor ThemeEngine::canvasBg() const {
-    return m_darkTheme ? QColor(QStringLiteral("#161818")) : QColor(QStringLiteral("#C8CFD4"));
+    return m_darkTheme ? QColor(QStringLiteral("#131616")) : QColor(QStringLiteral("#CFD5D9"));
 }
 QColor ThemeEngine::surfacePrimary() const {
     return m_darkTheme ? QColor(QStringLiteral("#222524")) : QColor(QStringLiteral("#D8DCDF"));
 }
 QColor ThemeEngine::surfaceElevated() const {
-    return m_darkTheme ? QColor(QStringLiteral("#333736")) : QColor(QStringLiteral("#E6EAED"));
+    return m_darkTheme ? QColor(QStringLiteral("#2B302F")) : QColor(QStringLiteral("#EDF0F2"));
 }
 QColor ThemeEngine::surfaceHeader() const {
-    return m_darkTheme ? QColor(QStringLiteral("#1B1E1D")) : QColor(QStringLiteral("#F2F4F5"));
+    return m_darkTheme ? QColor(QStringLiteral("#181B1A")) : QColor(QStringLiteral("#F4F6F7"));
 }
 QColor ThemeEngine::surfaceRecessed() const {
     return m_darkTheme ? QColor(QStringLiteral("#4A5056")) : QColor(QStringLiteral("#B8C0C6"));
+}
+QColor ThemeEngine::surfaceSunken() const {
+    return m_darkTheme ? QColor(QStringLiteral("#151818")) : QColor(QStringLiteral("#C5CDD2"));
+}
+QColor ThemeEngine::surfaceOverlay() const {
+    return m_darkTheme ? QColor(QStringLiteral("#333837")) : QColor(QStringLiteral("#F7F9FA"));
+}
+QColor ThemeEngine::hairlineRule() const {
+    return m_darkTheme ? QColor(QStringLiteral("#2E3433")) : QColor(QStringLiteral("#B6BFC6"));
 }
 QColor ThemeEngine::surfaceCadLight() const {
     return QColor(QStringLiteral("#D8DCDF"));

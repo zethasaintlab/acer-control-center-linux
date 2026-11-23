@@ -6,16 +6,15 @@
 #include "hal/ControlOperations.h"
 #include "hal/SysfsRoot.h"
 
-#include <QDBusConnection>
-#include <QDBusMessage>
+#include <QDateTime>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QJsonParseError>
-#include <QMenu>
 #include <QPainter>
 #include <QPixmap>
+#include <QPointer>
 #include <QRandomGenerator>
 #include <algorithm>
 #include <cmath>
@@ -31,22 +30,20 @@ void appendHistorySample(QVariantList& list, double value) {
         list.removeFirst();
     }
 }
-
-QString formatDaemonRejection(const QString& errCode, const QString& readbackJson) {
-    QJsonParseError parseErr{};
-    const QJsonDocument doc = QJsonDocument::fromJson(readbackJson.toUtf8(), &parseErr);
-    if (parseErr.error == QJsonParseError::NoError && doc.isObject()) {
-        const QString msg = doc.object().value(QStringLiteral("message")).toString().trimmed();
-        if (!msg.isEmpty()) {
-            return QStringLiteral("%1 — %2").arg(errCode, msg);
-        }
-    }
-    return errCode;
-}
 } // namespace
 
 ControlCenterController::ControlCenterController(ThemeEngine* themeEngine, QObject* parent)
-    : QObject(parent), m_theme(themeEngine) {
+    : ControlCenterController(themeEngine, nullptr, QDBusConnection::systemBus(), parent) {}
+
+ControlCenterController::ControlCenterController(
+    ThemeEngine* themeEngine,
+    IAsyncControlTransport* customTransport,
+    QDBusConnection bus,
+    QObject* parent
+)
+    : QObject(parent),
+      m_theme(themeEngine),
+      m_dbusConnection(std::move(bus)) {
     QString loadWarn;
     m_settings = m_configStore.loadSettings(&loadWarn);
     if (!loadWarn.isEmpty()) {
@@ -69,32 +66,64 @@ ControlCenterController::ControlCenterController(ThemeEngine* themeEngine, QObje
 
     loadActiveKeyboardProfileFromSettings();
 
-    // Subscribe to systemd-logind PrepareForSleep(bool) for suspend/resume recovery
-    QDBusConnection::systemBus().connect(
-        QStringLiteral("org.freedesktop.login1"),
-        QStringLiteral("/org/freedesktop/login1"),
-        QStringLiteral("org.freedesktop.login1.Manager"),
-        QStringLiteral("PrepareForSleep"),
-        this,
-        SLOT(onPrepareForSleep(bool))
+    m_coordinator = std::make_unique<TelemetryCoordinator>(
+        m_dbusConnection,
+        QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+        QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
+        QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
+        this
     );
+    connect(m_coordinator.get(), &TelemetryCoordinator::snapshotReady, this, &ControlCenterController::onSnapshotReady);
+    connect(m_coordinator.get(), &TelemetryCoordinator::collectionFailed, this, &ControlCenterController::onCollectionFailed);
+    connect(m_coordinator.get(), &TelemetryCoordinator::inFlightChanged, this, &ControlCenterController::onCoordinatorInFlightChanged);
+
+    if (customTransport) {
+        m_transport = customTransport;
+    } else {
+        m_ownedTransport = std::make_unique<DbusControlTransport>(m_dbusConnection);
+        m_transport = m_ownedTransport.get();
+    }
+
+    // Subscribe to systemd-logind PrepareForSleep(bool) for suspend/resume recovery
+    if (m_dbusConnection.isConnected()) {
+        m_dbusConnection.connect(
+            QStringLiteral("org.freedesktop.login1"),
+            QStringLiteral("/org/freedesktop/login1"),
+            QStringLiteral("org.freedesktop.login1.Manager"),
+            QStringLiteral("PrepareForSleep"),
+            this,
+            SLOT(onPrepareForSleep(bool))
+        );
+    }
 
     connect(&m_pollTimer, &QTimer::timeout, this, &ControlCenterController::refreshNow);
     m_pollTimer.setInterval(m_settings.pollingIntervalMs);
 
-    refreshNow();
-    // Seed at least 12 initial points from the real reading so strip charts render an immediate baseline
-    for (int i = 0; i < 12; ++i) {
-        appendHistorySample(m_histCpuTemp, m_snapshot.cpu.packageTempC);
-        appendHistorySample(m_histGpuTemp, m_snapshot.gpu.tempC);
-        appendHistorySample(m_histCpuLoad, m_snapshot.cpu.totalUtilizationPct);
-        appendHistorySample(m_histGpuLoad, m_snapshot.gpu.gpuUtilizationPct);
-        appendHistorySample(m_histBatteryWatts, m_snapshot.battery.powerWatts);
-    }
-    Q_EMIT telemetryUpdated();
+    connect(&m_freshnessTimer, &QTimer::timeout, this, &ControlCenterController::onFreshnessTick);
+    m_freshnessTimer.setInterval(1000);
+    m_freshnessTimer.start();
 
+    // Non-blocking initial async telemetry request (GUI event loop starts immediately)
+    refreshNow();
     m_pollTimer.start();
     setupSystemTray();
+}
+
+ControlCenterController::~ControlCenterController() {
+    m_pollTimer.stop();
+    m_freshnessTimer.stop();
+    ++m_controlToken;
+    m_coordinator.reset();
+    m_ownedTransport.reset();
+    m_transport = nullptr;
+}
+
+bool ControlCenterController::mockModeActive() const {
+    return m_hasValidSnapshot ? m_snapshot.mockModeActive : hal::SysfsRoot::instance().isMockActive();
+}
+
+QString ControlCenterController::hardwareModeLabel() const {
+    return m_hasValidSnapshot ? m_snapshot.mockScenarioName : hal::SysfsRoot::instance().scenarioLabel();
 }
 
 void ControlCenterController::setupSystemTray() {
@@ -121,15 +150,196 @@ void ControlCenterController::setupSystemTray() {
     m_trayIcon->show();
 }
 
+int64_t ControlCenterController::maxFreshAgeMs() const {
+    if (m_freshnessTimeoutOverrideMs > 0) {
+        return m_freshnessTimeoutOverrideMs;
+    }
+    return std::max<int64_t>(3000, static_cast<int64_t>(m_settings.pollingIntervalMs) * 2 + 1500);
+}
+
+void ControlCenterController::setFreshnessTimeoutOverrideMsForTest(int timeoutMs) {
+    m_freshnessTimeoutOverrideMs = std::max(0, timeoutMs);
+    onFreshnessTick();
+}
+
+bool ControlCenterController::waitForNextSnapshot(int timeoutMs) {
+    if (!m_coordinator) {
+        return false;
+    }
+    if (!m_coordinator->isInFlight()) {
+        refreshNow();
+    }
+    QEventLoop loop;
+    bool finished = false;
+    QTimer timer;
+    timer.setSingleShot(true);
+
+    const auto c1 = connect(this, &ControlCenterController::telemetryUpdated, &loop, [&]() {
+        finished = true;
+        loop.quit();
+    });
+    const auto c2 = connect(m_coordinator.get(), &TelemetryCoordinator::collectionFailed, &loop, [&]() {
+        finished = true;
+        loop.quit();
+    });
+    const auto c3 = connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+
+    timer.start(std::max(50, timeoutMs));
+    loop.exec();
+
+    disconnect(c1);
+    disconnect(c2);
+    disconnect(c3);
+    return finished && m_hasValidSnapshot;
+}
+
+void ControlCenterController::onFreshnessTick() {
+    if (!m_hasValidSnapshot) {
+        return;
+    }
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 age = std::max<qint64>(0, nowMs - m_snapshot.timestampMs);
+    const core::TelemetryFreshness nextFreshness =
+        (m_telemetrySuspended || !m_telemetryErrorMessage.isEmpty() || age > maxFreshAgeMs())
+            ? core::TelemetryFreshness::Stale
+            : core::TelemetryFreshness::Fresh;
+
+    if (m_telemetryAgeMs != age || m_freshness != nextFreshness) {
+        m_telemetryAgeMs = age;
+        m_freshness = nextFreshness;
+        Q_EMIT telemetryFreshnessChanged();
+    }
+}
+
+void ControlCenterController::onCoordinatorInFlightChanged(bool inFlight) {
+    if (m_telemetryRefreshing != inFlight) {
+        m_telemetryRefreshing = inFlight;
+        Q_EMIT telemetryFreshnessChanged();
+    }
+}
+
+void ControlCenterController::onSnapshotReady(const core::SystemSnapshot& snapshot, uint64_t /*seq*/) {
+    m_snapshot = snapshot;
+    m_hasValidSnapshot = snapshot.valid;
+    m_telemetryErrorMessage.clear();
+    m_telemetryAgeMs = 0;
+    m_freshness = m_hasValidSnapshot
+                      ? (m_telemetrySuspended ? core::TelemetryFreshness::Stale : core::TelemetryFreshness::Fresh)
+                      : core::TelemetryFreshness::Unavailable;
+
+    if (m_hasValidSnapshot) {
+        if (m_histCpuTemp.isEmpty()) {
+            // Seed baseline history points once from the first valid real reading
+            for (int i = 0; i < 12; ++i) {
+                appendHistorySample(m_histCpuTemp, m_snapshot.cpu.packageTempC);
+                appendHistorySample(m_histGpuTemp, m_snapshot.gpu.tempC);
+                appendHistorySample(m_histCpuLoad, m_snapshot.cpu.totalUtilizationPct);
+                appendHistorySample(m_histGpuLoad, m_snapshot.gpu.gpuUtilizationPct);
+                appendHistorySample(m_histBatteryWatts, m_snapshot.battery.powerWatts);
+            }
+        } else {
+            appendHistorySample(m_histCpuTemp, m_snapshot.cpu.packageTempC);
+            appendHistorySample(m_histGpuTemp, m_snapshot.gpu.tempC);
+            appendHistorySample(m_histCpuLoad, m_snapshot.cpu.totalUtilizationPct);
+            appendHistorySample(m_histGpuLoad, m_snapshot.gpu.gpuUtilizationPct);
+            appendHistorySample(m_histBatteryWatts, m_snapshot.battery.powerWatts);
+        }
+    }
+
+    const bool prevAcOnline = m_lastAcOnlineState;
+    const bool wasFirstPoll = m_firstPoll;
+    m_lastAcOnlineState = m_snapshot.battery.acOnline;
+    m_firstPoll = false;
+    if (m_hasValidSnapshot && !m_snapshot.mockModeActive && !m_initialLiveProfileSynced &&
+        m_settings.activeOperatingProfileId != QLatin1String("custom")) {
+        const QString ppd = m_snapshot.activeTunedProfile.trimmed().toLower();
+        QString liveMapped;
+        if (ppd == QLatin1String("power-saver") || ppd == QLatin1String("powersave")) {
+            liveMapped = QStringLiteral("quiet");
+        } else if (ppd == QLatin1String("balanced")) {
+            liveMapped = QStringLiteral("balanced");
+        } else if (ppd == QLatin1String("performance") || ppd == QLatin1String("throughput-performance")) {
+            liveMapped = QStringLiteral("performance");
+        }
+        if (!liveMapped.isEmpty()) {
+            m_initialLiveProfileSynced = true;
+            if (m_settings.activeOperatingProfileId != liveMapped) {
+                m_settings.activeOperatingProfileId = liveMapped;
+                Q_EMIT settingsUpdated();
+            }
+        }
+    }
+    if (wasFirstPoll && m_snapshot.battery.chargeLimitSupported) {
+        m_batPreviousThresholdPct = std::clamp(m_snapshot.battery.chargeEndThresholdPct, 50, 100);
+    }
+
+    if (wasFirstPoll && !m_statusBannerIsError && m_controlAuthState == core::ControlAuthState::Idle) {
+        setStatusBanner(QStringLiteral("Ready — Hardware Telemetry Active"), false);
+    }
+
+    // Check AC/Battery auto profile transition
+    if (!wasFirstPoll && m_settings.autoSwitchProfileOnPower && m_snapshot.battery.acOnline != prevAcOnline) {
+        const QString targetProf = m_snapshot.battery.acOnline ? m_settings.acOperatingProfileId : m_settings.batteryOperatingProfileId;
+        selectOperatingProfile(targetProf);
+    }
+
+    if (m_trayIcon) {
+        const QString gpuTip = m_snapshot.gpu.telemetryMeasuredByNvml
+                                   ? QStringLiteral("%1°C").arg(m_snapshot.gpu.tempC, 0, 'f', 0)
+                                   : (m_snapshot.gpu.available ? m_snapshot.gpu.pstate : QStringLiteral("N/A"));
+        m_trayIcon->setToolTip(
+            QStringLiteral("Acer Aspire A715-59G  |  CPU: %1°C (%2%)  |  GPU: %3  |  Profile: %4")
+                .arg(m_snapshot.cpu.packageTempC, 0, 'f', 0)
+                .arg(m_snapshot.cpu.totalUtilizationPct, 0, 'f', 0)
+                .arg(gpuTip, m_settings.activeOperatingProfileId.toUpper())
+        );
+    }
+
+    if (!m_snapshot.keyboardHw.supportsRgbZones && m_kbdSelectedZone != -1) {
+        m_kbdSelectedZone = -1;
+        Q_EMIT keyboardStudioChanged();
+    }
+
+    Q_EMIT telemetryFreshnessChanged();
+    Q_EMIT telemetryUpdated();
+}
+
+void ControlCenterController::onCollectionFailed(const QString& errorMessage, uint64_t /*seq*/) {
+    m_telemetryErrorMessage = errorMessage;
+    m_freshness = m_hasValidSnapshot
+                      ? core::TelemetryFreshness::Stale
+                      : core::TelemetryFreshness::Unavailable;
+    if (m_hasValidSnapshot) {
+        m_telemetryAgeMs = std::max<qint64>(0, QDateTime::currentMSecsSinceEpoch() - m_snapshot.timestampMs);
+    } else {
+        m_telemetryAgeMs = -1;
+    }
+
+    core::DiagnosticRedactor::instance().appendLog(
+        QStringLiteral("WARN"),
+        QStringLiteral("HAL"),
+        QStringLiteral("Telemetry collection failed (%1); state=%2")
+            .arg(errorMessage, telemetryFreshness())
+    );
+    Q_EMIT telemetryFreshnessChanged();
+    Q_EMIT telemetryUpdated();
+}
+
 void ControlCenterController::onPrepareForSleep(bool goingToSleep) {
     if (goingToSleep) {
         m_pollTimer.stop();
+        m_telemetrySuspended = true;
+        if (m_hasValidSnapshot) {
+            m_freshness = core::TelemetryFreshness::Stale;
+        }
         core::DiagnosticRedactor::instance().appendLog(
             QStringLiteral("INFO"),
             QStringLiteral("POWER"),
             QStringLiteral("System entering suspend (PrepareForSleep=true); paused telemetry polling.")
         );
+        Q_EMIT telemetryFreshnessChanged();
     } else {
+        m_telemetrySuspended = false;
         core::DiagnosticRedactor::instance().appendLog(
             QStringLiteral("INFO"),
             QStringLiteral("POWER"),
@@ -137,7 +347,7 @@ void ControlCenterController::onPrepareForSleep(bool goingToSleep) {
         );
         refreshNow();
         m_pollTimer.start(m_settings.pollingIntervalMs);
-        setStatusBanner(QStringLiteral("Resumed from sleep — hardware telemetry & capabilities re-verified."), false);
+        setStatusBanner(QStringLiteral("Resumed from sleep — re-verifying hardware telemetry & capabilities."), false);
     }
     Q_EMIT logsUpdated();
 }
@@ -202,81 +412,82 @@ void ControlCenterController::setStatusBanner(const QString& text, bool isError)
     Q_EMIT logsUpdated();
 }
 
-void ControlCenterController::pollRaplFromDaemonIfAvailable() {
-    if (hal::SysfsRoot::instance().isMockActive()) {
-        return;
-    }
-    QDBusMessage call = QDBusMessage::createMethodCall(
-        QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-        QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
-        QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-        QStringLiteral("GetRaplPowerSnapshot")
-    );
-    const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 120);
-    if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 6) {
-        const uint64_t pkgUj = reply.arguments().at(0).toULongLong();
-        const uint64_t coreUj = reply.arguments().at(1).toULongLong();
-        const uint64_t psysUj = reply.arguments().at(3).toULongLong();
-        const int64_t tsUs = reply.arguments().at(4).toLongLong();
-        const bool avail = reply.arguments().at(5).toBool();
-        m_collector.updateRaplCounters(pkgUj, coreUj, psysUj, tsUs, avail);
+void ControlCenterController::refreshNow() {
+    if (m_coordinator) {
+        m_coordinator->requestRefresh(m_settings.activeOperatingProfileId);
     }
 }
 
-void ControlCenterController::refreshNow() {
-    pollRaplFromDaemonIfAvailable();
-    m_snapshot = m_collector.collectSnapshot(m_settings.activeOperatingProfileId);
-
-    appendHistorySample(m_histCpuTemp, m_snapshot.cpu.packageTempC);
-    appendHistorySample(m_histGpuTemp, m_snapshot.gpu.tempC);
-    appendHistorySample(m_histCpuLoad, m_snapshot.cpu.totalUtilizationPct);
-    appendHistorySample(m_histGpuLoad, m_snapshot.gpu.gpuUtilizationPct);
-    appendHistorySample(m_histBatteryWatts, m_snapshot.battery.powerWatts);
-
-    const bool prevAcOnline = m_lastAcOnlineState;
-    const bool wasFirstPoll = m_firstPoll;
-    m_lastAcOnlineState = m_snapshot.battery.acOnline;
-    m_firstPoll = false;
-    if (wasFirstPoll && m_snapshot.battery.chargeLimitSupported) {
-        m_batPreviousThresholdPct = std::clamp(m_snapshot.battery.chargeEndThresholdPct, 50, 100);
-    }
-
-    // Check AC/Battery auto profile transition
-    if (!wasFirstPoll && m_settings.autoSwitchProfileOnPower && m_snapshot.battery.acOnline != prevAcOnline) {
-        const QString targetProf = m_snapshot.battery.acOnline ? m_settings.acOperatingProfileId : m_settings.batteryOperatingProfileId;
-        selectOperatingProfile(targetProf);
-    }
-
-    if (m_trayIcon) {
-        const QString gpuTip = m_snapshot.gpu.telemetryMeasuredByNvml
-                                   ? QStringLiteral("%1°C").arg(m_snapshot.gpu.tempC, 0, 'f', 0)
-                                   : (m_snapshot.gpu.available ? m_snapshot.gpu.pstate : QStringLiteral("N/A"));
-        m_trayIcon->setToolTip(
-            QStringLiteral("Acer Aspire A715-59G  |  CPU: %1°C (%2%)  |  GPU: %3  |  Profile: %4")
-                .arg(m_snapshot.cpu.packageTempC, 0, 'f', 0)
-                .arg(m_snapshot.cpu.totalUtilizationPct, 0, 'f', 0)
-                .arg(gpuTip, m_settings.activeOperatingProfileId.toUpper())
+bool ControlCenterController::beginControlOperation(const QString& operationName, uint64_t& outToken) {
+    if (m_controlOperationPending) {
+        setStatusBanner(
+            QStringLiteral("Another control operation (%1) is still awaiting authorization or completion.")
+                .arg(m_controlOperationName),
+            true
         );
+        return false;
     }
 
-    if (!m_snapshot.keyboardHw.supportsRgbZones && m_kbdSelectedZone != -1) {
-        m_kbdSelectedZone = -1;
-        Q_EMIT keyboardStudioChanged();
+    outToken = ++m_controlToken;
+    m_controlOperationPending = true;
+    m_controlOperationName = operationName;
+    m_controlAuthState = core::ControlAuthState::Pending;
+    m_controlLastErrorCode.clear();
+    m_controlLastErrorMessage.clear();
+    Q_EMIT controlOperationChanged();
+    setStatusBanner(QStringLiteral("Awaiting authorization / applying %1...").arg(operationName), false);
+    return true;
+}
+
+void ControlCenterController::completeControlOperation(
+    uint64_t token,
+    const QString& operationName,
+    const AsyncControlOutcome& outcome,
+    bool triggerRefresh
+) {
+    if (token != m_controlToken) {
+        return;
     }
 
-    Q_EMIT telemetryUpdated();
+    m_controlOperationPending = false;
+    m_controlOperationName = operationName;
+    m_controlAuthState = outcome.authState;
+    m_controlLastErrorCode = outcome.errorCode;
+    m_controlLastErrorMessage = outcome.applied ? QString() : outcome.message;
+    Q_EMIT controlOperationChanged();
+    Q_EMIT controlOperationFinished(
+        operationName,
+        outcome.applied,
+        core::controlAuthStateToId(outcome.authState),
+        outcome.errorCode,
+        outcome.message
+    );
+
+    if (triggerRefresh) {
+        refreshNow();
+    }
+    setStatusBanner(outcome.message, !outcome.applied);
 }
 
 QString ControlCenterController::productTitle() const {
+    if (!m_hasValidSnapshot && m_snapshot.dmi.productName.isEmpty()) {
+        return QStringLiteral("Detecting platform...");
+    }
     return QStringLiteral("%1 %2 (v%3)")
         .arg(m_snapshot.dmi.sysVendor, m_snapshot.dmi.productName, m_snapshot.dmi.productVersion);
 }
 
 QString ControlCenterController::boardTitle() const {
+    if (!m_hasValidSnapshot && m_snapshot.dmi.boardName.isEmpty()) {
+        return QStringLiteral("--");
+    }
     return QStringLiteral("%1 // %2").arg(m_snapshot.dmi.boardName, m_snapshot.dmi.boardVendor);
 }
 
 QString ControlCenterController::biosTitle() const {
+    if (!m_hasValidSnapshot && m_snapshot.dmi.biosVersion.isEmpty()) {
+        return QStringLiteral("--");
+    }
     return QStringLiteral("%1 %2 (%3)")
         .arg(m_snapshot.dmi.biosVendor, m_snapshot.dmi.biosVersion, m_snapshot.dmi.biosDate);
 }
@@ -683,7 +894,6 @@ void ControlCenterController::applySelectedKbdColorToActiveZones() {
             m_currentKbdProfile.zones[static_cast<size_t>(i)].hex = m_kbdPickerHex;
         }
     }
-    // Sync back into settings profile vector and persist
     syncCurrentKbdProfileToSettings();
     Q_EMIT keyboardStudioChanged();
 }
@@ -796,6 +1006,10 @@ void ControlCenterController::saveNewKbdProfile(const QString& profileName) {
 }
 
 void ControlCenterController::applyKeyboardLightingToHardware() {
+    if (!m_transport) {
+        return;
+    }
+
     QStringList hexes;
     for (const auto& z : m_currentKbdProfile.zones) {
         hexes.append(z.hex);
@@ -830,66 +1044,65 @@ void ControlCenterController::applyKeyboardLightingToHardware() {
         }
     }
 
-    if (!hal::SysfsRoot::instance().isMockActive()) {
-        QDBusMessage call = QDBusMessage::createMethodCall(
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("SetKeyboardLighting")
-        );
-        call << hwMode << static_cast<uint>(effectiveBri) << zonesCsv;
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
-        if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
-            const bool ok = reply.arguments().at(0).toBool();
-            const QString rb = reply.arguments().at(1).toString();
-            const QString errCode = reply.arguments().at(2).toString();
-            refreshNow();
-            setStatusBanner(
-                ok ? (useClvPresetProtocol
-                          ? QStringLiteral("Command accepted — physical readback unavailable (%1).").arg(rb)
-                          : QStringLiteral("Daemon applied & verified keyboard lighting (%1).").arg(rb))
-                   : QStringLiteral("Daemon rejected keyboard lighting (%1).").arg(formatDaemonRejection(errCode, rb)),
-                !ok
-            );
-            return;
-        }
-        const QString dbusErr = reply.errorName().isEmpty()
-                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
-                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
-        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
-        refreshNow();
-        setStatusBanner(
-            QStringLiteral("Privileged daemon D-Bus call failed for keyboard lighting (%1).").arg(dbusErr),
-            true
-        );
+    uint64_t token = 0;
+    const QString opName = QStringLiteral("keyboard_lighting");
+    if (!beginControlOperation(opName, token)) {
         return;
     }
 
-    const core::ControlResult res = hal::ControlOperations::applyKeyboardLighting(
+    QPointer<ControlCenterController> self(this);
+    m_transport->setKeyboardLighting(
         hwMode,
-        effectiveBri,
-        zonesCsv
+        static_cast<uint>(effectiveBri),
+        zonesCsv,
+        useClvPresetProtocol,
+        [self, token, opName](const AsyncControlOutcome& outcome) {
+            if (!self) {
+                return;
+            }
+            self->completeControlOperation(token, opName, outcome, true);
+        }
     );
-    refreshNow();
-    setStatusBanner(res.message, !res.applied);
 }
 
 void ControlCenterController::selectOperatingProfile(const QString& profileId) {
+    if (!m_transport) {
+        return;
+    }
     const auto profiles = core::ConfigStore::standardOperatingProfiles(m_settings.customOperatingProfile);
     for (const auto& p : profiles) {
         if (p.id == profileId) {
+            uint64_t token = 0;
+            const QString opName = QStringLiteral("power_profile");
+            if (!beginControlOperation(opName, token)) {
+                return;
+            }
+
+            m_initialLiveProfileSynced = true;
             m_settings.activeOperatingProfileId = p.id;
             persistSettings();
             Q_EMIT settingsUpdated();
 
-            const core::ControlResult ppdRes = hal::ControlOperations::applySystemPowerProfile(p.ppdProfile);
-            if (hal::SysfsRoot::instance().isMockActive()) {
-                hal::ControlOperations::applyCpuPerformanceTuning(
-                    p.governor, p.epp, p.turboEnabled, p.minPerfPct, p.maxPerfPct
-                );
-            }
-            refreshNow();
-            setStatusBanner(ppdRes.message, !ppdRes.applied);
+            const core::OperatingProfile chosen = p;
+            QPointer<ControlCenterController> self(this);
+            m_transport->setSystemPowerProfile(
+                chosen.ppdProfile,
+                [self, token, opName, chosen](const AsyncControlOutcome& outcome) {
+                    if (!self) {
+                        return;
+                    }
+                    if (outcome.applied && hal::SysfsRoot::instance().isMockActive()) {
+                        hal::ControlOperations::applyCpuPerformanceTuning(
+                            chosen.governor,
+                            chosen.epp,
+                            chosen.turboEnabled,
+                            chosen.minPerfPct,
+                            chosen.maxPerfPct
+                        );
+                    }
+                    self->completeControlOperation(token, opName, outcome, true);
+                }
+            );
             return;
         }
     }
@@ -902,60 +1115,39 @@ void ControlCenterController::applyCustomCpuTuning(
     int minPerfPct,
     int maxPerfPct
 ) {
+    if (!m_transport) {
+        return;
+    }
+    uint64_t token = 0;
+    const QString opName = QStringLiteral("cpu_tuning");
+    if (!beginControlOperation(opName, token)) {
+        return;
+    }
+
     m_settings.customOperatingProfile.governor = governor;
     m_settings.customOperatingProfile.epp = epp;
     m_settings.customOperatingProfile.turboEnabled = turbo;
     m_settings.customOperatingProfile.minPerfPct = std::min(minPerfPct, maxPerfPct);
     m_settings.customOperatingProfile.maxPerfPct = std::max(minPerfPct, maxPerfPct);
+    m_initialLiveProfileSynced = true;
     m_settings.activeOperatingProfileId = QStringLiteral("custom");
     persistSettings();
     Q_EMIT settingsUpdated();
 
-    if (!hal::SysfsRoot::instance().isMockActive()) {
-        // Call privileged daemon over D-Bus; never fall back to unprivileged direct sysfs writes in physical mode
-        QDBusMessage call = QDBusMessage::createMethodCall(
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("SetCpuPerformanceTuning")
-        );
-        call << governor << epp << turbo
-             << static_cast<uint>(m_settings.customOperatingProfile.minPerfPct)
-             << static_cast<uint>(m_settings.customOperatingProfile.maxPerfPct);
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
-        if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
-            const bool ok = reply.arguments().at(0).toBool();
-            const QString rb = reply.arguments().at(1).toString();
-            const QString errCode = reply.arguments().at(2).toString();
-            refreshNow();
-            setStatusBanner(
-                ok ? QStringLiteral("Daemon applied & verified CPU P-state tuning (%1).").arg(rb)
-                   : QStringLiteral("Daemon rejected CPU tuning (%1).").arg(formatDaemonRejection(errCode, rb)),
-                !ok
-            );
-            return;
-        }
-        const QString dbusErr = reply.errorName().isEmpty()
-                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
-                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
-        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
-        refreshNow();
-        setStatusBanner(
-            QStringLiteral("Privileged daemon D-Bus call failed for CPU tuning (%1).").arg(dbusErr),
-            true
-        );
-        return;
-    }
-
-    const core::ControlResult res = hal::ControlOperations::applyCpuPerformanceTuning(
+    QPointer<ControlCenterController> self(this);
+    m_transport->setCpuPerformanceTuning(
         governor,
         epp,
         turbo,
         m_settings.customOperatingProfile.minPerfPct,
-        m_settings.customOperatingProfile.maxPerfPct
+        m_settings.customOperatingProfile.maxPerfPct,
+        [self, token, opName](const AsyncControlOutcome& outcome) {
+            if (!self) {
+                return;
+            }
+            self->completeControlOperation(token, opName, outcome, true);
+        }
     );
-    refreshNow();
-    setStatusBanner(res.message, !res.applied);
 }
 
 void ControlCenterController::updateFanCurvePoints(const QVariantList& points) {
@@ -975,45 +1167,32 @@ void ControlCenterController::updateFanCurvePoints(const QVariantList& points) {
 }
 
 void ControlCenterController::setFanMode(const QString& mode, int manualDutyPct) {
-    if (!hal::SysfsRoot::instance().isMockActive()) {
-        QDBusMessage call = QDBusMessage::createMethodCall(
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("SetFanControlMode")
-        );
-        call << mode << static_cast<uint>(std::clamp(manualDutyPct, 20, 100));
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
-        if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
-            const bool ok = reply.arguments().at(0).toBool();
-            const QString rb = reply.arguments().at(1).toString();
-            const QString errCode = reply.arguments().at(2).toString();
-            refreshNow();
-            setStatusBanner(
-                ok ? QStringLiteral("Daemon applied & verified fan PWM mode (%1).").arg(rb)
-                   : QStringLiteral("Daemon rejected fan mode (%1).").arg(formatDaemonRejection(errCode, rb)),
-                !ok
-            );
-            return;
-        }
-        const QString dbusErr = reply.errorName().isEmpty()
-                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
-                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
-        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
-        refreshNow();
-        setStatusBanner(
-            QStringLiteral("Privileged daemon D-Bus call failed for fan mode (%1).").arg(dbusErr),
-            true
-        );
+    if (!m_transport) {
+        return;
+    }
+    uint64_t token = 0;
+    const QString opName = QStringLiteral("fan_mode");
+    if (!beginControlOperation(opName, token)) {
         return;
     }
 
-    const core::ControlResult res = hal::ControlOperations::applyFanControlMode(mode, manualDutyPct);
-    refreshNow();
-    setStatusBanner(res.message, !res.applied);
+    QPointer<ControlCenterController> self(this);
+    m_transport->setFanControlMode(
+        mode,
+        manualDutyPct,
+        [self, token, opName](const AsyncControlOutcome& outcome) {
+            if (!self) {
+                return;
+            }
+            self->completeControlOperation(token, opName, outcome, true);
+        }
+    );
 }
 
 void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
+    if (!m_transport) {
+        return;
+    }
     const int clamped = std::clamp(thresholdPct, 50, 100);
     if (m_snapshot.battery.chargeLimitSupported &&
         m_snapshot.battery.chargeEndThresholdPct >= 50 &&
@@ -1022,45 +1201,23 @@ void ControlCenterController::applyBatteryChargeLimit(int thresholdPct) {
         m_batPreviousThresholdPct = m_snapshot.battery.chargeEndThresholdPct;
     }
 
-    if (!hal::SysfsRoot::instance().isMockActive()) {
-        QDBusMessage call = QDBusMessage::createMethodCall(
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("/io/github/zethasaintlab/AcerControlCenter1"),
-            QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"),
-            QStringLiteral("SetBatteryChargeLimit")
-        );
-        call << static_cast<uint>(clamped);
-        const QDBusMessage reply = QDBusConnection::systemBus().call(call, QDBus::Block, 60000);
-        if (reply.type() == QDBusMessage::ReplyMessage && reply.arguments().size() >= 3) {
-            const bool ok = reply.arguments().at(0).toBool();
-            const uint rbPct = reply.arguments().at(1).toUInt();
-            const QString errCode = reply.arguments().at(2).toString();
-            refreshNow();
-            setStatusBanner(
-                ok ? QStringLiteral("Daemon verified battery charge threshold at %1% (previous=%2%).")
-                         .arg(rbPct)
-                         .arg(m_batPreviousThresholdPct)
-                   : QStringLiteral("Daemon rejected battery charge threshold (%1).").arg(errCode),
-                !ok
-            );
-            return;
-        }
-        const QString dbusErr = reply.errorName().isEmpty()
-                                    ? QStringLiteral("ERR_DBUS_DAEMON_UNAVAILABLE")
-                                    : QStringLiteral("%1: %2").arg(reply.errorName(), reply.errorMessage());
-        core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DBUS"), dbusErr);
-        refreshNow();
-        setStatusBanner(
-            QStringLiteral("Privileged daemon D-Bus call failed for battery charge limit (%1).").arg(dbusErr),
-            true
-        );
+    uint64_t token = 0;
+    const QString opName = QStringLiteral("battery_limit");
+    if (!beginControlOperation(opName, token)) {
         return;
     }
 
-    int rbPct = 100;
-    const core::ControlResult res = hal::ControlOperations::applyBatteryChargeLimit(clamped, rbPct);
-    refreshNow();
-    setStatusBanner(res.message, !res.applied);
+    QPointer<ControlCenterController> self(this);
+    m_transport->setBatteryChargeLimit(
+        clamped,
+        m_batPreviousThresholdPct,
+        [self, token, opName](const AsyncControlOutcome& outcome) {
+            if (!self) {
+                return;
+            }
+            self->completeControlOperation(token, opName, outcome, true);
+        }
+    );
 }
 
 void ControlCenterController::restorePreviousBatteryChargeLimit() {
@@ -1068,9 +1225,25 @@ void ControlCenterController::restorePreviousBatteryChargeLimit() {
 }
 
 void ControlCenterController::applyDisplayBrightness(int brightnessPct) {
-    const core::ControlResult res = hal::ControlOperations::applyDisplayBrightness(brightnessPct);
-    refreshNow();
-    setStatusBanner(res.message, !res.applied);
+    if (!m_transport) {
+        return;
+    }
+    uint64_t token = 0;
+    const QString opName = QStringLiteral("display_brightness");
+    if (!beginControlOperation(opName, token)) {
+        return;
+    }
+
+    QPointer<ControlCenterController> self(this);
+    m_transport->setDisplayBrightness(
+        brightnessPct,
+        [self, token, opName](const AsyncControlOutcome& outcome) {
+            if (!self) {
+                return;
+            }
+            self->completeControlOperation(token, opName, outcome, true);
+        }
+    );
 }
 
 QVariantList ControlCenterController::capabilitiesModel() const {
@@ -1105,6 +1278,17 @@ QVariantList ControlCenterController::diagnosticLogsModel() const {
 }
 
 void ControlCenterController::switchHardwareMode(int modeIndex) {
+    if (m_coordinator) {
+        m_coordinator->invalidateAndReset();
+    }
+    // Cancel/invalidate any pending control callback from the prior hardware mode
+    ++m_controlToken;
+    m_controlOperationPending = false;
+    m_controlOperationName.clear();
+    m_controlAuthState = core::ControlAuthState::Idle;
+    m_controlLastErrorCode.clear();
+    m_controlLastErrorMessage.clear();
+
     if (modeIndex == 1) {
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::MockPhysicalMirror);
     } else if (modeIndex == 2) {
@@ -1114,11 +1298,28 @@ void ControlCenterController::switchHardwareMode(int modeIndex) {
     } else {
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
     }
+
+    // Explicitly reset snapshot & mark Unavailable until async worker completes for new backend
+    m_snapshot = core::SystemSnapshot{};
+    m_hasValidSnapshot = false;
+    m_freshness = core::TelemetryFreshness::Unavailable;
+    m_telemetryAgeMs = -1;
+    m_telemetryErrorMessage.clear();
+    m_firstPoll = true;
+    m_histCpuTemp.clear();
+    m_histGpuTemp.clear();
+    m_histCpuLoad.clear();
+    m_histGpuLoad.clear();
+    m_histBatteryWatts.clear();
+
     core::DiagnosticRedactor::instance().appendLog(
         QStringLiteral("INFO"),
         QStringLiteral("HAL"),
         QStringLiteral("Switched hardware backend mode to: %1").arg(hal::SysfsRoot::instance().scenarioLabel())
     );
+    Q_EMIT controlOperationChanged();
+    Q_EMIT telemetryFreshnessChanged();
+    Q_EMIT telemetryUpdated();
     refreshNow();
     setStatusBanner(
         QStringLiteral("Active Backend Mode: %1").arg(hal::SysfsRoot::instance().scenarioLabel()),

@@ -1391,6 +1391,48 @@ private Q_SLOTS:
 
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
     }
+
+    void testTelemetryCollectorExternalHintsAndReset() {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        hal::SysfsRoot::instance().setCustomRootPath(tmp.path(), QStringLiteral("ExternalHintsTestRoot"));
+
+        hal::TelemetryCollector col;
+        hal::TelemetryExternalHints hints;
+        hints.useExternalDbusHints = true;
+        hints.daemonReachable = true;
+        hints.activeTunedProfile = QStringLiteral("balanced");
+        hints.hasRaplSample = true;
+        hints.raplAvailable = true;
+        hints.raplPkgUj = 50'000'000ULL;
+        hints.raplTimestampUs = 1'000'000LL;
+
+        const core::SystemSnapshot s1 = col.collectSnapshot(QStringLiteral("balanced"), &hints);
+        QVERIFY(s1.valid);
+        QVERIFY(s1.daemonReachable);
+        QCOMPARE(s1.activeTunedProfile, QStringLiteral("balanced"));
+
+        hints.activeTunedProfile = QStringLiteral("performance");
+        hints.raplPkgUj = 65'000'000ULL;
+        hints.raplTimestampUs = 2'000'000LL;
+        const core::SystemSnapshot s2 = col.collectSnapshot(QStringLiteral("performance"), &hints);
+        QVERIFY(s2.valid);
+        QVERIFY(s2.cpu.powerSourceAvailable);
+        QCOMPARE(s2.activeOperatingProfileId, QStringLiteral("performance"));
+        QCOMPARE(s2.activeTunedProfile, QStringLiteral("performance"));
+
+        col.resetDeltas();
+        hints.daemonReachable = false;
+        hints.activeTunedProfile.clear();
+        hints.hasRaplSample = false;
+        hints.raplAvailable = false;
+        const core::SystemSnapshot s3 = col.collectSnapshot(QStringLiteral("balanced"), &hints);
+        QVERIFY(s3.valid);
+        // CustomRootPath is treated as a mock fixture root; activeTunedProfile falls back to mock label.
+        QCOMPARE(s3.activeTunedProfile, QStringLiteral("balanced (Mock TuneD-PPD)"));
+
+        hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
+    }
 };
 
 QTEST_MAIN(TestCoreAndHal)

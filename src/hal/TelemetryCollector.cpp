@@ -44,6 +44,19 @@ bool TelemetryCollector::isNvmlLoaded() const {
     return m_nvml.isLoaded();
 }
 
+void TelemetryCollector::resetDeltas() {
+    m_prevTotalCpu = CpuStatSample{};
+    m_prevCoreCpu.clear();
+    m_prevPkgUj = 0;
+    m_prevCoreUj = 0;
+    m_prevPsysUj = 0;
+    m_prevRaplTsUs = 0;
+    m_lastPkgWatts = 0.0;
+    m_lastCoreWatts = 0.0;
+    m_lastPsysWatts = 0.0;
+    m_raplAvailable = false;
+}
+
 void TelemetryCollector::updateRaplCounters(uint64_t pkgUj, uint64_t coreUj, uint64_t psysUj, int64_t timestampUs, bool available) {
     m_raplAvailable = available;
     if (!available) {
@@ -543,14 +556,34 @@ QString TelemetryCollector::readActiveTunedOrPpdProfile() const {
 }
 
 core::SystemSnapshot TelemetryCollector::collectSnapshot(const QString& activeProfileId) {
+    return collectSnapshot(activeProfileId, nullptr);
+}
+
+core::SystemSnapshot TelemetryCollector::collectSnapshot(
+    const QString& activeProfileId,
+    const TelemetryExternalHints* hints
+) {
     core::SystemSnapshot snap;
+    snap.valid = true;
     snap.timestampMs = QDateTime::currentMSecsSinceEpoch();
     snap.mockModeActive = SysfsRoot::instance().isMockActive();
     snap.mockScenarioName = SysfsRoot::instance().scenarioLabel();
 
+    if (hints && hints->hasRaplSample) {
+        updateRaplCounters(
+            hints->raplPkgUj,
+            hints->raplCoreUj,
+            hints->raplPsysUj,
+            hints->raplTimestampUs,
+            hints->raplAvailable
+        );
+    }
+
     snap.dmi = HardwareDiscovery::probeDmiAndWmi();
     if (snap.mockModeActive) {
         snap.daemonReachable = true;
+    } else if (hints && hints->useExternalDbusHints) {
+        snap.daemonReachable = hints->daemonReachable;
     } else {
         const auto bus = QDBusConnection::systemBus();
         snap.daemonReachable = bus.isConnected() && bus.interface() &&
@@ -563,7 +596,13 @@ core::SystemSnapshot TelemetryCollector::collectSnapshot(const QString& activePr
     snap.battery = readBatteryTelemetry();
     snap.keyboardHw = HardwareDiscovery::probeKeyboardHardware(snap.dmi);
     snap.activeOperatingProfileId = activeProfileId;
-    snap.activeTunedProfile = readActiveTunedOrPpdProfile();
+    if (hints && hints->useExternalDbusHints) {
+        snap.activeTunedProfile = hints->activeTunedProfile.isEmpty()
+                                      ? (snap.mockModeActive ? QStringLiteral("balanced (Mock TuneD-PPD)") : QStringLiteral("unavailable"))
+                                      : hints->activeTunedProfile;
+    } else {
+        snap.activeTunedProfile = readActiveTunedOrPpdProfile();
+    }
     snap.displayBrightnessPct = readDisplayBrightnessPct(snap.displayBrightnessSupported);
     snap.capabilities = HardwareDiscovery::probeAllCapabilities(m_nvml.isLoaded());
 

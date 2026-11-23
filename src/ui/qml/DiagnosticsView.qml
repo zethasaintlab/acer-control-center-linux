@@ -12,224 +12,173 @@ Flickable {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.margins: 16
-        spacing: 14
+        anchors.margins: 14
+        spacing: 12
 
-        // 01 // PLATFORM IDENTITY & SAFE HARDWARE MODE SWITCHER
-        IndustrialPanel {
+        // 01 // PLATFORM IDENTITY & HARDWARE BACKEND SWITCHER
+        CommandModule {
             width: parent.width
-            height: modeHdr.height + modeBody.implicitHeight + 24
+            indexCode: "01"
+            title: "PLATFORM IDENTITY & SIMULATION BACKEND"
+            provenanceText: ctrl.dmiAvailable ? "DMI + sysfs" : "fixture"
+            badgeText: ctrl.mockModeActive ? "MOCK HARDWARE" : "PHYSICAL HARDWARE"
+            badgeColor: ctrl.mockModeActive ? theme.statusWarning : theme.statusNominal
+            contentSpacing: 10
 
-            SectionHeader {
-                id: modeHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "01"
-                title: "PLATFORM IDENTITY & HARDWARE BACKEND MODE"
-                badgeText: ctrl.mockModeActive ? "MOCK HARDWARE" : "PHYSICAL HARDWARE"
+            Grid {
+                width: parent.width
+                columns: width >= 860 ? 2 : 1
+                spacing: 12
+
+                Column {
+                    width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
+                    spacing: 0
+                    CadKeyValueRow { width: parent.width; keyText: "PRODUCT"; valueText: ctrl.productTitle }
+                    CadKeyValueRow { width: parent.width; keyText: "BOARD / BIOS"; valueText: ctrl.boardTitle + " · " + ctrl.biosTitle }
+                    CadKeyValueRow { width: parent.width; keyText: "ODM PLATFORM"; valueText: ctrl.odmPlatformNote; showDivider: false }
+                }
+
+                Column {
+                    width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
+                    spacing: 0
+                    CadKeyValueRow { width: parent.width; keyText: "KERNEL"; valueText: ctrl.kernelRelease.length > 0 ? ctrl.kernelRelease : "--" }
+                    CadKeyValueRow {
+                        width: parent.width; keyText: "DAEMON";
+                        valueText: ctrl.daemonReachable ? "ONLINE (POLKIT READY)" : "UNAVAILABLE"
+                        valueColor: ctrl.daemonReachable ? theme.telemetryLime : theme.statusWarning
+                    }
+                    CadKeyValueRow {
+                        width: parent.width; keyText: "ACPI / WMI";
+                        valueText: (ctrl.acpiDevicesJoined.length > 0 ? ctrl.acpiDevicesJoined : "none") + " | " + ctrl.wmiGuidsJoined
+                        showDivider: false
+                    }
+                }
             }
 
-            Column {
-                id: modeBody
-                anchors.top: modeHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                spacing: 8
+            Flow {
+                width: parent.width
+                spacing: 6
 
-                Text {
-                    width: parent.width
-                    elide: Text.ElideRight
-                    text: "MODEL: " + ctrl.productTitle + "   |   BOARD: " + ctrl.boardTitle + "   |   BIOS: " + ctrl.biosTitle
-                    font.family: theme.fontMono
-                    font.pixelSize: 12
-                    font.weight: Font.Bold
-                    color: theme.textPrimary
-                }
-
-                Text {
-                    width: parent.width
-                    elide: Text.ElideRight
-                    text: "ODM: " + ctrl.odmPlatformNote + "   |   WMI: " + ctrl.wmiGuidsJoined
-                    font.family: theme.fontMono
-                    font.pixelSize: 10
-                    color: theme.textSecondary
-                }
-
-                Text {
-                    width: parent.width
-                    elide: Text.ElideRight
-                    text: "KERNEL: " + (ctrl.kernelRelease.length > 0 ? ctrl.kernelRelease : "--")
-                          + "   |   DAEMON: " + (ctrl.daemonReachable ? "ACTIVE" : "UNAVAILABLE")
-                          + "   |   ACPI: " + (ctrl.acpiDevicesJoined.length > 0 ? ctrl.acpiDevicesJoined : "none")
-                    font.family: theme.fontMono
-                    font.pixelSize: 10
-                    color: theme.textSecondary
-                }
-
-                Flow {
-                    width: parent.width
-                    spacing: 8
-
-                    AtelierButton {
-                        text: "PHYSICAL HARDWARE"
-                        activeState: ctrl.hardwareModeIndex === 0
-                        onClicked: ctrl.switchHardwareMode(0)
-                    }
-                    AtelierButton {
-                        text: "MOCK: A715-59G MIRROR"
-                        activeState: ctrl.hardwareModeIndex === 1
-                        onClicked: ctrl.switchHardwareMode(1)
-                    }
-                    AtelierButton {
-                        text: "MOCK: CLV0001 BOUND"
-                        activeState: ctrl.hardwareModeIndex === 3
-                        onClicked: ctrl.switchHardwareMode(3)
-                    }
-                    AtelierButton {
-                        text: "MOCK: FULL CAPABILITIES"
-                        activeState: ctrl.hardwareModeIndex === 2
-                        onClicked: ctrl.switchHardwareMode(2)
-                    }
-                    AtelierButton {
-                        text: "EXPORT REDACTED REPORT"
-                        primaryAccent: true
-                        onClicked: ctrl.exportDiagnosticReport("")
-                    }
-                }
+                AtelierButton { pillShape: false; height: 30; text: "PHYSICAL HW"; activeState: ctrl.hardwareModeIndex === 0; onClicked: ctrl.switchHardwareMode(0) }
+                AtelierButton { pillShape: false; height: 30; text: "MOCK: A715-59G MIRROR"; activeState: ctrl.hardwareModeIndex === 1; onClicked: ctrl.switchHardwareMode(1) }
+                AtelierButton { pillShape: false; height: 30; text: "MOCK: CLV0001 BOUND"; activeState: ctrl.hardwareModeIndex === 3; onClicked: ctrl.switchHardwareMode(3) }
+                AtelierButton { pillShape: false; height: 30; text: "MOCK: FULL CAPABILITIES"; activeState: ctrl.hardwareModeIndex === 2; onClicked: ctrl.switchHardwareMode(2) }
+                AtelierButton { height: 30; text: "EXPORT REDACTED REPORT"; primaryAccent: true; onClicked: ctrl.exportDiagnosticReport("") }
             }
         }
 
-        // 02 // COMPLETE 13-CAPABILITY EVIDENCE MATRIX (BIMODAL CAD INSPECTION SURFACE)
-        IndustrialPanel {
+        // 02 // COMPLETE EVIDENCE-BASED HARDWARE CAPABILITY MATRIX
+        CommandModule {
             width: parent.width
-            height: capMatHdr.height + capListCol.implicitHeight + 20
+            indexCode: "02"
+            title: "EVIDENCE-BASED HARDWARE CAPABILITY MATRIX"
+            provenanceText: "HardwareDiscovery"
+            badgeText: ctrl.capabilitiesModel.length + " INTERFACES"
+            stripeColor: theme.telemetryLime
+            contentSpacing: 5
 
-            SectionHeader {
-                id: capMatHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "02"
-                title: "EVIDENCE-BASED HARDWARE CAPABILITY MATRIX"
-                badgeText: ctrl.capabilitiesModel.length + " INTERFACES AUDITED"
-                accentStripeColor: theme.telemetryLime
-            }
+            Repeater {
+                model: ctrl.capabilitiesModel
+                delegate: Rectangle {
+                    width: parent.width
+                    height: capRowCol.implicitHeight + 14
+                    radius: theme.radiusStructural
+                    color: theme.surfaceOverlay
+                    border.width: 1
+                    border.color: theme.borderSubtle
 
-            Column {
-                id: capListCol
-                anchors.top: capMatHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 10
-                spacing: 5
+                    Column {
+                        id: capRowCol
+                        anchors.top: parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.margins: 7
+                        spacing: 4
 
-                Repeater {
-                    model: ctrl.capabilitiesModel
-                    delegate: Rectangle {
-                        width: parent.width
-                        height: 44
-                        radius: theme.radiusStructural
-                        color: theme.surfaceElevated
-                        border.width: 1
-                        border.color: theme.borderSubtle
-
-                        Row {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 10
-                            spacing: 12
+                        Flow {
+                            width: parent.width
+                            spacing: 8
 
                             CapabilityBadge {
-                                width: 158
-                                anchors.verticalCenter: parent.verticalCenter
                                 badgeText: modelData.stateBadge
                             }
 
-                            Column {
-                                width: Math.max(120, parent.width - 170)
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 2
-
-                                Row {
-                                    width: parent.width
-                                    Text {
-                                        width: parent.width * 0.48
-                                        elide: Text.ElideRight
-                                        text: modelData.title
-                                        font.family: theme.fontSans
-                                        font.pixelSize: 12
-                                        font.weight: Font.DemiBold
-                                        color: theme.textPrimary
-                                    }
-                                    Text {
-                                        width: parent.width * 0.52
-                                        horizontalAlignment: Text.AlignRight
-                                        elide: Text.ElideMiddle
-                                        text: modelData.interfacePath
-                                        font.family: theme.fontMono
-                                        font.pixelSize: 10
-                                        color: theme.textMuted
-                                    }
-                                }
-
-                                Text {
-                                    width: parent.width
-                                    elide: Text.ElideRight
-                                    text: modelData.summary
-                                    font.family: theme.fontSans
-                                    font.pixelSize: 11
-                                    color: theme.textSecondary
-                                }
+                            Text {
+                                height: 20
+                                verticalAlignment: Text.AlignVCenter
+                                text: modelData.title
+                                font.family: theme.fontSans
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                                color: theme.textPrimary
                             }
+
+                            Text {
+                                height: 20
+                                verticalAlignment: Text.AlignVCenter
+                                text: "[" + modelData.interfacePath + "]"
+                                font.family: theme.fontMono
+                                font.pixelSize: 10
+                                color: theme.textMuted
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            wrapMode: Text.WordWrap
+                            text: modelData.summary
+                            font.family: theme.fontSans
+                            font.pixelSize: 11
+                            color: theme.textSecondary
                         }
                     }
                 }
             }
         }
 
-        // 03 // REDACTED DIAGNOSTIC LOG STREAM
-        IndustrialPanel {
+        // 03 // REDACTED HARDWARE & APPLICATION EVENT STREAM
+        CommandModule {
             width: parent.width
-            height: 210
+            indexCode: "03"
+            title: "REDACTED EVENT & AUDIT STREAM"
+            provenanceText: "SERIAL / UUID / MAC STRIPPED"
+            badgeText: ctrl.diagnosticLogsModel.length + " EVENTS"
+            contentSpacing: 4
 
-            SectionHeader {
-                id: logHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "03"
-                title: "REDACTED HARDWARE & APPLICATION EVENT LOG (SERIAL / UUID / MAC STRIPPED)"
-                badgeText: ctrl.diagnosticLogsModel.length + " EVENTS"
-            }
+            Column {
+                width: parent.width
+                spacing: 4
 
-            ListView {
-                anchors.top: logHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.margins: 8
-                clip: true
-                model: ctrl.diagnosticLogsModel
-                spacing: 3
-                delegate: Rectangle {
-                    width: ListView.view.width
-                    height: 24
-                    radius: theme.radiusStructural
-                    color: theme.surfaceElevated
+                Repeater {
+                    model: ctrl.diagnosticLogsModel
+                    delegate: Rectangle {
+                        width: parent.width
+                        height: logLineTxt.implicitHeight + 10
+                        radius: theme.radiusStructural
+                        color: theme.surfaceOverlay
+                        border.width: 1; border.color: theme.hairlineRule
 
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 8
-                        anchors.right: parent.right
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        elide: Text.ElideRight
-                        text: "[" + modelData.timestamp + "] [" + modelData.level + "] [" + modelData.subsystem + "] " + modelData.message
-                        font.family: theme.fontMono
-                        font.pixelSize: 11
-                        color: (modelData.level === "WARN" || modelData.level === "ERROR") ? theme.statusWarning : theme.textSecondary
+                        Rectangle {
+                            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                            width: 3
+                            color: (modelData.level === "WARN" || modelData.level === "ERROR")
+                                   ? theme.statusWarning
+                                   : theme.technicalCyan
+                        }
+
+                        Text {
+                            id: logLineTxt
+                            anchors.left: parent.left; anchors.leftMargin: 10
+                            anchors.right: parent.right; anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            wrapMode: Text.WordWrap
+                            text: "[" + modelData.timestamp + "] [" + modelData.level + "] [" + modelData.subsystem + "] " + modelData.message
+                            font.family: theme.fontMono
+                            font.pixelSize: 10
+                            color: (modelData.level === "WARN" || modelData.level === "ERROR")
+                                   ? theme.statusWarning
+                                   : theme.textSecondary
+                        }
                     }
                 }
             }

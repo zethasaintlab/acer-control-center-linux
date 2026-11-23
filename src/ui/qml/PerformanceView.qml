@@ -14,6 +14,10 @@ Flickable {
     property int stagedMaxPerf: ctrl.cpuMaxPerfPct
     property bool stagedEdited: false
 
+    readonly property bool splitMidDeck: width >= 940
+    readonly property bool telemetryStale: ctrl.telemetryStale
+    readonly property bool telemetryUnavailable: !ctrl.telemetryAvailable
+
     function syncStagedFromHardware() {
         if (ctrl.cpuGovernor.length > 0) root.stagedGov = ctrl.cpuGovernor;
         if (ctrl.cpuEpp.length > 0) root.stagedEpp = ctrl.cpuEpp;
@@ -33,44 +37,36 @@ Flickable {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.margins: 16
-        spacing: 14
+        anchors.margins: 14
+        spacing: 12
 
-        // 01 // OPERATING PROFILES & POWER TRANSITION RULES
-        IndustrialPanel {
+        // 01 // OPERATING PROFILES & AUTOMATIC POWER SOURCE POLICY
+        CommandModule {
             width: parent.width
-            height: opHdr.height + profileGrid.implicitHeight + autoRow.implicitHeight + 34
-
-            SectionHeader {
-                id: opHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "01"
-                title: "OPERATING PROFILE ENGINE  //  TUNED-PPD: " + ctrl.activeTunedProfile.toUpperCase()
-                badgeText: "FULL RW"
-            }
+            indexCode: "01"
+            title: "OPERATING PROFILE ENGINE"
+            provenanceText: "TUNED-PPD: " + ctrl.activeTunedProfile.toUpperCase()
+            badgeText: ctrl.controlOperationPending ? "AUTH PENDING" : "FULL RW"
 
             Grid {
-                id: profileGrid
-                anchors.top: opHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                columns: width >= 920 ? 4 : 2
-                spacing: 10
+                width: parent.width
+                columns: width >= 900 ? 4 : (width >= 540 ? 2 : 1)
+                spacing: 8
 
                 Repeater {
                     model: ctrl.operatingProfilesModel
                     delegate: Rectangle {
                         id: profCard
-                        width: (parent.width - (parent.columns - 1) * 10) / parent.columns
-                        height: 88
+                        width: (parent.width - (parent.columns - 1) * 8) / parent.columns
+                        height: 86
                         radius: theme.radiusStructural
-                        activeFocusOnTab: true
-                        color: modelData.active ? theme.surfaceSelectedDark : theme.surfaceElevated
+                        activeFocusOnTab: !ctrl.controlOperationPending
+                        opacity: ctrl.controlOperationPending && !modelData.active ? 0.65 : 1.0
+                        color: modelData.active ? theme.surfaceSelectedDark : theme.surfaceOverlay
                         border.width: (profCard.activeFocus || modelData.active) ? 2 : 1
-                        border.color: (profCard.activeFocus || modelData.active) ? theme.brandYellow : theme.borderSubtle
+                        border.color: profCard.activeFocus
+                                      ? theme.accentBorder
+                                      : (modelData.active ? theme.brandYellow : theme.borderSubtle)
 
                         Rectangle {
                             visible: modelData.active
@@ -88,9 +84,11 @@ Flickable {
                             spacing: 4
 
                             Text {
+                                width: parent.width
+                                elide: Text.ElideRight
                                 text: (modelData.active ? "● " : "") + modelData.name.toUpperCase()
                                 font.family: theme.fontMono
-                                font.pixelSize: 12
+                                font.pixelSize: 11
                                 font.weight: Font.Bold
                                 color: modelData.active ? theme.brandYellow : theme.textPrimary
                             }
@@ -103,22 +101,23 @@ Flickable {
                                 elide: Text.ElideRight
                                 font.family: theme.fontSans
                                 font.pixelSize: 11
-                                color: modelData.active ? theme.surfaceCadLight : theme.textSecondary
+                                color: modelData.active ? "#CFD5D9" : theme.textSecondary
                             }
 
                             Text {
                                 width: parent.width
                                 elide: Text.ElideRight
-                                text: modelData.governor + " · " + modelData.epp + " · " + modelData.minPerfPct + "-" + modelData.maxPerfPct + "%"
+                                text: modelData.governor + " · " + modelData.epp + " (" + modelData.minPerfPct + "-" + modelData.maxPerfPct + "%)"
                                 font.family: theme.fontMono
-                                font.pixelSize: 10
+                                font.pixelSize: 9
                                 color: modelData.active ? theme.telemetryLimeBar : theme.textMuted
                             }
                         }
 
                         MouseArea {
                             anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
+                            enabled: !ctrl.controlOperationPending
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
                             onClicked: {
                                 profCard.forceActiveFocus();
                                 root.stagedGov = modelData.governor;
@@ -131,283 +130,286 @@ Flickable {
                             }
                         }
 
-                        Keys.onReturnPressed: ctrl.selectOperatingProfile(modelData.id)
-                        Keys.onSpacePressed: ctrl.selectOperatingProfile(modelData.id)
+                        Keys.onReturnPressed: if (!ctrl.controlOperationPending) ctrl.selectOperatingProfile(modelData.id)
+                        Keys.onSpacePressed: if (!ctrl.controlOperationPending) ctrl.selectOperatingProfile(modelData.id)
                     }
                 }
             }
 
             Flow {
-                id: autoRow
-                anchors.top: profileGrid.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                spacing: 14
+                width: parent.width
+                spacing: 12
 
                 AtelierButton {
-                    text: ctrl.autoSwitchOnPower ? "AUTO AC/BATTERY SWITCH: ON" : "AUTO AC/BATTERY SWITCH: OFF"
+                    height: 30
+                    pillShape: false
+                    text: ctrl.autoSwitchOnPower ? "AUTO AC/BAT SWITCH: ON" : "AUTO AC/BAT SWITCH: OFF"
                     activeState: ctrl.autoSwitchOnPower
                     onClicked: ctrl.autoSwitchOnPower = !ctrl.autoSwitchOnPower
                 }
 
                 Text {
-                    height: 32
+                    height: 30
                     verticalAlignment: Text.AlignVCenter
-                    text: "AC: " + ctrl.acProfileId.toUpperCase() + "  |  BATTERY: " + ctrl.batteryProfileId.toUpperCase()
+                    text: "AC RULE: " + ctrl.acProfileId.toUpperCase() + "  //  DC BATTERY RULE: " + ctrl.batteryProfileId.toUpperCase()
                     font.family: theme.fontMono
-                    font.pixelSize: 11
+                    font.pixelSize: 10
                     color: theme.textSecondary
                 }
             }
         }
 
-        // 02 // INTEL P-STATE & HWP HARDWARE TUNING
-        IndustrialPanel {
+        // 02 // SPLIT WORKBENCH: INTEL P-STATE CONTROL (LEFT) & MEMORY / PSI LEDGER (RIGHT)
+        Grid {
             width: parent.width
-            height: pstateHdr.height + pstateCol.implicitHeight + 28
+            columns: root.splitMidDeck ? 2 : 1
+            spacing: 12
 
-            SectionHeader {
-                id: pstateHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
+            // LEFT: INTEL P-STATE & HWP HARDWARE TUNING
+            CommandModule {
+                id: pstateMod
+                width: root.splitMidDeck ? (parent.width - 12) * 0.54 : parent.width
                 indexCode: "02"
-                title: "INTEL P-STATE & HWP HARDWARE TUNING (POLKIT GATED)"
-                badgeText: "FULL RW"
-            }
+                title: "INTEL P-STATE & HWP TUNING"
+                provenanceText: "/sys/devices/system/cpu/intel_pstate"
+                badgeText: root.stagedEdited ? "STAGED UNAPPLIED" : (ctrl.controlOperationPending ? "AUTH PENDING" : "FULL RW")
+                badgeColor: root.stagedEdited ? theme.statusWarning : "transparent"
 
-            Column {
-                id: pstateCol
-                anchors.top: pstateHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 14
-                spacing: 12
-
-                Flow {
+                Column {
                     width: parent.width
                     spacing: 10
 
                     Text {
-                        width: 128
-                        height: 32
-                        verticalAlignment: Text.AlignVCenter
-                        text: "CPU GOVERNOR:"
+                        text: "SCALING GOVERNOR & TURBO BOOST"
                         font.family: theme.fontMono
-                        font.pixelSize: 11
-                        color: theme.textSecondary
+                        font.pixelSize: 9
+                        font.weight: Font.Bold
+                        color: theme.textMuted
                     }
 
-                    AtelierButton {
-                        pillShape: false
-                        text: "POWERSAVE (HWP)"
-                        activeState: root.stagedGov === "powersave"
-                        onClicked: { root.stagedEdited = true; root.stagedGov = "powersave"; }
-                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 8
 
-                    AtelierButton {
-                        pillShape: false
-                        text: "PERFORMANCE"
-                        activeState: root.stagedGov === "performance"
-                        onClicked: { root.stagedEdited = true; root.stagedGov = "performance"; }
-                    }
+                        AtelierButton {
+                            pillShape: false
+                            height: 30
+                            text: "POWERSAVE (HWP)"
+                            activeState: root.stagedGov === "powersave"
+                            onClicked: { root.stagedEdited = true; root.stagedGov = "powersave"; }
+                        }
 
-                    AtelierButton {
-                        pillShape: false
-                        text: root.stagedTurbo ? "TURBO: ENABLED (4.9 GHz)" : "TURBO: DISABLED (2.4 GHz)"
-                        activeState: root.stagedTurbo
-                        onClicked: { root.stagedEdited = true; root.stagedTurbo = !root.stagedTurbo; }
-                    }
-                }
+                        AtelierButton {
+                            pillShape: false
+                            height: 30
+                            text: "PERFORMANCE"
+                            activeState: root.stagedGov === "performance"
+                            onClicked: { root.stagedEdited = true; root.stagedGov = "performance"; }
+                        }
 
-                Flow {
-                    width: parent.width
-                    spacing: 8
+                        AtelierButton {
+                            pillShape: false
+                            height: 30
+                            text: root.stagedTurbo ? "TURBO: ON (4.9GHz)" : "TURBO: OFF (2.4GHz)"
+                            activeState: root.stagedTurbo
+                            onClicked: { root.stagedEdited = true; root.stagedTurbo = !root.stagedTurbo; }
+                        }
+                    }
 
                     Text {
-                        width: 128
-                        height: 32
-                        verticalAlignment: Text.AlignVCenter
-                        text: "HWP EPP HINT:"
+                        text: "HWP ENERGY PERFORMANCE PREFERENCE (EPP)"
                         font.family: theme.fontMono
-                        font.pixelSize: 11
-                        color: theme.textSecondary
+                        font.pixelSize: 9
+                        font.weight: Font.Bold
+                        color: theme.textMuted
                     }
 
-                    Repeater {
-                        model: ["power", "balance_power", "balance_performance", "performance"]
-                        delegate: AtelierButton {
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+
+                        Repeater {
+                            model: ["power", "balance_power", "balance_performance", "performance"]
+                            delegate: AtelierButton {
+                                pillShape: false
+                                height: 28
+                                text: modelData.toUpperCase()
+                                activeState: root.stagedEpp === modelData
+                                onClicked: { root.stagedEdited = true; root.stagedEpp = modelData; }
+                            }
+                        }
+                    }
+
+                    Grid {
+                        width: parent.width
+                        columns: width >= 460 ? 2 : 1
+                        spacing: 12
+
+                        AtelierSlider {
+                            width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
+                            label: "Min P-State Perf"
+                            unit: "%"
+                            minValue: 10
+                            maxValue: 100
+                            value: root.stagedMinPerf
+                            onValueCommitted: function(v) {
+                                root.stagedEdited = true;
+                                root.stagedMinPerf = Math.min(v, root.stagedMaxPerf);
+                            }
+                        }
+
+                        AtelierSlider {
+                            width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
+                            label: "Max P-State Perf"
+                            unit: "%"
+                            minValue: 10
+                            maxValue: 100
+                            value: root.stagedMaxPerf
+                            onValueCommitted: function(v) {
+                                root.stagedEdited = true;
+                                root.stagedMaxPerf = Math.max(v, root.stagedMinPerf);
+                            }
+                        }
+                    }
+
+                    Flow {
+                        width: parent.width
+                        spacing: 8
+
+                        AtelierButton {
+                            height: 34
+                            text: "APPLY & VERIFY P-STATE"
+                            primaryAccent: true
+                            pendingState: ctrl.controlOperationPending
+                            onClicked: {
+                                root.stagedEdited = false;
+                                ctrl.applyCustomCpuTuning(
+                                    root.stagedGov,
+                                    root.stagedEpp,
+                                    root.stagedTurbo,
+                                    root.stagedMinPerf,
+                                    root.stagedMaxPerf
+                                );
+                            }
+                        }
+
+                        AtelierButton {
+                            visible: root.stagedEdited
+                            height: 34
                             pillShape: false
-                            text: modelData.toUpperCase()
-                            activeState: root.stagedEpp === modelData
-                            onClicked: { root.stagedEdited = true; root.stagedEpp = modelData; }
-                        }
-                    }
-                }
-
-                Row {
-                    width: parent.width
-                    spacing: 18
-
-                    AtelierSlider {
-                        width: Math.max(180, (parent.width - 250) * 0.5)
-                        label: "Minimum P-State Perf"
-                        unit: "%"
-                        minValue: 10
-                        maxValue: 100
-                        value: root.stagedMinPerf
-                        onValueCommitted: function(v) {
-                            root.stagedEdited = true;
-                            root.stagedMinPerf = Math.min(v, root.stagedMaxPerf);
-                        }
-                    }
-
-                    AtelierSlider {
-                        width: Math.max(180, (parent.width - 250) * 0.5)
-                        label: "Maximum P-State Perf"
-                        unit: "%"
-                        minValue: 10
-                        maxValue: 100
-                        value: root.stagedMaxPerf
-                        onValueCommitted: function(v) {
-                            root.stagedEdited = true;
-                            root.stagedMaxPerf = Math.max(v, root.stagedMinPerf);
-                        }
-                    }
-
-                    AtelierButton {
-                        width: 210
-                        height: 38
-                        anchors.bottom: parent.bottom
-                        text: "APPLY & VERIFY P-STATE"
-                        primaryAccent: true
-                        onClicked: {
-                            root.stagedEdited = false;
-                            ctrl.applyCustomCpuTuning(
-                                root.stagedGov,
-                                root.stagedEpp,
-                                root.stagedTurbo,
-                                root.stagedMinPerf,
-                                root.stagedMaxPerf
-                            );
+                            text: "REVERT TO HARDWARE"
+                            onClicked: {
+                                root.stagedEdited = false;
+                                root.syncStagedFromHardware();
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // 03 // SYSTEM MEMORY & LINUX PSI PRESSURE INSTRUMENTATION (Section 5.7.D)
-        IndustrialPanel {
-            width: parent.width
-            height: memHdr.height + memBodyCol.implicitHeight + 24
-
-            SectionHeader {
-                id: memHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
+            // RIGHT: SYSTEM MEMORY & LINUX PSI STALLS
+            CommandModule {
+                id: memMod
+                width: root.splitMidDeck ? (parent.width - 12) * 0.46 : parent.width
+                height: root.splitMidDeck ? Math.max(pstateMod.implicitHeight, memMod.implicitHeight) : memMod.implicitHeight
                 indexCode: "03"
-                title: "PHYSICAL MEMORY ALLOCATION & LINUX PSI PRESSURE STALLS"
-                badgeText: "READ-ONLY"
-            }
-
-            Column {
-                id: memBodyCol
-                anchors.top: memHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                spacing: 8
+                title: "MEMORY & PSI CONTENTION"
+                provenanceText: "/proc/meminfo + /proc/pressure"
+                badgeText: root.telemetryStale ? "STALE" : "READ-ONLY"
 
                 Grid {
                     width: parent.width
-                    columns: width >= 880 ? 5 : 2
-                    spacing: 8
+                    columns: width >= 440 ? 3 : 2
+                    spacing: 6
 
                     Repeater {
                         model: [
-                            { title: "TOTAL PHYSICAL", val: ctrl.memTotalMiB + " MiB", col: theme.textPrimary },
+                            { title: "TOTAL", val: ctrl.memTotalMiB + " MiB", col: theme.textPrimary },
                             { title: "ACTIVE USED", val: ctrl.memUsedMiB + " MiB", col: theme.accentReadable },
                             { title: "AVAILABLE", val: ctrl.memAvailableMiB + " MiB", col: theme.telemetryLime },
-                            { title: "PAGE CACHE", val: ctrl.memCachedMiB + " MiB", col: theme.textPrimary },
-                            { title: "KERNEL BUFFERS", val: ctrl.memBuffersMiB + " MiB", col: theme.textSecondary }
+                            { title: "CACHE", val: ctrl.memCachedMiB + " MiB", col: theme.textPrimary },
+                            { title: "BUFFERS", val: ctrl.memBuffersMiB + " MiB", col: theme.textSecondary }
                         ]
                         delegate: Rectangle {
-                            width: (parent.width - (parent.columns - 1) * 8) / parent.columns
-                            height: 52
+                            width: (parent.width - (parent.columns - 1) * 6) / parent.columns
+                            height: 46
                             radius: theme.radiusStructural
-                            color: theme.surfaceElevated
+                            color: theme.surfaceOverlay
                             border.width: 1
                             border.color: theme.borderSubtle
                             Column {
                                 anchors.centerIn: parent
-                                width: parent.width - 14
+                                width: parent.width - 12
                                 spacing: 2
                                 Text { text: modelData.title; font.family: theme.fontMono; font.pixelSize: 9; color: theme.textMuted }
-                                Text { text: modelData.val; font.family: theme.fontMono; font.pixelSize: 15; font.weight: Font.Bold; color: modelData.col }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: root.telemetryUnavailable ? "--" : modelData.val
+                                    font.family: theme.fontDisplay; font.pixelSize: 13; font.weight: Font.Bold
+                                    color: root.telemetryUnavailable ? theme.textMuted : modelData.col
+                                }
                             }
                         }
                     }
                 }
 
-                TelemetryLoadRow {
+                Column {
                     width: parent.width
-                    label: "System RAM Allocation Ratio"
-                    sourceTag: "proc/meminfo"
-                    fraction: ctrl.memUtilizationPct / 100.0
-                    valueText: ctrl.memUtilizationPct.toFixed(1) + " %  (" + ctrl.memUsedMiB + " MiB)"
-                }
+                    spacing: 6
 
-                TelemetryLoadRow {
-                    width: parent.width
-                    label: "CPU PSI Contention (some avg10)"
-                    sourceTag: ctrl.psiAvailable ? "proc/pressure/cpu" : "UNAVAILABLE"
-                    fraction: Math.min(1.0, ctrl.psiCpuSome10 / 25.0)
-                    valueText: ctrl.psiCpuSome10.toFixed(2) + " %"
-                }
-
-                TelemetryLoadRow {
-                    width: parent.width
-                    label: "Memory PSI Stall (some / full avg10)"
-                    sourceTag: ctrl.psiAvailable ? "proc/pressure/memory" : "UNAVAILABLE"
-                    fraction: Math.min(1.0, ctrl.psiMemSome10 / 25.0)
-                    valueText: "some " + ctrl.psiMemSome10.toFixed(2) + "% · full " + ctrl.psiMemFull10.toFixed(2) + "%"
-                }
-
-                TelemetryLoadRow {
-                    width: parent.width
-                    label: "Block I/O PSI Stall (some avg10)"
-                    sourceTag: ctrl.psiAvailable ? "proc/pressure/io" : "UNAVAILABLE"
-                    fraction: Math.min(1.0, ctrl.psiIoSome10 / 25.0)
-                    valueText: ctrl.psiIoSome10.toFixed(2) + " %"
+                    TelemetryLoadRow {
+                        width: parent.width
+                        label: "RAM Allocation Ratio"
+                        sourceTag: "meminfo"
+                        fraction: ctrl.memUtilizationPct / 100.0
+                        valueText: ctrl.memUtilizationPct.toFixed(1) + "%"
+                        stale: root.telemetryStale
+                        unavailable: root.telemetryUnavailable
+                    }
+                    TelemetryLoadRow {
+                        width: parent.width
+                        label: "CPU PSI Contention"
+                        sourceTag: ctrl.psiAvailable ? "psi/cpu" : "UNAVAILABLE"
+                        fraction: Math.min(1.0, ctrl.psiCpuSome10 / 25.0)
+                        valueText: ctrl.psiCpuSome10.toFixed(2) + "%"
+                        stale: root.telemetryStale
+                        unavailable: root.telemetryUnavailable
+                    }
+                    TelemetryLoadRow {
+                        width: parent.width
+                        label: "Memory PSI Stall"
+                        sourceTag: ctrl.psiAvailable ? "psi/mem" : "UNAVAILABLE"
+                        fraction: Math.min(1.0, ctrl.psiMemSome10 / 25.0)
+                        valueText: ctrl.psiMemSome10.toFixed(2) + "% / " + ctrl.psiMemFull10.toFixed(2) + "%"
+                        stale: root.telemetryStale
+                        unavailable: root.telemetryUnavailable
+                    }
+                    TelemetryLoadRow {
+                        width: parent.width
+                        label: "Block I/O PSI Stall"
+                        sourceTag: ctrl.psiAvailable ? "psi/io" : "UNAVAILABLE"
+                        fraction: Math.min(1.0, ctrl.psiIoSome10 / 25.0)
+                        valueText: ctrl.psiIoSome10.toFixed(2) + "%"
+                        stale: root.telemetryStale
+                        unavailable: root.telemetryUnavailable
+                    }
                 }
             }
         }
 
-        // 04 // PER-THREAD FREQUENCY, LOAD & CORE THERMAL RACK
-        IndustrialPanel {
+        // 04 // PER-THREAD FREQUENCY, UTILIZATION & CORE THERMAL RACK
+        CommandModule {
             width: parent.width
-            height: coreRackHdr.height + coreGrid.implicitHeight + 24
-
-            SectionHeader {
-                id: coreRackHdr
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                indexCode: "04"
-                title: "PER-THREAD FREQUENCY, UTILIZATION & CORE THERMAL RACK"
-                badgeText: "MAX " + ctrl.cpuMaxFreqMhz + " MHz"
-            }
+            indexCode: "04"
+            title: "PER-THREAD FREQUENCY & CORE THERMAL RACK"
+            provenanceText: "scaling_cur_freq + coretemp"
+            badgeText: "MAX " + ctrl.cpuMaxFreqMhz + " MHz"
 
             Grid {
-                id: coreGrid
-                anchors.top: coreRackHdr.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.margins: 12
-                columns: width >= 960 ? 4 : 2
+                width: parent.width
+                columns: width >= 960 ? 4 : (width >= 560 ? 2 : 1)
                 spacing: 8
+                opacity: root.telemetryUnavailable ? 0.50 : (root.telemetryStale ? 0.68 : 1.0)
 
                 Repeater {
                     model: ctrl.cpuCoresModel
@@ -415,20 +417,20 @@ Flickable {
                         width: (parent.width - (parent.columns - 1) * 8) / parent.columns
                         height: 42
                         radius: theme.radiusStructural
-                        color: theme.surfaceElevated
+                        color: theme.surfaceOverlay
                         border.width: 1
                         border.color: theme.borderSubtle
 
                         Column {
                             anchors.fill: parent
-                            anchors.margins: 6
+                            anchors.margins: 7
                             spacing: 4
 
                             Row {
                                 width: parent.width
                                 Text {
                                     text: modelData.label + " · " + modelData.tempC.toFixed(0) + "°C"
-                                    width: parent.width * 0.45
+                                    width: parent.width * 0.46
                                     elide: Text.ElideRight
                                     font.family: theme.fontMono
                                     font.pixelSize: 10
@@ -437,7 +439,7 @@ Flickable {
                                 }
                                 Text {
                                     text: modelData.freqMhz + " MHz (" + modelData.utilizationPct.toFixed(0) + "%)"
-                                    width: parent.width * 0.55
+                                    width: parent.width * 0.54
                                     horizontalAlignment: Text.AlignRight
                                     elide: Text.ElideRight
                                     font.family: theme.fontMono
@@ -448,12 +450,12 @@ Flickable {
 
                             Rectangle {
                                 width: parent.width
-                                height: 6
-                                color: theme.surfaceHeader
+                                height: 5
+                                color: theme.surfaceSunken
                                 Rectangle {
                                     width: parent.width * Math.min(1.0, modelData.freqMhz / Math.max(1000, ctrl.cpuMaxFreqMhz))
                                     height: parent.height
-                                    color: theme.telemetryLimeBar
+                                    color: modelData.tempC >= 85 ? theme.statusWarning : theme.telemetryLimeBar
                                 }
                             }
                         }

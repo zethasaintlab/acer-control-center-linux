@@ -265,7 +265,55 @@ struct ControlResult {
     bool physicalStateVerified = false;
 };
 
+enum class TelemetryFreshness {
+    Unavailable = 0,
+    Fresh = 1,
+    Stale = 2
+};
+
+enum class ControlAuthState {
+    Idle = 0,
+    Pending = 1,
+    Authorized = 2,
+    Denied = 3,
+    DaemonUnavailable = 4,
+    Failed = 5
+};
+
+inline QString telemetryFreshnessToId(TelemetryFreshness freshness) {
+    switch (freshness) {
+        case TelemetryFreshness::Fresh:
+            return QStringLiteral("fresh");
+        case TelemetryFreshness::Stale:
+            return QStringLiteral("stale");
+        case TelemetryFreshness::Unavailable:
+            return QStringLiteral("unavailable");
+    }
+    return QStringLiteral("unavailable");
+}
+
+inline QString controlAuthStateToId(ControlAuthState state) {
+    switch (state) {
+        case ControlAuthState::Idle:
+            return QStringLiteral("idle");
+        case ControlAuthState::Pending:
+            return QStringLiteral("pending");
+        case ControlAuthState::Authorized:
+            return QStringLiteral("authorized");
+        case ControlAuthState::Denied:
+            return QStringLiteral("denied");
+        case ControlAuthState::DaemonUnavailable:
+            return QStringLiteral("daemon_unavailable");
+        case ControlAuthState::Failed:
+            return QStringLiteral("failed");
+    }
+    return QStringLiteral("idle");
+}
+
 struct SystemSnapshot {
+    bool valid = false;
+    bool collectionFailed = false;
+    QString collectionError;
     int64_t timestampMs = 0;
     bool mockModeActive = false;
     QString mockScenarioName;

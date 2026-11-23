@@ -1,23 +1,64 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
 #pragma once
 
+#include "app/AsyncControlClient.h"
+#include "app/TelemetryCoordinator.h"
 #include "app/ThemeEngine.h"
 #include "core/ConfigStore.h"
 #include "core/DomainModels.h"
-#include "hal/TelemetryCollector.h"
 
+#include <QDBusConnection>
 #include <QObject>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
-#include <deque>
+#include <cstdint>
 #include <memory>
 
 namespace acc::app {
 
+/**
+ * Unprivileged GUI ViewModel/Controller for Acer Control Center.
+ *
+ * Stage 24 async & lifetime invariants (Stage 25 UI contract):
+ * - All telemetry collection runs asynchronously on TelemetryCoordinator's
+ *   dedicated worker QThread; constructor and QTimer polling never block the GUI.
+ * - All D-Bus telemetry hints and privileged control operations use non-blocking
+ *   QDBusPendingCallWatcher callbacks guarded by QPointer<ControlCenterController>
+ *   and generation tokens (no QDBus::Block on the GUI thread).
+ * - Telemetry freshness is explicitly exposed via `telemetryFreshness`
+ *   ("unavailable" | "fresh" | "stale"), `telemetryFreshnessState` (FreshnessState),
+ *   `telemetryRefreshing`, `telemetrySuspended`, `telemetryAgeMs`, and
+ *   `telemetryErrorMessage`.
+ * - Privileged authorization status is explicitly exposed via `controlAuthState`
+ *   ("idle" | "pending" | "authorized" | "denied" | "daemon_unavailable" | "failed"),
+ *   `controlAuthStateEnum` (AuthState), `controlOperationPending`,
+ *   `controlOperationName`, `controlLastErrorCode`, `controlLastErrorMessage`,
+ *   and the `controlOperationFinished` signal.
+ * - Single-zone CLV0001 static RGB (`kbdSupportsArbitraryRgb`) remains strictly
+ *   separate from spatial multi-zone hardware (`kbdRgbSupported`).
+ */
 class ControlCenterController : public QObject {
     Q_OBJECT
+
+public:
+    enum class FreshnessState {
+        Unavailable = 0,
+        Fresh = 1,
+        Stale = 2
+    };
+    Q_ENUM(FreshnessState)
+
+    enum class AuthState {
+        Idle = 0,
+        Pending = 1,
+        Authorized = 2,
+        Denied = 3,
+        DaemonUnavailable = 4,
+        Failed = 5
+    };
+    Q_ENUM(AuthState)
 
     // Navigation & Global Banner
     Q_PROPERTY(int currentTabIndex READ currentTabIndex WRITE setCurrentTabIndex NOTIFY navigationChanged)
@@ -27,6 +68,25 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(QString hardwareModeLabel READ hardwareModeLabel NOTIFY telemetryUpdated)
     Q_PROPERTY(int hardwareModeIndex READ hardwareModeIndex NOTIFY telemetryUpdated)
     Q_PROPERTY(int pollingIntervalMs READ pollingIntervalMs WRITE setPollingIntervalMs NOTIFY settingsUpdated)
+
+    // Explicit Telemetry Freshness & Availability (Stage 24/25 Contract)
+    Q_PROPERTY(QString telemetryFreshness READ telemetryFreshness NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(FreshnessState telemetryFreshnessState READ telemetryFreshnessState NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(bool telemetryAvailable READ telemetryAvailable NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(bool telemetryStale READ telemetryStale NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(bool telemetryRefreshing READ telemetryRefreshing NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(bool telemetrySuspended READ telemetrySuspended NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(qint64 telemetryAgeMs READ telemetryAgeMs NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(qint64 lastTelemetryTimestampMs READ lastTelemetryTimestampMs NOTIFY telemetryFreshnessChanged)
+    Q_PROPERTY(QString telemetryErrorMessage READ telemetryErrorMessage NOTIFY telemetryFreshnessChanged)
+
+    // Explicit Async Control & Authorization State (Stage 24/25 Contract)
+    Q_PROPERTY(bool controlOperationPending READ controlOperationPending NOTIFY controlOperationChanged)
+    Q_PROPERTY(QString controlOperationName READ controlOperationName NOTIFY controlOperationChanged)
+    Q_PROPERTY(QString controlAuthState READ controlAuthState NOTIFY controlOperationChanged)
+    Q_PROPERTY(AuthState controlAuthStateEnum READ controlAuthStateEnum NOTIFY controlOperationChanged)
+    Q_PROPERTY(QString controlLastErrorCode READ controlLastErrorCode NOTIFY controlOperationChanged)
+    Q_PROPERTY(QString controlLastErrorMessage READ controlLastErrorMessage NOTIFY controlOperationChanged)
 
     // DMI & Platform Identity
     Q_PROPERTY(QString productTitle READ productTitle NOTIFY telemetryUpdated)
@@ -186,7 +246,17 @@ class ControlCenterController : public QObject {
     Q_PROPERTY(QVariantList diagnosticLogsModel READ diagnosticLogsModel NOTIFY logsUpdated)
 
 public:
-    explicit ControlCenterController(ThemeEngine* themeEngine, QObject* parent = nullptr);
+    explicit ControlCenterController(
+        ThemeEngine* themeEngine,
+        QObject* parent = nullptr
+    );
+    ControlCenterController(
+        ThemeEngine* themeEngine,
+        IAsyncControlTransport* customTransport,
+        QDBusConnection bus = QDBusConnection::systemBus(),
+        QObject* parent = nullptr
+    );
+    ~ControlCenterController() override;
 
     int currentTabIndex() const { return m_currentTabIndex; }
     void setCurrentTabIndex(int idx);
@@ -194,12 +264,36 @@ public:
     QString statusBannerText() const { return m_statusBannerText; }
     bool statusBannerIsError() const { return m_statusBannerIsError; }
 
-    bool mockModeActive() const { return m_snapshot.mockModeActive; }
-    QString hardwareModeLabel() const { return m_snapshot.mockScenarioName; }
+    bool mockModeActive() const;
+    QString hardwareModeLabel() const;
     int hardwareModeIndex() const;
 
     int pollingIntervalMs() const { return m_settings.pollingIntervalMs; }
     void setPollingIntervalMs(int ms);
+
+    // Telemetry Freshness Accessors
+    QString telemetryFreshness() const { return core::telemetryFreshnessToId(m_freshness); }
+    FreshnessState telemetryFreshnessState() const { return static_cast<FreshnessState>(m_freshness); }
+    bool telemetryAvailable() const { return m_hasValidSnapshot && m_freshness != core::TelemetryFreshness::Unavailable; }
+    bool telemetryStale() const { return m_freshness == core::TelemetryFreshness::Stale; }
+    bool telemetryRefreshing() const { return m_telemetryRefreshing; }
+    bool telemetrySuspended() const { return m_telemetrySuspended; }
+    qint64 telemetryAgeMs() const { return m_telemetryAgeMs; }
+    qint64 lastTelemetryTimestampMs() const { return m_hasValidSnapshot ? m_snapshot.timestampMs : 0; }
+    QString telemetryErrorMessage() const { return m_telemetryErrorMessage; }
+
+    // Async Control & Auth Accessors
+    bool controlOperationPending() const { return m_controlOperationPending; }
+    QString controlOperationName() const { return m_controlOperationName; }
+    QString controlAuthState() const { return core::controlAuthStateToId(m_controlAuthState); }
+    AuthState controlAuthStateEnum() const { return static_cast<AuthState>(m_controlAuthState); }
+    QString controlLastErrorCode() const { return m_controlLastErrorCode; }
+    QString controlLastErrorMessage() const { return m_controlLastErrorMessage; }
+
+    // Test & CLI hooks
+    TelemetryCoordinator* telemetryCoordinator() const { return m_coordinator.get(); }
+    bool waitForNextSnapshot(int timeoutMs = 3000);
+    void setFreshnessTimeoutOverrideMsForTest(int timeoutMs);
 
     // DMI
     QString productTitle() const;
@@ -407,9 +501,24 @@ Q_SIGNALS:
     void navigationChanged();
     void statusBannerChanged();
     void telemetryUpdated();
+    void telemetryFreshnessChanged();
+    void controlOperationChanged();
+    void controlOperationFinished(
+        const QString& operation,
+        bool applied,
+        const QString& authState,
+        const QString& errorCode,
+        const QString& message
+    );
     void settingsUpdated();
     void keyboardStudioChanged();
     void logsUpdated();
+
+private Q_SLOTS:
+    void onSnapshotReady(const acc::core::SystemSnapshot& snapshot, uint64_t seq);
+    void onCollectionFailed(const QString& errorMessage, uint64_t seq);
+    void onCoordinatorInFlightChanged(bool inFlight);
+    void onFreshnessTick();
 
 private:
     void syncThemeToSettings();
@@ -418,21 +527,49 @@ private:
     void applySelectedKbdColorToActiveZones();
     void setStatusBanner(const QString& text, bool isError);
     void persistSettings();
-    void pollRaplFromDaemonIfAvailable();
     void setupSystemTray();
+    int64_t maxFreshAgeMs() const;
+    bool beginControlOperation(const QString& operationName, uint64_t& outToken);
+    void completeControlOperation(
+        uint64_t token,
+        const QString& operationName,
+        const AsyncControlOutcome& outcome,
+        bool triggerRefresh = true
+    );
 
     ThemeEngine* m_theme = nullptr;
     core::ConfigStore m_configStore;
     core::AppSettings m_settings;
-    hal::TelemetryCollector m_collector;
+    QDBusConnection m_dbusConnection;
+    std::unique_ptr<TelemetryCoordinator> m_coordinator;
+    std::unique_ptr<DbusControlTransport> m_ownedTransport;
+    IAsyncControlTransport* m_transport = nullptr;
+
     core::SystemSnapshot m_snapshot;
+    bool m_hasValidSnapshot = false;
+    core::TelemetryFreshness m_freshness = core::TelemetryFreshness::Unavailable;
+    bool m_telemetryRefreshing = false;
+    bool m_telemetrySuspended = false;
+    qint64 m_telemetryAgeMs = -1;
+    QString m_telemetryErrorMessage;
+    int m_freshnessTimeoutOverrideMs = 0;
+
+    bool m_controlOperationPending = false;
+    QString m_controlOperationName;
+    core::ControlAuthState m_controlAuthState = core::ControlAuthState::Idle;
+    QString m_controlLastErrorCode;
+    QString m_controlLastErrorMessage;
+    uint64_t m_controlToken = 0;
+
     QTimer m_pollTimer;
+    QTimer m_freshnessTimer;
 
     int m_currentTabIndex = 0;
-    QString m_statusBannerText = QStringLiteral("Ready — Hardware Telemetry Active");
+    QString m_statusBannerText = QStringLiteral("Initializing Asynchronous Telemetry...");
     bool m_statusBannerIsError = false;
     bool m_lastAcOnlineState = true;
     bool m_firstPoll = true;
+    bool m_initialLiveProfileSynced = false;
     int m_batPreviousThresholdPct = 100;
 
     // 60-sample rolling history buffers

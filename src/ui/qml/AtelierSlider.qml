@@ -13,10 +13,10 @@ Item {
     property color fillColor: theme.telemetryLimeBar
     signal valueCommitted(int newValue)
 
-    implicitWidth: 240
+    implicitWidth: 220
     implicitHeight: 46
     activeFocusOnTab: root.enabledState
-    opacity: root.enabledState ? 1.0 : 0.6
+    opacity: root.enabledState ? 1.0 : 0.55
 
     function clampAndEmit(v) {
         var c = Math.max(root.minValue, Math.min(root.maxValue, Math.round(v)));
@@ -59,11 +59,10 @@ Item {
         anchors.bottomMargin: 6
         height: 10
         radius: 1
-        color: theme.surfaceHeader
+        color: theme.surfaceSunken
         border.width: root.activeFocus ? 2 : 1
         border.color: root.activeFocus ? theme.accentBorder : theme.borderStrong
 
-        // 25% / 50% / 75% CAD calibration ticks
         Repeater {
             model: [0.25, 0.50, 0.75]
             delegate: Rectangle {
@@ -71,7 +70,7 @@ Item {
                 y: 0
                 width: 1
                 height: track.height
-                color: theme.borderSubtle
+                color: theme.hairlineRule
                 z: 1
             }
         }
@@ -102,7 +101,7 @@ Item {
             }
             color: root.enabledState ? theme.brandYellow : theme.textMuted
             border.width: 1
-            border.color: theme.canvasBg
+            border.color: theme.darkInk
         }
 
         MouseArea {
@@ -128,10 +127,6 @@ Item {
         }
     }
 
-    Keys.onLeftPressed: {
-        if (root.enabledState) root.clampAndEmit(root.value - root.stepSize);
-    }
-    Keys.onRightPressed: {
-        if (root.enabledState) root.clampAndEmit(root.value + root.stepSize);
-    }
+    Keys.onLeftPressed: if (root.enabledState) root.clampAndEmit(root.value - root.stepSize)
+    Keys.onRightPressed: if (root.enabledState) root.clampAndEmit(root.value + root.stepSize)
 }

@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
     QApplication::setApplicationVersion(QStringLiteral("1.0.0"));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("Acer Control Center — Linux Edition (Precision Hardware Atelier)"));
+    parser.setApplicationDescription(QStringLiteral("Acer Control Center — Linux Edition (Industrial-Technical Hardware Command Center)"));
     parser.addHelpOption();
     parser.addVersionOption();
 
@@ -105,8 +105,10 @@ int main(int argc, char* argv[]) {
     acc::app::ControlCenterController controller(&themeEngine);
 
     if (parser.isSet(dumpTelemetryJsonOpt)) {
+        // Wait cleanly for initial async telemetry + second CPU/RAPL delta cycle without blocking GUI mode
+        controller.waitForNextSnapshot(3000);
         QThread::msleep(120);
-        controller.refreshNow();
+        controller.waitForNextSnapshot(3000);
 
         QJsonObject root;
         root.insert(QStringLiteral("hardwareMode"), controller.hardwareModeLabel());
@@ -283,6 +285,7 @@ int main(int argc, char* argv[]) {
         themeEngine.setAccentFromHex(QStringLiteral("#FFEA00"));
 
         QTimer::singleShot(250, &app, [dir, viewNames, topWin, &controller, &themeEngine]() {
+            controller.waitForNextSnapshot(3000);
             QStringList canonicalShots;
             auto captureView = [&](const QString& fileName, bool recordInSheet = false) {
                 QCoreApplication::processEvents();
@@ -342,6 +345,11 @@ int main(int argc, char* argv[]) {
             controller.setKbdBrightnessLevel(4);
             captureView(QStringLiteral("16-keyboard-clv0001-rgb-1920x1080.png"), true);
 
+            // Narrow tiled layout check (800x720 half-screen Hyprland/KDE tile)
+            topWin->resize(800, 720);
+            controller.setCurrentTabIndex(0);
+            captureView(QStringLiteral("17-overview-tiled-800x720.png"), false);
+
             // Generate 4x4 readable contact sheet containing all 16 canonical QA images
             constexpr int kSheetW = 3200;
             constexpr int kSheetH = 2048;
@@ -364,7 +372,7 @@ int main(int argc, char* argv[]) {
             sp.setPen(QColor(QStringLiteral("#FFEA00")));
             sp.drawText(QRect(kOuterPad, kOuterPad, kSheetW - 2 * kOuterPad, 30),
                         Qt::AlignLeft | Qt::AlignVCenter,
-                        QStringLiteral("ACER CONTROL CENTER // STAGE 21.1 VISUAL ACCEPTANCE CONTACT SHEET (16 CANONICAL VIEWS)"));
+                        QStringLiteral("ACER CONTROL CENTER // STAGE 25 ENDFIELD-INSPIRED STRUCTURAL UI CONTACT SHEET (16 CANONICAL VIEWS)"));
 
             QFont labelFont(QStringLiteral("JetBrains Mono"), 10, QFont::Bold);
             sp.setFont(labelFont);

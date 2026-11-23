@@ -21,6 +21,9 @@ class ThemeEngine : public QObject {
     Q_PROPERTY(QColor surfaceElevated READ surfaceElevated NOTIFY themeChanged)
     Q_PROPERTY(QColor surfaceHeader READ surfaceHeader NOTIFY themeChanged)
     Q_PROPERTY(QColor surfaceRecessed READ surfaceRecessed NOTIFY themeChanged)
+    Q_PROPERTY(QColor surfaceSunken READ surfaceSunken NOTIFY themeChanged)
+    Q_PROPERTY(QColor surfaceOverlay READ surfaceOverlay NOTIFY themeChanged)
+    Q_PROPERTY(QColor hairlineRule READ hairlineRule NOTIFY themeChanged)
     Q_PROPERTY(QColor surfaceCadLight READ surfaceCadLight CONSTANT)
     Q_PROPERTY(QColor surfacePillLight READ surfacePillLight CONSTANT)
     Q_PROPERTY(QColor surfaceSelectedDark READ surfaceSelectedDark CONSTANT)
@@ -90,6 +93,9 @@ public:
     QColor surfaceElevated() const;
     QColor surfaceHeader() const;
     QColor surfaceRecessed() const;
+    QColor surfaceSunken() const;
+    QColor surfaceOverlay() const;
+    QColor hairlineRule() const;
     QColor surfaceCadLight() const;
     QColor surfacePillLight() const;
     QColor surfaceSelectedDark() const;
