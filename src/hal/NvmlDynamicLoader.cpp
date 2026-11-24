@@ -100,7 +100,17 @@ void NvmlDynamicLoader::tryInitialize() {
         m_deviceName = QString::fromUtf8(nameBuf);
     }
     m_pciBusId = QStringLiteral("0000:01:00.0");
-    m_subsystemId = QStringLiteral("1025:1900");
+    const QString subsysVen = SysfsRoot::readFileTrimmed(
+        SysfsRoot::instance().resolvePath(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/subsystem_vendor"))
+    );
+    const QString subsysDev = SysfsRoot::readFileTrimmed(
+        SysfsRoot::instance().resolvePath(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/subsystem_device"))
+    );
+    if (!subsysVen.isEmpty() && !subsysDev.isEmpty()) {
+        m_subsystemId = QStringLiteral("%1:%2").arg(
+            subsysVen.startsWith(QLatin1String("0x")) ? subsysVen.mid(2) : subsysVen,
+            subsysDev.startsWith(QLatin1String("0x")) ? subsysDev.mid(2) : subsysDev);
+    }
 }
 
 void NvmlDynamicLoader::shutdown() {
@@ -121,13 +131,14 @@ bool NvmlDynamicLoader::isLoaded() const {
 
 double NvmlDynamicLoader::filterPowerReading(double rawWatts, double maxLimitWatts, int pstateNumber, bool& outRailGated) {
     outRailGated = false;
-    if (rawWatts < 0.0 || std::isnan(rawWatts)) {
+    if (!std::isfinite(rawWatts) || rawWatts < 0.0) {
         return 0.0;
     }
-    const double ceiling = std::max(100.0, maxLimitWatts * 1.5);
+    const double effectiveMaxLimit = (std::isfinite(maxLimitWatts) && maxLimitWatts > 0.0) ? maxLimitWatts : 75.0;
+    const double ceiling = std::max(100.0, effectiveMaxLimit * 1.5);
     // On GA107BM (RTX 3050 Laptop GPU) in P8 low-power state, NVML can return ~312.23 W
-    // when the sensor ADC rail is gated. Detect and flag this accurately.
-    if (rawWatts > ceiling || (pstateNumber >= 8 && rawWatts > maxLimitWatts * 0.8)) {
+    // when the sensor ADC rail is gated. Detect and flag spikes > max(50 W, 80% max limit) in P8+.
+    if (rawWatts > ceiling || (pstateNumber >= 8 && rawWatts > std::max(50.0, effectiveMaxLimit * 0.8))) {
         outRailGated = true;
         return 0.0;
     }
@@ -170,11 +181,81 @@ QStringList NvmlDynamicLoader::decodeThrottleReasons(uint64_t bitmask) {
     return reasons;
 }
 
+core::GpuTelemetry NvmlDynamicLoader::readProcNvidiaFallback() {
+    core::GpuTelemetry g;
+    const QString procGpuInfo = SysfsRoot::instance().resolvePath(
+        QStringLiteral("/proc/driver/nvidia/gpus/0000:01:00.0/information")
+    );
+    if (!QFileInfo::exists(procGpuInfo)) {
+        g.available = false;
+        g.sourceLabel = QStringLiteral("NVML Not Loaded");
+        return g;
+    }
+
+    const QString infoText = SysfsRoot::readFileTrimmed(procGpuInfo);
+    QString modelName;
+    QString fwVersion;
+    const QStringList lines = infoText.split(QLatin1Char('\n'));
+    for (const QString& ln : lines) {
+        if (ln.startsWith(QLatin1String("Model:"))) {
+            modelName = ln.mid(6).trimmed();
+        } else if (ln.startsWith(QLatin1String("GPU Firmware:"))) {
+            fwVersion = ln.mid(13).trimmed();
+        }
+    }
+    const QString procVersion = SysfsRoot::readFileTrimmed(
+        SysfsRoot::instance().resolvePath(QStringLiteral("/proc/driver/nvidia/version"))
+    );
+    QString nvrmVersion;
+    for (const QString& ln : procVersion.split(QLatin1Char('\n'))) {
+        if (ln.startsWith(QLatin1String("NVRM version:"))) {
+            nvrmVersion = ln.mid(13).trimmed();
+            break;
+        }
+    }
+    const QString pciPowerState = SysfsRoot::readFileTrimmed(
+        SysfsRoot::instance().resolvePath(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/power_state"))
+    );
+    const QString subsysVendor = SysfsRoot::readFileTrimmed(
+        SysfsRoot::instance().resolvePath(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/subsystem_vendor"))
+    );
+    const QString subsysDevice = SysfsRoot::readFileTrimmed(
+        SysfsRoot::instance().resolvePath(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/subsystem_device"))
+    );
+    g.available = true;
+    g.telemetryMeasuredByNvml = false;
+    g.powerLimitsMeasured = false;
+    g.sourceLabel = QStringLiteral("/proc/driver/nvidia (NVML unavailable — telemetry unmeasured)");
+    g.name = modelName.isEmpty() ? QStringLiteral("NVIDIA Discrete GPU (0000:01:00.0)") : modelName;
+    if (!nvrmVersion.isEmpty()) {
+        g.driverVersion = nvrmVersion;
+    } else {
+        g.driverVersion = fwVersion.isEmpty() ? QStringLiteral("nvidia.ko (/proc fallback)") : fwVersion;
+    }
+    g.pciBusId = QStringLiteral("0000:01:00.0");
+    if (!subsysVendor.isEmpty() && !subsysDevice.isEmpty()) {
+        g.subsystemId = QStringLiteral("%1:%2").arg(
+            subsysVendor.startsWith(QLatin1String("0x")) ? subsysVendor.mid(2) : subsysVendor,
+            subsysDevice.startsWith(QLatin1String("0x")) ? subsysDevice.mid(2) : subsysDevice);
+    }
+    g.vramTotalMiB = 0;
+    g.powerDefaultLimitWatts = 0.0;
+    g.powerMaxLimitWatts = 0.0;
+    g.powerMinLimitWatts = 0.0;
+    g.pstate = pciPowerState.isEmpty() ? QStringLiteral("Unmeasured") : QStringLiteral("PCI %1").arg(pciPowerState);
+    g.throttleReasonsDecoded = {
+        QStringLiteral("NVML dynamic library unavailable; power, VRAM, clocks, and temperature are unmeasured")
+    };
+    return g;
+}
+
 core::GpuTelemetry NvmlDynamicLoader::readTelemetry() const {
     core::GpuTelemetry g;
 
     if (SysfsRoot::instance().isMockActive()) {
         g.available = true;
+        g.telemetryMeasuredByNvml = true;
+        g.powerLimitsMeasured = true;
         g.sourceLabel = QStringLiteral("Mock NVML (RTX 3050 6GB Fixture)");
         g.name = QStringLiteral("NVIDIA GeForce RTX 3050 6GB Laptop GPU");
         g.driverVersion = QStringLiteral("615.78.08");
@@ -206,47 +287,12 @@ core::GpuTelemetry NvmlDynamicLoader::readTelemetry() const {
     }
 
     if (!isLoaded()) {
-        const QString procGpuInfo = SysfsRoot::instance().resolvePath(
-            QStringLiteral("/proc/driver/nvidia/gpus/0000:01:00.0/information")
-        );
-        if (QFileInfo::exists(procGpuInfo)) {
-            const QString infoText = SysfsRoot::readFileTrimmed(procGpuInfo);
-            QString modelName = QStringLiteral("NVIDIA GeForce RTX 3050 6GB Laptop GPU");
-            QString fwVersion;
-            const QStringList lines = infoText.split(QLatin1Char('\n'));
-            for (const QString& ln : lines) {
-                if (ln.startsWith(QLatin1String("Model:"))) {
-                    modelName = ln.mid(6).trimmed();
-                } else if (ln.startsWith(QLatin1String("GPU Firmware:"))) {
-                    fwVersion = ln.mid(13).trimmed();
-                }
-            }
-            const QString pciPowerState = SysfsRoot::readFileTrimmed(
-                SysfsRoot::instance().resolvePath(QStringLiteral("/sys/bus/pci/devices/0000:01:00.0/power_state"))
-            );
-            g.available = true;
-            g.sourceLabel = QStringLiteral("/proc/driver/nvidia (NVML Library Version Mismatch — Reboot Pending)");
-            g.name = modelName;
-            g.driverVersion = fwVersion.isEmpty() ? QStringLiteral("nvidia.ko (Reboot Pending)") : fwVersion;
-            g.pciBusId = QStringLiteral("0000:01:00.0");
-            g.subsystemId = QStringLiteral("1025:1900 (Acer Kelilu_RTH)");
-            g.vramTotalMiB = 6144;
-            g.powerDefaultLimitWatts = 60.0;
-            g.powerMaxLimitWatts = 75.0;
-            g.pstate = pciPowerState.isEmpty() ? QStringLiteral("D0") : pciPowerState;
-            g.throttleReasonsDecoded = {
-                QStringLiteral("NVML Driver/Library Version Mismatch (Reboot required after NVIDIA package update)")
-            };
-            return g;
-        }
-        g.available = false;
-        g.sourceLabel = QStringLiteral("NVML Not Loaded");
-        return g;
+        return readProcNvidiaFallback();
     }
 
     g.available = true;
     g.sourceLabel = QStringLiteral("NVML (libnvidia-ml.so.1)");
-    g.name = m_deviceName.isEmpty() ? QStringLiteral("NVIDIA GeForce RTX 3050 6GB Laptop GPU") : m_deviceName;
+    g.name = m_deviceName.isEmpty() ? QStringLiteral("NVIDIA Discrete GPU (NVML)") : m_deviceName;
     g.driverVersion = m_driverVersion;
     g.pciBusId = m_pciBusId;
     g.subsystemId = m_subsystemId;
@@ -287,13 +333,16 @@ core::GpuTelemetry NvmlDynamicLoader::readTelemetry() const {
         g.maxMemClockMhz = static_cast<int>(clk);
     }
 
-    unsigned int minLimMw = 1000, maxLimMw = 75000, defLimMw = 60000;
+    g.telemetryMeasuredByNvml = true;
+    unsigned int minLimMw = 0, maxLimMw = 0, defLimMw = 0;
     if (m_fnGetPowerLimits && m_fnGetPowerLimits(m_deviceHandle, &minLimMw, &maxLimMw) == 0) {
         g.powerMinLimitWatts = minLimMw / 1000.0;
         g.powerMaxLimitWatts = maxLimMw / 1000.0;
+        g.powerLimitsMeasured = true;
     }
     if (m_fnGetDefaultPowerLimit && m_fnGetDefaultPowerLimit(m_deviceHandle, &defLimMw) == 0) {
         g.powerDefaultLimitWatts = defLimMw / 1000.0;
+        g.powerLimitsMeasured = true;
     }
 
     int pstateNum = 8;

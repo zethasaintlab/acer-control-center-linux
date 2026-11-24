@@ -17,6 +17,9 @@ public:
     static QString findHwmonByName(const QString& driverName);
     static QString findFirstKeyboardLedPath();
     static QString findFirstFanPwmHwmonPath();
+    static bool isVerifiedFanDriverName(const QString& driverName);
+    static bool hasValidFanPwmAttributes(const QString& hwmonDir);
+    static bool isVerifiedWritableFanPwmHwmon(const QString& hwmonDir);
 };
 
 } // namespace acc::hal

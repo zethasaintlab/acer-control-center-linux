@@ -6,61 +6,83 @@ Rectangle {
     property string indexCode: "01"
     property string title: "SECTION"
     property string badgeText: ""
-    property color badgeColor: theme.statusInfo
+    property color badgeColor: "transparent"
+    property color accentStripeColor: theme.brandYellow
+    property bool hazardStripe: false
 
-    height: 32
+    height: 34
     color: theme.surfaceHeader
     border.width: 1
     border.color: theme.borderSubtle
 
-    Row {
+    // Left vertical industrial indicator bar
+    Rectangle {
+        id: leftAccentBar
         anchors.left: parent.left
-        anchors.leftMargin: 12
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 4
+        color: root.hazardStripe ? theme.industrialAmber : root.accentStripeColor
+    }
+
+    // Bottom crisp hairline rule
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: theme.borderStrong
+    }
+
+    Row {
+        anchors.left: leftAccentBar.right
+        anchors.leftMargin: 10
+        anchors.right: badgeCtrl.visible ? badgeCtrl.left : parent.right
+        anchors.rightMargin: 10
         anchors.verticalCenter: parent.verticalCenter
         spacing: 8
 
         Text {
+            id: hazardLabel
+            visible: root.hazardStripe
+            anchors.verticalCenter: parent.verticalCenter
+            text: "///"
+            font.family: theme.fontMono
+            font.pixelSize: 11
+            font.weight: Font.Bold
+            color: theme.industrialAmber
+        }
+
+        Text {
             id: indexLabel
-            text: root.indexCode + " //"
-            font.family: "monospace"
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.hazardStripe ? root.indexCode : ("// " + root.indexCode)
+            font.family: theme.fontMono
             font.pixelSize: 11
             font.weight: Font.Bold
             color: theme.accentReadable
         }
 
         Text {
-            width: Math.max(60, root.width - (badgeRect.visible ? badgeRect.width + 24 : 12) - indexLabel.width - 28)
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(60, parent.width - indexLabel.width - (hazardLabel.visible ? hazardLabel.width + 18 : 10))
             elide: Text.ElideRight
             text: root.title
-            font.family: "monospace"
+            font.family: theme.fontMono
             font.pixelSize: 11
-            font.weight: Font.DemiBold
-            font.letterSpacing: 0.8
+            font.weight: Font.Bold
+            font.letterSpacing: 0.7
             color: theme.textPrimary
         }
     }
 
-    Rectangle {
-        id: badgeRect
+    CapabilityBadge {
+        id: badgeCtrl
         visible: root.badgeText.length > 0
         anchors.right: parent.right
         anchors.rightMargin: 10
         anchors.verticalCenter: parent.verticalCenter
-        height: 20
-        width: badgeLabel.implicitWidth + 14
-        radius: 2
-        color: "transparent"
-        border.width: 1
-        border.color: root.badgeColor
-
-        Text {
-            id: badgeLabel
-            anchors.centerIn: parent
-            text: root.badgeText
-            font.family: "monospace"
-            font.pixelSize: 10
-            font.weight: Font.Bold
-            color: root.badgeColor
-        }
+        badgeText: root.badgeText
+        customColor: root.badgeColor
     }
 }

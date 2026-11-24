@@ -1,0 +1,218 @@
+name: Fedora 45 CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - feat/clv0001-keyboard-integration
+
+permissions:
+  contents: read
+
+jobs:
+  fedora45-build-test:
+    name: fedora45-build-test
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/fedora/fedora:45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install build and validation dependencies
+        run: |
+          dnf -y install --setopt=install_weak_deps=False \
+            cmake \
+            ninja-build \
+            gcc-c++ \
+            desktop-file-utils \
+            appstream \
+            libxml2 \
+            rpm-build \
+            systemd-rpm-macros \
+            util-linux \
+            qt6-qtbase-devel \
+            qt6-qtdeclarative-devel \
+            polkit-devel
+
+      - name: Configure and build (CMake Release / Ninja)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j"$(nproc)"
+
+      - name: Run CTest unit and offscreen GUI suites
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          command -v setpriv
+          setpriv --version
+          setpriv \
+            --bounding-set=-dac_override \
+            --inh-caps=-dac_override \
+            --ambient-caps=-dac_override \
+            -- \
+            bash -euo pipefail -c '
+              cap_eff_hex="$(awk "/^CapEff:/ {print \$2}" /proc/self/status)"
+              echo "Restricted CTest child CapEff=$cap_eff_hex"
+
+              if [ -z "$cap_eff_hex" ] || (( (16#$cap_eff_hex & 0x2) != 0 )); then
+                echo "::error::CAP_DAC_OVERRIDE remains effective: CapEff=$cap_eff_hex" >&2
+                exit 1
+              fi
+
+              exec "$@"
+            ' -- ctest --test-dir build --output-on-failure --verbose | tee build/ctest.log
+
+      - name: Staging install and desktop/AppStream/XML/spec checks
+        run: |
+          DESTDIR="$PWD/build/staging" cmake --install build --prefix /usr
+          desktop-file-validate build/staging/usr/share/applications/io.github.zethasaintlab.acer-control-center.desktop
+          appstreamcli validate --no-net build/staging/usr/share/metainfo/io.github.zethasaintlab.acer-control-center.metainfo.xml
+          xmllint --noout \
+            build/staging/usr/share/polkit-1/actions/io.github.zethasaintlab.acercontrol.policy \
+            build/staging/usr/share/dbus-1/interfaces/io.github.zethasaintlab.AcerControlCenter1.xml
+          rpmspec -P packaging/fedora/acer-control-center.spec >/dev/null
+
+      - name: Upload CTest log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora45-ctest-log
+          path: build/ctest.log
+          if-no-files-found: ignore
+
+  fedora45-rpm:
+    name: fedora45-rpm
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/fedora/fedora:45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install RPM build dependencies
+        run: |
+          dnf -y install --setopt=install_weak_deps=False \
+            tar \
+            gzip \
+            rpm-build \
+            rpmlint \
+            cmake \
+            ninja-build \
+            gcc-c++ \
+            desktop-file-utils \
+            appstream \
+            systemd-rpm-macros \
+            util-linux \
+            qt6-qtbase-devel \
+            qt6-qtdeclarative-devel \
+            polkit-devel
+
+      - name: Export source archive and run rpmbuild -ba
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          command -v setpriv
+          setpriv --version
+          SPEC="packaging/fedora/acer-control-center.spec"
+          NAME="$(rpmspec -q --qf '%{NAME}\n' "$SPEC" | head -n 1)"
+          VERSION="$(rpmspec -q --qf '%{VERSION}\n' "$SPEC" | head -n 1)"
+          PREFIX="${NAME}-${VERSION}"
+          ARCHIVE_NAME="${PREFIX}.tar.gz"
+          TOPDIR="$PWD/build/ci-rpmbuild"
+          ARCHIVE_PATH="$TOPDIR/SOURCES/${ARCHIVE_NAME}"
+
+          TMP_TAR="$(mktemp "/tmp/${PREFIX}.XXXXXX.tar.gz")"
+          trap 'rm -f "$TMP_TAR"' EXIT
+          tar -C . -czf "$TMP_TAR" \
+            --exclude='.git' \
+            --exclude='./build' \
+            --transform="flags=r;s,^\.,${PREFIX}," \
+            .
+
+          mkdir -p "$TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+          mv "$TMP_TAR" "$ARCHIVE_PATH"
+
+          if [ ! -s "$ARCHIVE_PATH" ]; then
+            echo "ERROR: Missing or empty source archive: $ARCHIVE_PATH" >&2
+            exit 1
+          fi
+
+          ARCHIVE_LIST="$(tar -tzf "$ARCHIVE_PATH")"
+          printf '%s\n' "$ARCHIVE_LIST"
+
+          if printf '%s\n' "$ARCHIVE_LIST" | grep -vqE "^${PREFIX}(/|$)"; then
+            echo "ERROR: Archive contains entries outside expected prefix ${PREFIX}/" >&2
+            exit 1
+          fi
+          if printf '%s\n' "$ARCHIVE_LIST" | grep -qE "(^|/)\.git(/|$)|^${PREFIX}/build(/|$)"; then
+            echo "ERROR: Archive contains forbidden .git or build entries" >&2
+            exit 1
+          fi
+
+          REQUIRED_FILES="$(
+            {
+              printf '%s\n' "$SPEC" "CMakeLists.txt"
+              rpmspec -P "$SPEC" | awk '
+                /^%license[[:space:]]+/ || /^%doc[[:space:]]+/ {
+                  for (i = 2; i <= NF; i++) print $i
+                }
+              '
+            } | sort -u
+          )"
+          for req in $REQUIRED_FILES; do
+            if ! printf '%s\n' "$ARCHIVE_LIST" | grep -Fxq "${PREFIX}/${req}"; then
+              echo "ERROR: Missing required source file in archive: ${PREFIX}/${req}" >&2
+              exit 1
+            fi
+          done
+
+          cp "$SPEC" "$TOPDIR/SPECS/"
+          setpriv \
+            --bounding-set=-dac_override \
+            --inh-caps=-dac_override \
+            --ambient-caps=-dac_override \
+            -- \
+            bash -euo pipefail -c '
+              cap_eff_hex="$(awk "/^CapEff:/ {print \$2}" /proc/self/status)"
+              echo "Restricted rpmbuild child CapEff=$cap_eff_hex"
+
+              if [ -z "$cap_eff_hex" ] || (( (16#$cap_eff_hex & 0x2) != 0 )); then
+                echo "::error::CAP_DAC_OVERRIDE remains effective: CapEff=$cap_eff_hex" >&2
+                exit 1
+              fi
+
+              exec "$@"
+            ' -- rpmbuild --define "_topdir $TOPDIR" -ba "$TOPDIR/SPECS/$(basename "$SPEC")" 2>&1 | tee "$TOPDIR/rpmbuild.log"
+
+      - name: Verify RPM payload, checksums and rpmlint advisories
+        run: |
+          set -o pipefail
+          TOPDIR="$PWD/build/ci-rpmbuild"
+          MAIN_RPM="$(find "$TOPDIR/RPMS" -name 'acer-control-center-*.rpm' ! -name '*debug*' | head -n 1)"
+          SRPM="$(find "$TOPDIR/SRPMS" -name '*.src.rpm' | head -n 1)"
+          rpm -qip "$MAIN_RPM"
+          if rpm -qlp "$MAIN_RPM" | grep -q '\.ko'; then
+            echo "ERROR: Prebuilt kernel module found in RPM payload" >&2
+            exit 1
+          fi
+          sha256sum "$MAIN_RPM" "$SRPM" | tee "$TOPDIR/SHA256SUMS"
+          rpmlint packaging/fedora/acer-control-center.spec "$MAIN_RPM" "$SRPM" | tee "$TOPDIR/rpmlint.log" || true
+
+      - name: Upload unsigned RPM build artifacts and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora45-rpm-artifacts
+          path: |
+            build/ci-rpmbuild/RPMS/**/*.rpm
+            build/ci-rpmbuild/SRPMS/*.rpm
+            build/ci-rpmbuild/SHA256SUMS
+            build/ci-rpmbuild/rpmbuild.log
+            build/ci-rpmbuild/rpmlint.log
+          if-no-files-found: ignore

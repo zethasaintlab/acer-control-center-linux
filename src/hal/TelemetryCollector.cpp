@@ -5,6 +5,7 @@
 
 #include <QDateTime>
 #include <QDBusConnection>
+#include <QDBusConnectionInterface>
 #include <QDBusInterface>
 #include <QDBusReply>
 #include <QDir>
@@ -41,6 +42,19 @@ TelemetryCollector::TelemetryCollector() = default;
 
 bool TelemetryCollector::isNvmlLoaded() const {
     return m_nvml.isLoaded();
+}
+
+void TelemetryCollector::resetDeltas() {
+    m_prevTotalCpu = CpuStatSample{};
+    m_prevCoreCpu.clear();
+    m_prevPkgUj = 0;
+    m_prevCoreUj = 0;
+    m_prevPsysUj = 0;
+    m_prevRaplTsUs = 0;
+    m_lastPkgWatts = 0.0;
+    m_lastCoreWatts = 0.0;
+    m_lastPsysWatts = 0.0;
+    m_raplAvailable = false;
 }
 
 void TelemetryCollector::updateRaplCounters(uint64_t pkgUj, uint64_t coreUj, uint64_t psysUj, int64_t timestampUs, bool available) {
@@ -354,7 +368,7 @@ core::ThermalTelemetry TelemetryCollector::readThermalTelemetry(double cpuPkgTem
                 fr.sysfsPath = d.filePath(ff);
                 fr.rpm = rpm;
                 fr.pwmPct = std::clamp((pwmRaw * 100) / 255, 0, 100);
-                fr.isWritable = QFileInfo::exists(d.filePath(QStringLiteral("pwm1")));
+                fr.isWritable = HardwareDiscovery::isVerifiedWritableFanPwmHwmon(dPath);
                 fr.isDetected = true;
                 th.fans.push_back(fr);
             }
@@ -399,16 +413,22 @@ core::ThermalTelemetry TelemetryCollector::readThermalTelemetry(double cpuPkgTem
         th.thermalStateLabel = QStringLiteral("Nominal");
     }
 
-    if (!th.fans.empty()) {
-        th.manualFanSupported = th.fans.front().isWritable;
-        const QString fanHwmon = HardwareDiscovery::findFirstFanPwmHwmonPath();
-        const QString pwmEn = fanHwmon.isEmpty()
-                                  ? QStringLiteral("2")
-                                  : SysfsRoot::readFileTrimmed(fanHwmon + QStringLiteral("/pwm1_enable"));
+    const QString fanHwmon = HardwareDiscovery::findFirstFanPwmHwmonPath();
+    if (!fanHwmon.isEmpty()) {
+        th.manualFanSupported = true;
+        const QString pwmEn = SysfsRoot::readFileTrimmed(fanHwmon + QStringLiteral("/pwm1_enable"));
+        const QString modePrefix = root.isMockActive() ? QStringLiteral("SIMULATED: ") : QString();
         th.fanControlMode = (pwmEn == QLatin1String("1"))
                                 ? QStringLiteral("Manual PWM Override")
                                 : QStringLiteral("Firmware Automatic (PWM)");
-        th.fanStatusExplanation = QStringLiteral("Kernel hwmon fan tachometers and PWM control are active.");
+        th.fanStatusExplanation = modePrefix + QStringLiteral("Kernel hwmon fan tachometers and verified PWM control are active.");
+    } else if (!th.fans.empty()) {
+        th.manualFanSupported = false;
+        th.fanControlMode = QStringLiteral("Read-Only Fan Tachometer (EC Auto)");
+        th.fanStatusExplanation = QStringLiteral(
+            "Read-only fan tachometer detected without verified writable PWM attributes (`pwm1` + `pwm1_enable` on a verified driver). "
+            "Manual fan control remains safely disabled while firmware EC regulation stays active."
+        );
     } else {
         th.manualFanSupported = false;
         th.fanControlMode = QStringLiteral("Firmware Automatic (INSYDE EC)");
@@ -433,6 +453,9 @@ core::BatteryTelemetry TelemetryCollector::readBatteryTelemetry() const {
     if (!QFileInfo::exists(batBase)) {
         bat.present = false;
         bat.status = QStringLiteral("Not Present");
+        bat.cycleCount = 0;
+        bat.cycleCountReported = false;
+        bat.cycleCountLabel = QStringLiteral("NOT REPORTED");
         bat.statusExplanation = QStringLiteral("BAT0 power supply node not found.");
         return bat;
     }
@@ -441,7 +464,19 @@ core::BatteryTelemetry TelemetryCollector::readBatteryTelemetry() const {
     bat.status = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/status"));
     bat.technology = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/technology"));
     bat.capacityPct = std::clamp(SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/capacity")).toInt(), 0, 100);
-    bat.cycleCount = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/cycle_count")).toInt();
+
+    bool okCycle = false;
+    const int rawCycles = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/cycle_count"), &okCycle).toInt(&okCycle);
+    // Linux drivers/acpi/battery.c initializes cycle_count=0 when ACPI _BIF is used or smart-battery IC omits cycle count.
+    if (okCycle && rawCycles > 0 && rawCycles < 65535) {
+        bat.cycleCount = rawCycles;
+        bat.cycleCountReported = true;
+        bat.cycleCountLabel = QString::number(rawCycles);
+    } else {
+        bat.cycleCount = 0;
+        bat.cycleCountReported = false;
+        bat.cycleCountLabel = QStringLiteral("NOT REPORTED");
+    }
 
     const double voltageUv = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/voltage_now")).toDouble();
     const double currentUa = SysfsRoot::readFileTrimmed(batBase + QStringLiteral("/current_now")).toDouble();
@@ -467,9 +502,10 @@ core::BatteryTelemetry TelemetryCollector::readBatteryTelemetry() const {
         bat.chargeLimitSupported = true;
         bat.chargeLimitSysfsPath = limitPath;
         bool okLim = false;
-        const int lim = SysfsRoot::readFileTrimmed(limitPath, &okLim).toInt();
+        const int lim = SysfsRoot::readFileTrimmed(limitPath, &okLim).toInt(&okLim);
         bat.chargeEndThresholdPct = (okLim && lim >= 50 && lim <= 100) ? lim : 80;
-        bat.statusExplanation = QStringLiteral(
+        const QString simPrefix = root.isMockActive() ? QStringLiteral("SIMULATED: ") : QString();
+        bat.statusExplanation = simPrefix + QStringLiteral(
             "Kernel charge_control_end_threshold active (%1%). "
             "Note: Full-charge vs design capacity ratio is an ACPI fuel-gauge estimate and may vary with charge termination conditions."
         ).arg(bat.chargeEndThresholdPct);
@@ -477,9 +513,9 @@ core::BatteryTelemetry TelemetryCollector::readBatteryTelemetry() const {
         bat.chargeLimitSupported = false;
         bat.chargeEndThresholdPct = 100;
         bat.statusExplanation = QStringLiteral(
-            "Standard ACPI battery telemetry (`BAT0`) is active. "
-            "Charge threshold control (`charge_control_end_threshold`) is not exposed by `acpi-battery` on the `Kelilu_RTH` board. "
-            "Note: Full-charge vs design capacity ratio (`charge_full / charge_full_design`) is a fuel-gauge estimate, not a definitive cell health measurement."
+            "BATTERY TELEMETRY ONLY — CHARGE LIMIT NOT DETECTED: Standard ACPI battery telemetry (`BAT0`) is active, "
+            "and `charge_control_end_threshold` is not exposed by `acpi-battery` on `Kelilu_RTH`. "
+            "Note: `charge_full / charge_full_design` is a fuel-gauge estimate, not a definitive cell health test."
         );
     }
 
@@ -520,12 +556,39 @@ QString TelemetryCollector::readActiveTunedOrPpdProfile() const {
 }
 
 core::SystemSnapshot TelemetryCollector::collectSnapshot(const QString& activeProfileId) {
+    return collectSnapshot(activeProfileId, nullptr);
+}
+
+core::SystemSnapshot TelemetryCollector::collectSnapshot(
+    const QString& activeProfileId,
+    const TelemetryExternalHints* hints
+) {
     core::SystemSnapshot snap;
+    snap.valid = true;
     snap.timestampMs = QDateTime::currentMSecsSinceEpoch();
     snap.mockModeActive = SysfsRoot::instance().isMockActive();
     snap.mockScenarioName = SysfsRoot::instance().scenarioLabel();
 
+    if (hints && hints->hasRaplSample) {
+        updateRaplCounters(
+            hints->raplPkgUj,
+            hints->raplCoreUj,
+            hints->raplPsysUj,
+            hints->raplTimestampUs,
+            hints->raplAvailable
+        );
+    }
+
     snap.dmi = HardwareDiscovery::probeDmiAndWmi();
+    if (snap.mockModeActive) {
+        snap.daemonReachable = true;
+    } else if (hints && hints->useExternalDbusHints) {
+        snap.daemonReachable = hints->daemonReachable;
+    } else {
+        const auto bus = QDBusConnection::systemBus();
+        snap.daemonReachable = bus.isConnected() && bus.interface() &&
+                               bus.interface()->isServiceRegistered(QStringLiteral("io.github.zethasaintlab.AcerControlCenter1"));
+    }
     snap.cpu = readCpuTelemetry();
     snap.memory = readMemoryTelemetry();
     snap.gpu = m_nvml.readTelemetry();
@@ -533,7 +596,13 @@ core::SystemSnapshot TelemetryCollector::collectSnapshot(const QString& activePr
     snap.battery = readBatteryTelemetry();
     snap.keyboardHw = HardwareDiscovery::probeKeyboardHardware(snap.dmi);
     snap.activeOperatingProfileId = activeProfileId;
-    snap.activeTunedProfile = readActiveTunedOrPpdProfile();
+    if (hints && hints->useExternalDbusHints) {
+        snap.activeTunedProfile = hints->activeTunedProfile.isEmpty()
+                                      ? (snap.mockModeActive ? QStringLiteral("balanced (Mock TuneD-PPD)") : QStringLiteral("unavailable"))
+                                      : hints->activeTunedProfile;
+    } else {
+        snap.activeTunedProfile = readActiveTunedOrPpdProfile();
+    }
     snap.displayBrightnessPct = readDisplayBrightnessPct(snap.displayBrightnessSupported);
     snap.capabilities = HardwareDiscovery::probeAllCapabilities(m_nvml.isLoaded());
 

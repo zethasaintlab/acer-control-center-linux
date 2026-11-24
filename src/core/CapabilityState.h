@@ -13,7 +13,11 @@ enum class CapabilityState {
     PartiallySupported,
     Unsupported,
     NotDetected,
-    RequiresVerification
+    FirmwareAutomatic,
+    PreviewOnly,
+    Simulated,
+    RequiresVerification,
+    Error
 };
 
 QString capabilityStateToId(CapabilityState state);

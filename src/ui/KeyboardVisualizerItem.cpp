@@ -86,7 +86,7 @@ void KeyboardVisualizerItem::setZoneColors(const QVariantList& z) {
 }
 
 void KeyboardVisualizerItem::setSelectedZone(int idx) {
-    const int clamped = std::clamp(idx, -1, 3);
+    const int clamped = m_multiZoneSupported ? std::clamp(idx, -1, 3) : -1;
     if (m_selectedZone != clamped) {
         m_selectedZone = clamped;
         Q_EMIT selectedZoneChanged(m_selectedZone);
@@ -115,6 +115,18 @@ void KeyboardVisualizerItem::setBacklightEnabled(bool e) {
 void KeyboardVisualizerItem::setHardwareConnected(bool c) {
     if (m_hwConnected != c) {
         m_hwConnected = c;
+        Q_EMIT stateChanged();
+        update();
+    }
+}
+
+void KeyboardVisualizerItem::setMultiZoneSupported(bool s) {
+    if (m_multiZoneSupported != s) {
+        m_multiZoneSupported = s;
+        if (!m_multiZoneSupported && m_selectedZone != -1) {
+            m_selectedZone = -1;
+            Q_EMIT selectedZoneChanged(m_selectedZone);
+        }
         Q_EMIT stateChanged();
         update();
     }
@@ -171,6 +183,11 @@ QColor KeyboardVisualizerItem::colorForZone(int zoneIdx) const {
 }
 
 void KeyboardVisualizerItem::mousePressEvent(QMouseEvent* event) {
+    if (!m_multiZoneSupported) {
+        setSelectedZone(-1);
+        event->accept();
+        return;
+    }
     const double w = width();
     if (w > 40.0) {
         const double frac = event->position().x() / w;
@@ -204,11 +221,19 @@ void KeyboardVisualizerItem::paint(QPainter* painter) {
 
     const bool isLightBg = m_bgColor.lightness() > 128;
     const bool isLightKeycap = m_keycapColor.lightness() > 128;
-    const QColor nominalCol = isLightBg ? QColor(QStringLiteral("#168A56")) : QColor(QStringLiteral("#2EBE7E"));
-    const QColor warningCol = isLightBg ? QColor(QStringLiteral("#B87503")) : QColor(QStringLiteral("#E5A024"));
+    const QColor nominalCol = isLightBg ? QColor(QStringLiteral("#4A7A00")) : QColor(QStringLiteral("#A4E61D"));
+    const QColor warningCol = isLightBg ? QColor(QStringLiteral("#A86400")) : QColor(QStringLiteral("#F5B82E"));
+
+    // Corner CAD crosshairs
+    const QColor crosshairCol = isLightBg ? QColor(QStringLiteral("#7C868E")) : QColor(QStringLiteral("#5C6463"));
+    painter->setPen(QPen(crosshairCol, 1.0));
+    painter->drawLine(QPointF(4, 8), QPointF(10, 8));
+    painter->drawLine(QPointF(7, 5), QPointF(7, 11));
+    painter->drawLine(QPointF(w - 10, 8), QPointF(w - 4, 8));
+    painter->drawLine(QPointF(w - 7, 5), QPointF(w - 7, 11));
 
     // Top status & routing bar
-    QFont monoFont(QStringLiteral("monospace"));
+    QFont monoFont(QStringLiteral("JetBrains Mono"));
     monoFont.setPixelSize(10);
     monoFont.setBold(true);
     painter->setFont(monoFont);
@@ -226,7 +251,7 @@ void KeyboardVisualizerItem::paint(QPainter* painter) {
 
     const double brightScale = m_backlightEnabled ? (std::clamp(m_brightnessPct, 0, 100) / 100.0) : 0.0;
 
-    QFont keyFont(QStringLiteral("monospace"));
+    QFont keyFont(QStringLiteral("JetBrains Mono"));
     keyFont.setPixelSize(std::clamp(static_cast<int>(rowH * 0.28), 8, 11));
     keyFont.setBold(false);
     painter->setFont(keyFont);
@@ -238,8 +263,8 @@ void KeyboardVisualizerItem::paint(QPainter* painter) {
         const double kh = std::max(6.0, rowH - 3.0);
         const QRectF keyRect(kx, ky, kw, kh);
 
-        const QColor zoneCol = colorForZone(k.zone);
-        const bool zoneSelected = (m_selectedZone == -1 || m_selectedZone == k.zone);
+        const QColor zoneCol = m_multiZoneSupported ? colorForZone(k.zone) : colorForZone(0);
+        const bool zoneSelected = !m_multiZoneSupported || (m_selectedZone == -1 || m_selectedZone == k.zone);
 
         // Keycap base
         painter->setPen(Qt::NoPen);
@@ -272,27 +297,44 @@ void KeyboardVisualizerItem::paint(QPainter* painter) {
         painter->drawText(keyRect.adjusted(3.0, 2.0, -2.0, -2.0), Qt::AlignLeft | Qt::AlignTop, QString::fromUtf8(k.label));
     }
 
-    // Bottom 4-Zone Segment Ruler (clickable zone indicators)
-    const QStringList zoneNames = {
-        QStringLiteral("Z1 // WASD & LEFT"),
-        QStringLiteral("Z2 // CENTER ALPHA"),
-        QStringLiteral("Z3 // NAV & ARROWS"),
-        QStringLiteral("Z4 // NUMERIC PAD")
-    };
-    const double segW = deckRect.width() / 4.0;
-    for (int z = 0; z < 4; ++z) {
-        const QRectF segRect(deckRect.left() + z * segW + 2.0, deckRect.bottom() + 4.0, segW - 4.0, 16.0);
-        const bool isSel = (m_selectedZone == -1 || m_selectedZone == z);
-        const QColor zCol = colorForZone(z);
+    if (m_multiZoneSupported) {
+        // Bottom 4-Zone Segment Ruler (clickable zone indicators)
+        const QStringList zoneNames = {
+            QStringLiteral("Z1 // WASD & LEFT"),
+            QStringLiteral("Z2 // CENTER ALPHA"),
+            QStringLiteral("Z3 // NAV & ARROWS"),
+            QStringLiteral("Z4 // NUMERIC PAD")
+        };
+        const double segW = deckRect.width() / 4.0;
+        for (int z = 0; z < 4; ++z) {
+            const QRectF segRect(deckRect.left() + z * segW + 2.0, deckRect.bottom() + 4.0, segW - 4.0, 16.0);
+            const bool isSel = (m_selectedZone == -1 || m_selectedZone == z);
+            const QColor zCol = colorForZone(z);
 
-        painter->setPen(QPen(isSel ? zCol : m_borderColor, isSel ? 1.5 : 1.0));
-        QColor fill = zCol;
-        fill.setAlphaF(isSel ? 0.18f : 0.05f);
+            painter->setPen(QPen(isSel ? zCol : m_borderColor, isSel ? 1.5 : 1.0));
+            QColor fill = zCol;
+            fill.setAlphaF(isSel ? 0.18f : 0.05f);
+            painter->setBrush(fill);
+            painter->drawRect(segRect);
+
+            painter->setPen(isSel ? (isLightBg ? zCol.darker(215) : zCol.lighter(130)) : m_textColor);
+            painter->drawText(segRect, Qt::AlignCenter, QStringLiteral("%1 (%2)").arg(zoneNames.at(z), zCol.name().toUpper()));
+        }
+    } else {
+        // Single-zone uniform hardware ruler (no misleading 4-zone spatial split)
+        const QRectF singleRect(deckRect.left() + 2.0, deckRect.bottom() + 4.0, deckRect.width() - 4.0, 16.0);
+        const QColor uCol = colorForZone(0);
+        painter->setPen(QPen(uCol, 1.5));
+        QColor fill = uCol;
+        fill.setAlphaF(0.16f);
         painter->setBrush(fill);
-        painter->drawRect(segRect);
-
-        painter->setPen(isSel ? (isLightBg ? zCol.darker(215) : zCol.lighter(130)) : m_textColor);
-        painter->drawText(segRect, Qt::AlignCenter, QStringLiteral("%1 (%2)").arg(zoneNames.at(z), zCol.name().toUpper()));
+        painter->drawRect(singleRect);
+        painter->setPen(isLightBg ? uCol.darker(215) : uCol.lighter(130));
+        painter->drawText(
+            singleRect,
+            Qt::AlignCenter,
+            QStringLiteral("SINGLE-ZONE UNIFORM BACKLIGHT (%1) — PER-ZONE SPATIAL SPLIT UNSUPPORTED").arg(uCol.name().toUpper())
+        );
     }
 
     painter->setPen(QPen(m_borderColor, 1.0));

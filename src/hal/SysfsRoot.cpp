@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later WITH GPL-3.0-linking-source-exception
 #include "hal/SysfsRoot.h"
+#include "hal/Clv0001KeyboardBackend.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
+#include <array>
 #include <unistd.h>
 
 namespace acc::hal {
@@ -26,6 +28,96 @@ bool writeMockFile(const QString& root, const QString& relPath, const QString& c
     return true;
 }
 
+bool validateSysfsWriteTarget(
+    const QString& fullPath,
+    const QString& requiredExactFile,
+    QString* outCanonicalTarget,
+    QString* outError
+) {
+    if (fullPath.contains(QStringLiteral(".."))) {
+        if (outError) {
+            *outError = QStringLiteral("Path traversal rejected on '%1'").arg(fullPath);
+        }
+        return false;
+    }
+
+    if (!QFileInfo::exists(fullPath)) {
+        if (outError) {
+            *outError = QStringLiteral("Target sysfs path does not exist: %1").arg(fullPath);
+        }
+        return false;
+    }
+
+    const QString canonicalTarget = QFileInfo(fullPath).canonicalFilePath();
+    if (canonicalTarget.isEmpty()) {
+        if (outError) {
+            *outError = QStringLiteral("Cannot resolve canonical path for '%1'").arg(fullPath);
+        }
+        return false;
+    }
+    if (outCanonicalTarget) {
+        *outCanonicalTarget = canonicalTarget;
+    }
+
+    const SysfsRoot& root = SysfsRoot::instance();
+    QString logicalCheckPath = QDir::cleanPath(fullPath);
+    QString canonicalCheckPath = canonicalTarget;
+    if (root.isMockActive()) {
+        const QString canonicalMockRoot = QFileInfo(root.resolvePath(QStringLiteral("/"))).canonicalFilePath();
+        if (canonicalMockRoot.isEmpty() || !canonicalTarget.startsWith(canonicalMockRoot + QLatin1Char('/'))) {
+            if (outError) {
+                *outError = QStringLiteral("Refused write outside active mock sysfs root: '%1'").arg(canonicalTarget);
+            }
+            return false;
+        }
+        canonicalCheckPath = canonicalTarget.mid(canonicalMockRoot.size());
+        const QString resolvedMockRoot = QDir::cleanPath(root.resolvePath(QStringLiteral("/")));
+        if (logicalCheckPath.startsWith(resolvedMockRoot + QLatin1Char('/'))) {
+            logicalCheckPath = logicalCheckPath.mid(resolvedMockRoot.size());
+        } else if (logicalCheckPath.startsWith(canonicalMockRoot + QLatin1Char('/'))) {
+            logicalCheckPath = logicalCheckPath.mid(canonicalMockRoot.size());
+        }
+    }
+
+    if (!requiredExactFile.isEmpty()) {
+        const bool exactLogicalMatch =
+            (logicalCheckPath == QStringLiteral("/sys/bus/acpi/devices/CLV0001:00/") + requiredExactFile ||
+             logicalCheckPath == QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/") + requiredExactFile);
+        const QString expectedCanonical =
+            QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/") + requiredExactFile;
+        if (!exactLogicalMatch || canonicalCheckPath != expectedCanonical) {
+            if (outError) {
+                *outError = QStringLiteral("Refused sysfs command write outside CLV0001 allowlist: '%1' -> '%2'")
+                                .arg(fullPath, canonicalTarget);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    const bool allowedLogicalPrefix =
+        logicalCheckPath.startsWith(QStringLiteral("/sys/devices/system/cpu/intel_pstate/")) ||
+        logicalCheckPath.startsWith(QStringLiteral("/sys/devices/system/cpu/cpu")) ||
+        logicalCheckPath.startsWith(QStringLiteral("/sys/devices/system/cpu/cpufreq/")) ||
+        logicalCheckPath.startsWith(QStringLiteral("/sys/class/leds/")) ||
+        logicalCheckPath == QStringLiteral("/sys/class/power_supply/BAT0/charge_control_end_threshold") ||
+        logicalCheckPath.startsWith(QStringLiteral("/sys/class/hwmon/")) ||
+        logicalCheckPath == QStringLiteral("/sys/class/backlight/intel_backlight/brightness") ||
+        logicalCheckPath == QStringLiteral("/sys/bus/acpi/devices/CLV0001:00/clv0001_kbd_command") ||
+        logicalCheckPath == QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_command");
+    const bool validCanonicalSys = root.isMockActive()
+                                       ? canonicalCheckPath.startsWith(QStringLiteral("/sys/"))
+                                       : canonicalCheckPath.startsWith(QStringLiteral("/sys/devices/"));
+    if (!allowedLogicalPrefix || !validCanonicalSys) {
+        if (outError) {
+            *outError = QStringLiteral("Refused write to non-allowlisted physical path: '%1' (canonical '%2')")
+                            .arg(fullPath, canonicalTarget);
+        }
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 SysfsRoot& SysfsRoot::instance() {
@@ -42,6 +134,8 @@ SysfsRoot::SysfsRoot() {
             setCustomRootPath(envRoot, QStringLiteral("ACC_SYSFS_ROOT Fixture"));
         } else if (envMode == QLatin1String("mock_full")) {
             setMode(HardwareMode::MockFullCapabilities);
+        } else if (envMode == QLatin1String("mock_clv0001")) {
+            setMode(HardwareMode::MockClv0001DriverActive);
         } else if (envMode == QLatin1String("mock_mirror")) {
             setMode(HardwareMode::MockPhysicalMirror);
         }
@@ -73,15 +167,22 @@ void SysfsRoot::setMode(HardwareMode newMode) {
         return;
     }
 
-    if (newMode == HardwareMode::MockPhysicalMirror || newMode == HardwareMode::MockFullCapabilities) {
+    if (newMode == HardwareMode::MockPhysicalMirror ||
+        newMode == HardwareMode::MockClv0001DriverActive ||
+        newMode == HardwareMode::MockFullCapabilities) {
         m_tempDir = std::make_unique<QTemporaryDir>();
         if (m_tempDir->isValid()) {
             const bool includeOptional = (newMode == HardwareMode::MockFullCapabilities);
-            populateMockTree(m_tempDir->path(), includeOptional);
+            const bool includeClvDriver = (newMode == HardwareMode::MockClv0001DriverActive);
+            populateMockTree(m_tempDir->path(), includeOptional, includeClvDriver);
             m_customRoot = m_tempDir->path();
-            m_scenarioLabel = includeOptional
-                                  ? QStringLiteral("Mock Hardware: Full Capabilities (RGB + PWM + Charge Limit)")
-                                  : QStringLiteral("Mock Hardware: A715-59G / Kelilu_RTH Physical Mirror");
+            if (newMode == HardwareMode::MockClv0001DriverActive) {
+                m_scenarioLabel = QStringLiteral("Mock Hardware: A715-59G with CLV0001 Driver Bound");
+            } else if (includeOptional) {
+                m_scenarioLabel = QStringLiteral("Mock Hardware: Full Capabilities (RGB + PWM + Charge Limit)");
+            } else {
+                m_scenarioLabel = QStringLiteral("Mock Hardware: A715-59G / Kelilu_RTH Physical Mirror (CLV0001 Unbound)");
+            }
         }
     }
 }
@@ -120,62 +221,11 @@ QString SysfsRoot::readFileTrimmed(const QString& fullPath, bool* outOk) {
 }
 
 bool SysfsRoot::writeFileVerified(const QString& fullPath, const QString& value, QString* outReadback, QString* outError) {
-    if (fullPath.contains(QStringLiteral(".."))) {
-        if (outError) {
-            *outError = QStringLiteral("Path traversal rejected on '%1'").arg(fullPath);
-        }
+    if (!validateSysfsWriteTarget(fullPath, QString(), nullptr, outError)) {
         return false;
     }
 
     QFile outFile(fullPath);
-    if (!outFile.exists()) {
-        if (outError) {
-            *outError = QStringLiteral("Target sysfs path does not exist: %1").arg(fullPath);
-        }
-        return false;
-    }
-
-    const QString canonicalTarget = QFileInfo(fullPath).canonicalFilePath();
-    if (canonicalTarget.isEmpty()) {
-        if (outError) {
-            *outError = QStringLiteral("Cannot resolve canonical path for '%1'").arg(fullPath);
-        }
-        return false;
-    }
-
-    const SysfsRoot& root = SysfsRoot::instance();
-    if (root.isMockActive()) {
-        QString customRootCopy;
-        {
-            QMutexLocker locker(&root.m_mutex);
-            customRootCopy = root.m_customRoot;
-        }
-        const QString canonicalMockRoot = QFileInfo(customRootCopy).canonicalFilePath();
-        if (canonicalMockRoot.isEmpty() || !canonicalTarget.startsWith(canonicalMockRoot + QLatin1Char('/'))) {
-            if (outError) {
-                *outError = QStringLiteral("Refused write outside active mock sysfs root: '%1'").arg(canonicalTarget);
-            }
-            return false;
-        }
-    } else {
-        const QString cleanedPath = QDir::cleanPath(fullPath);
-        const bool allowedLogicalPrefix =
-            cleanedPath.startsWith(QStringLiteral("/sys/devices/system/cpu/intel_pstate/")) ||
-            cleanedPath.startsWith(QStringLiteral("/sys/devices/system/cpu/cpu")) ||
-            cleanedPath.startsWith(QStringLiteral("/sys/devices/system/cpu/cpufreq/")) ||
-            cleanedPath.startsWith(QStringLiteral("/sys/class/leds/")) ||
-            cleanedPath == QStringLiteral("/sys/class/power_supply/BAT0/charge_control_end_threshold") ||
-            cleanedPath.startsWith(QStringLiteral("/sys/class/hwmon/")) ||
-            cleanedPath == QStringLiteral("/sys/class/backlight/intel_backlight/brightness");
-        if (!allowedLogicalPrefix || !canonicalTarget.startsWith(QStringLiteral("/sys/devices/"))) {
-            if (outError) {
-                *outError = QStringLiteral("Refused write to non-allowlisted physical path: '%1' (canonical '%2')")
-                                .arg(fullPath, canonicalTarget);
-            }
-            return false;
-        }
-    }
-
     if (!outFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (outError) {
             *outError = QStringLiteral("Permission denied or open failed on '%1': %2").arg(fullPath, outFile.errorString());
@@ -183,13 +233,12 @@ bool SysfsRoot::writeFileVerified(const QString& fullPath, const QString& value,
         return false;
     }
     const QByteArray payload = (value.trimmed() + QStringLiteral("\n")).toUtf8();
-    if (outFile.write(payload) != payload.size()) {
+    if (outFile.write(payload) != payload.size() || !outFile.flush()) {
         if (outError) {
             *outError = QStringLiteral("Incomplete write on '%1': %2").arg(fullPath, outFile.errorString());
         }
         return false;
     }
-    outFile.flush();
     outFile.close();
 
     bool readOk = false;
@@ -213,7 +262,199 @@ bool SysfsRoot::writeFileVerified(const QString& fullPath, const QString& value,
     return true;
 }
 
-bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalControls) {
+bool SysfsRoot::writeCommandAndReadState(
+    const QString& commandPath,
+    const QString& statePath,
+    const QString& commandValue,
+    QString* outStateText,
+    QString* outError
+) {
+    QString canonicalCmd;
+    if (!validateSysfsWriteTarget(commandPath, QStringLiteral("clv0001_kbd_command"), &canonicalCmd, outError)) {
+        return false;
+    }
+    if (statePath.contains(QStringLiteral("..")) || !QFileInfo::exists(statePath)) {
+        if (outError) {
+            *outError = QStringLiteral("Invalid or missing state sysfs node '%1'").arg(statePath);
+        }
+        return false;
+    }
+    const QString canonicalState = QFileInfo(statePath).canonicalFilePath();
+    if (canonicalState.isEmpty() ||
+        QFileInfo(canonicalState).dir().canonicalPath() != QFileInfo(canonicalCmd).dir().canonicalPath() ||
+        QFileInfo(canonicalState).fileName() != QLatin1String("clv0001_kbd_state")) {
+        if (outError) {
+            *outError = QStringLiteral("State sysfs path mismatch: '%1'").arg(statePath);
+        }
+        return false;
+    }
+
+    QFile cmdFile(commandPath);
+    if (!cmdFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Unbuffered)) {
+        if (outError) {
+            *outError = QStringLiteral("Permission denied or open failed on '%1': %2").arg(commandPath, cmdFile.errorString());
+        }
+        return false;
+    }
+    const QByteArray payload = (commandValue.trimmed() + QStringLiteral("\n")).toUtf8();
+    const bool writtenOk = (cmdFile.write(payload) == payload.size()) && cmdFile.flush();
+    const QString writeErrStr = cmdFile.errorString();
+    cmdFile.close();
+
+    bool simulatedFailure = false;
+    if (SysfsRoot::instance().isMockActive()) {
+        const QString devDir = QFileInfo(canonicalState).dir().absolutePath();
+        const QStringList parts = commandValue.trimmed().simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        const QString cmdHead = parts.isEmpty() ? QString() : parts.at(0);
+        QString stateLabel;
+        int level = 4;
+        std::array<uint8_t, 4> pkt{};
+        QString encErr;
+
+        if (cmdHead == QLatin1String("rgb")) {
+            const QString presetsText = readFileTrimmed(devDir + QStringLiteral("/clv0001_kbd_presets"));
+            bool mockSupportsCustomRgb = false;
+            for (const QString& line : presetsText.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                if (line.trimmed() == QLatin1String("supports_custom_rgb=1")) {
+                    mockSupportsCustomRgb = true;
+                    break;
+                }
+            }
+            if (!mockSupportsCustomRgb) {
+                if (outError) {
+                    *outError = QStringLiteral("Simulated preset-only driver rejected 'rgb' command (-EINVAL)");
+                }
+                return false;
+            }
+            if (parts.size() != 5) {
+                if (outError) {
+                    *outError = QStringLiteral("Invalid token count in mock rgb command '%1'").arg(commandValue);
+                }
+                return false;
+            }
+            bool okR = false, okG = false, okB = false, okLvl = false;
+            const int r = parts.at(1).toInt(&okR);
+            const int g = parts.at(2).toInt(&okG);
+            const int b = parts.at(3).toInt(&okB);
+            level = parts.at(4).toInt(&okLvl);
+            if (!okR || !okG || !okB || !okLvl ||
+                !Clv0001KeyboardBackend::buildCustomRgbFirmwarePayload(r, g, b, level, pkt, &encErr)) {
+                if (outError) {
+                    *outError = encErr.isEmpty()
+                                    ? QStringLiteral("Invalid rgb arguments in mock command '%1'").arg(commandValue)
+                                    : encErr;
+                }
+                return false;
+            }
+            stateLabel = QStringLiteral("custom_rgb");
+        } else {
+            const QString preset = cmdHead.toLower();
+            level = (preset == QLatin1String("off")) ? 0 : 4;
+            if (parts.size() >= 2) {
+                bool okLvl = false;
+                const int parsed = parts.at(1).toInt(&okLvl);
+                if (!okLvl) {
+                    if (outError) {
+                        *outError = QStringLiteral("Invalid brightness token in mock command '%1'").arg(commandValue);
+                    }
+                    return false;
+                }
+                level = parsed;
+            }
+            if (preset == QLatin1String("off")) {
+                level = 0;
+            }
+            if (!Clv0001KeyboardBackend::buildFirmwarePayload(preset, level, pkt, &encErr)) {
+                if (outError) {
+                    *outError = encErr;
+                }
+                return false;
+            }
+            stateLabel = preset;
+        }
+        const QString pktHex = Clv0001KeyboardBackend::formatPayloadHex(pkt);
+        const QString behavior = readFileTrimmed(devDir + QStringLiteral("/mock_eval_behavior"));
+
+        QString status = QStringLiteral("accepted_no_hw_readback");
+        QString retType = QStringLiteral("buffer");
+        if (behavior == QLatin1String("eval_fail")) {
+            status = QStringLiteral("error:acpi_eval_failed");
+            retType = QStringLiteral("null");
+            simulatedFailure = true;
+            if (outError) {
+                *outError = QStringLiteral("Simulated ACPI _DSM evaluation failure (-EIO)");
+            }
+        } else if (behavior == QLatin1String("unexpected_return")) {
+            status = QStringLiteral("error:unexpected_return_type");
+            retType = QStringLiteral("unexpected");
+            simulatedFailure = true;
+            if (outError) {
+                *outError = QStringLiteral("Simulated ACPI _DSM unexpected return type (-EIO)");
+            }
+        } else if (behavior == QLatin1String("rate_limited")) {
+            status = QStringLiteral("error:rate_limited");
+            retType = QStringLiteral("none");
+            simulatedFailure = true;
+            if (outError) {
+                *outError = QStringLiteral("Simulated kernel driver rate limit (-EBUSY)");
+            }
+        } else if (behavior == QLatin1String("state_mismatch")) {
+            status = QStringLiteral("accepted_no_hw_readback");
+            retType = QStringLiteral("buffer");
+            QFile stFile(statePath);
+            if (stFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                stFile.write("status=accepted_no_hw_readback\npreset=off\nbrightness_level=0\npayload_grb=00 00 00 F0\nacpi_return_type=buffer\nphysical_readback=unsupported\n");
+                stFile.close();
+            }
+            bool readOk = false;
+            if (outStateText) {
+                *outStateText = readFileTrimmed(statePath, &readOk);
+            }
+            return writtenOk && readOk;
+        }
+
+        const QString mockState = QStringLiteral(
+                                      "status=%1\n"
+                                      "preset=%2\n"
+                                      "brightness_level=%3\n"
+                                      "payload_grb=%4\n"
+                                      "acpi_return_type=%5\n"
+                                      "physical_readback=unsupported\n")
+                                      .arg(status, stateLabel)
+                                      .arg(level)
+                                      .arg(pktHex, retType);
+        QFile stFile(statePath);
+        if (stFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            stFile.write(mockState.toUtf8());
+            stFile.close();
+        }
+    }
+
+    bool readOk = false;
+    const QString stateText = readFileTrimmed(statePath, &readOk);
+    if (outStateText) {
+        *outStateText = stateText;
+    }
+
+    if (!writtenOk) {
+        if (outError && outError->isEmpty()) {
+            *outError = QStringLiteral("Write failed on '%1': %2").arg(commandPath, writeErrStr);
+        }
+        return false;
+    }
+    if (simulatedFailure) {
+        return false;
+    }
+    if (!readOk) {
+        if (outError) {
+            *outError = QStringLiteral("Command written but state readback failed on '%1'").arg(statePath);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalControls, bool includeClv0001Driver) {
     // 1. DMI identity (A715-59G / Kelilu_RTH)
     writeMockFile(rootPath, QStringLiteral("/sys/class/dmi/id/sys_vendor"), QStringLiteral("Acer\n"));
     writeMockFile(rootPath, QStringLiteral("/sys/class/dmi/id/product_name"), QStringLiteral("Aspire A715-59G\n"));
@@ -330,7 +571,8 @@ bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalCo
     writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/charge_now"), QStringLiteral("1408000\n"));
     writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/charge_full"), QStringLiteral("1956000\n"));
     writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/charge_full_design"), QStringLiteral("3410000\n"));
-    writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/cycle_count"), QStringLiteral("42\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/class/power_supply/BAT0/cycle_count"),
+                  includeOptionalControls ? QStringLiteral("42\n") : QStringLiteral("0\n"));
 
     // 7. Display backlight
     writeMockFile(rootPath, QStringLiteral("/sys/class/backlight/intel_backlight/brightness"), QStringLiteral("24000\n"));
@@ -353,6 +595,61 @@ bool SysfsRoot::populateMockTree(const QString& rootPath, bool includeOptionalCo
         writeMockFile(rootPath, QStringLiteral("/sys/class/hwmon/hwmon7/pwm1"), QStringLiteral("128\n"));
         writeMockFile(rootPath, QStringLiteral("/sys/class/hwmon/hwmon7/pwm1_enable"), QStringLiteral("2\n"));
     }
+
+    // 9. Kernel / procfs identity and ACPI device tree (CLV0001:00 \_SB_.DCHU)
+    writeMockFile(rootPath, QStringLiteral("/proc/version"),
+                  QStringLiteral("Linux version 7.3.3-300.fc45.x86_64 (mockbuilder@fedora) #1 SMP PREEMPT_DYNAMIC\n"));
+    writeMockFile(rootPath, QStringLiteral("/proc/modules"),
+                  includeClv0001Driver
+                      ? QStringLiteral("acer_clv0001_kbd 16384 0 - Live 0x0000000000000000\n"
+                                       "nvidia 62000000 0 - Live 0x0000000000000000\n")
+                      : QStringLiteral("nvidia 62000000 0 - Live 0x0000000000000000\n"));
+
+    const QString clvDevRel = QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00");
+    writeMockFile(rootPath, clvDevRel + QStringLiteral("/hid"), QStringLiteral("CLV0001\n"));
+    writeMockFile(rootPath, clvDevRel + QStringLiteral("/path"), QStringLiteral("\\_SB_.DCHU\n"));
+    writeMockFile(rootPath, clvDevRel + QStringLiteral("/status"), QStringLiteral("15\n"));
+    writeMockFile(rootPath, clvDevRel + QStringLiteral("/uevent"),
+                  includeClv0001Driver
+                      ? QStringLiteral("DRIVER=acer_clv0001_kbd\nMODALIAS=acpi:CLV0001:\n")
+                      : QStringLiteral("MODALIAS=acpi:CLV0001:\n"));
+
+    if (includeClv0001Driver) {
+        writeMockFile(rootPath, clvDevRel + QStringLiteral("/clv0001_kbd_command"), QString());
+        writeMockFile(rootPath, clvDevRel + QStringLiteral("/clv0001_kbd_state"),
+                      QStringLiteral("status=uninitialized\n"
+                                     "preset=none\n"
+                                     "brightness_level=0\n"
+                                     "payload_grb=00 00 00 F0\n"
+                                     "acpi_return_type=none\n"
+                                     "physical_readback=unsupported\n"));
+        QStringList presetNames;
+        for (const auto& p : Clv0001KeyboardBackend::verifiedPresets()) {
+            presetNames.append(p.name);
+        }
+        const QString presetsContent = QStringLiteral(
+                                           "presets=%1\n"
+                                           "brightness_levels=0,1,2,3,4\n"
+                                           "supports_presets=1\n"
+                                           "supports_custom_rgb=1\n"
+                                           "custom_rgb_grammar=rgb R G B brightness_level\n"
+                                           "physical_readback=0\n")
+                                           .arg(presetNames.join(QLatin1Char(',')));
+        writeMockFile(rootPath, clvDevRel + QStringLiteral("/clv0001_kbd_presets"), presetsContent);
+    }
+
+    const QString acpiBusDir = QDir(rootPath).filePath(QStringLiteral("sys/bus/acpi/devices"));
+    QDir().mkpath(acpiBusDir);
+    const QString acpiLinkPath = QDir(acpiBusDir).filePath(QStringLiteral("CLV0001:00"));
+    QFile::remove(acpiLinkPath);
+    QFile::link(QStringLiteral("../../../devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00"), acpiLinkPath);
+
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/CLV0002:00/hid"), QStringLiteral("CLV0002\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/CLV0002:00/path"), QStringLiteral("\\_SB_.DCHV\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/CLV0002:00/status"), QStringLiteral("15\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/PNP0C09:00/hid"), QStringLiteral("PNP0C09\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/PNP0C09:00/path"), QStringLiteral("\\_SB_.PC00.LPCB.EC0_\n"));
+    writeMockFile(rootPath, QStringLiteral("/sys/bus/acpi/devices/PNP0C09:00/status"), QStringLiteral("15\n"));
 
     return true;
 }

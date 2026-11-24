@@ -20,17 +20,40 @@ class ThemeEngine : public QObject {
     Q_PROPERTY(QColor surfacePrimary READ surfacePrimary NOTIFY themeChanged)
     Q_PROPERTY(QColor surfaceElevated READ surfaceElevated NOTIFY themeChanged)
     Q_PROPERTY(QColor surfaceHeader READ surfaceHeader NOTIFY themeChanged)
+    Q_PROPERTY(QColor surfaceRecessed READ surfaceRecessed NOTIFY themeChanged)
+    Q_PROPERTY(QColor surfaceSunken READ surfaceSunken NOTIFY themeChanged)
+    Q_PROPERTY(QColor surfaceOverlay READ surfaceOverlay NOTIFY themeChanged)
+    Q_PROPERTY(QColor hairlineRule READ hairlineRule NOTIFY themeChanged)
+    Q_PROPERTY(QColor surfaceCadLight READ surfaceCadLight CONSTANT)
+    Q_PROPERTY(QColor surfacePillLight READ surfacePillLight CONSTANT)
+    Q_PROPERTY(QColor surfaceSelectedDark READ surfaceSelectedDark CONSTANT)
+    Q_PROPERTY(QColor textOnLightCad READ textOnLightCad CONSTANT)
+    Q_PROPERTY(QColor textOnSelectedDark READ textOnSelectedDark CONSTANT)
+    Q_PROPERTY(QColor darkInk READ darkInk CONSTANT)
+    Q_PROPERTY(QColor borderCadSubtle READ borderCadSubtle CONSTANT)
     Q_PROPERTY(QColor borderSubtle READ borderSubtle NOTIFY themeChanged)
     Q_PROPERTY(QColor borderStrong READ borderStrong NOTIFY themeChanged)
     Q_PROPERTY(QColor textPrimary READ textPrimary NOTIFY themeChanged)
     Q_PROPERTY(QColor textSecondary READ textSecondary NOTIFY themeChanged)
     Q_PROPERTY(QColor textMuted READ textMuted NOTIFY themeChanged)
 
-    // Semantic Status Tokens
+    // Semantic & Endfield Design System Tokens
     Q_PROPERTY(QColor statusNominal READ statusNominal NOTIFY themeChanged)
     Q_PROPERTY(QColor statusWarning READ statusWarning NOTIFY themeChanged)
     Q_PROPERTY(QColor statusCritical READ statusCritical NOTIFY themeChanged)
     Q_PROPERTY(QColor statusInfo READ statusInfo NOTIFY themeChanged)
+    Q_PROPERTY(QColor brandYellow READ brandYellow CONSTANT)
+    Q_PROPERTY(QColor industrialAmber READ industrialAmber CONSTANT)
+    Q_PROPERTY(QColor telemetryLime READ telemetryLime NOTIFY themeChanged)
+    Q_PROPERTY(QColor telemetryLimeBar READ telemetryLimeBar CONSTANT)
+    Q_PROPERTY(QColor technicalCyan READ technicalCyan NOTIFY themeChanged)
+
+    // Typography & Dual-Radius Geometry Tokens
+    Q_PROPERTY(QString fontDisplay READ fontDisplay CONSTANT)
+    Q_PROPERTY(QString fontSans READ fontSans CONSTANT)
+    Q_PROPERTY(QString fontMono READ fontMono CONSTANT)
+    Q_PROPERTY(int radiusStructural READ radiusStructural CONSTANT)
+    Q_PROPERTY(int radiusPill READ radiusPill CONSTANT)
 
     // Unrestricted Application Accent Tokens (WCAG Verified)
     Q_PROPERTY(QColor accentPrimary READ accentPrimary NOTIFY accentChanged)
@@ -69,6 +92,17 @@ public:
     QColor surfacePrimary() const;
     QColor surfaceElevated() const;
     QColor surfaceHeader() const;
+    QColor surfaceRecessed() const;
+    QColor surfaceSunken() const;
+    QColor surfaceOverlay() const;
+    QColor hairlineRule() const;
+    QColor surfaceCadLight() const;
+    QColor surfacePillLight() const;
+    QColor surfaceSelectedDark() const;
+    QColor textOnLightCad() const;
+    QColor textOnSelectedDark() const;
+    QColor darkInk() const;
+    QColor borderCadSubtle() const;
     QColor borderSubtle() const;
     QColor borderStrong() const;
     QColor textPrimary() const;
@@ -79,6 +113,17 @@ public:
     QColor statusWarning() const;
     QColor statusCritical() const;
     QColor statusInfo() const;
+    QColor brandYellow() const;
+    QColor industrialAmber() const;
+    QColor telemetryLime() const;
+    QColor telemetryLimeBar() const;
+    QColor technicalCyan() const;
+
+    QString fontDisplay() const { return QStringLiteral("Inter Display"); }
+    QString fontSans() const { return QStringLiteral("Inter"); }
+    QString fontMono() const { return QStringLiteral("JetBrains Mono"); }
+    int radiusStructural() const { return 2; }
+    int radiusPill() const { return 9999; }
 
     QColor accentPrimary() const { return m_tokens.primary; }
     QColor accentOnText() const { return m_tokens.onAccentText; }
@@ -124,10 +169,10 @@ private:
     bool m_reducedMotion = false;
     bool m_compactNav = false;
 
-    core::RgbColor m_rgb{59, 158, 255};
-    core::HsvColor m_hsv{210.0, 0.77, 1.0};
-    core::HslColor m_hsl{210.0, 1.0, 0.62};
-    QString m_accentHex = QStringLiteral("#3B9EFF");
+    core::RgbColor m_rgb{255, 234, 0};
+    core::HsvColor m_hsv{55.0, 1.0, 1.0};
+    core::HslColor m_hsl{55.0, 1.0, 0.5};
+    QString m_accentHex = QStringLiteral("#FFEA00");
     core::AccentTokenSet m_tokens;
     QStringList m_swatches;
 };

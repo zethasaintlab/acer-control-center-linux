@@ -10,7 +10,7 @@
 
 ---
 
-> **Design and hardware status note (2026-11-23):** This public-main snapshot predates the local Stage 17/18 CLV0001 integration and Stage 22 AML investigation described in docs/PROJECT_STATE.md. The screenshots are a historical UI baseline. Reconcile the active checkout before assuming local engineering results are already present in this branch.
+> **Project status note (2026-11-23, Stage 28):** Active branch `feat/clv0001-keyboard-integration` includes the clean-room `CLV0001` driver (`driver/acer_clv0001_kbd.c`), Stage 17/18 static 24-bit custom RGB support, Stage 21.1 hardware-honesty fixes, Stage 24–26 asynchronous runtime, Endfield-inspired UI rebuild per [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md), native Wayland integration, and Stage 23A/23B/28 ACPI evidence closure. The screenshots below document the historical baseline UI.
 
 ## Legacy UI Baseline — Before the Structural Redesign
 
@@ -49,8 +49,8 @@
 2. **Strict Readback Verification & Safe Standard-Interface Controls:**
    - Implemented control adapters target documented Linux interfaces such as `intel_pstate`, TuneD/PPD, display backlight and optional standard LED/fan/battery sysfs nodes.
    - A standard node must be detected and validated before the corresponding control can be used. The A715-59G currently has no standard hwmon fan PWM or battery charge-threshold node.
-3. **Two Independent Unrestricted Color Systems:**
-   - **Physical Keyboard Lighting Studio (`04 // KEYBOARD STUDIO`):** Full 24-bit sRGB + HSV wheel + HSL lightness + Hex (`#RRGGBB`) + 4-zone chassis visualizer + custom swatches and named profiles.
+3. **Independent Keyboard Lighting Preview and Application Theme Systems:**
+   - **Keyboard Lighting Studio:** When `acer_clv0001_kbd` is loaded, the clean-room `CLV0001` backend provides 17 firmware presets, Stage 17/18 static 24-bit custom RGB (`supports_custom_rgb=1`), and five discrete brightness levels (`0..4`) over single-zone `_DSM 0x67` (`accepted_no_hw_readback`, no physical readback). Unrestricted preview colors remain independent of `ThemeEngine`.
    - **Application Theme Accent Studio (`08 // SETTINGS`):** Unrestricted sRGB/HSV/Hex accent color engine with real-time WCAG 2.1 relative luminance and contrast ratio ($\ge 4.5:1$ AA) guardrail token derivation. Changing the physical keyboard color never alters the application theme accent, and vice versa.
 4. **Optional Dynamic NVIDIA NVML Integration (`dlopen`) + `P8` Rail-Gate Spike Filter:**
    - Dynamically loads `libnvidia-ml.so.1` at runtime without compile-time hard linking; launches cleanly on Intel-only or Nouveau systems.
@@ -77,9 +77,9 @@ See [docs/HARDWARE_AUDIT_A715_59G.md](docs/HARDWARE_AUDIT_A715_59G.md) for the c
 | **NVIDIA RTX 3050 6GB Telemetry** | `libnvidia-ml.so.1` (`dlopen` + `P8` filter) | **Read-Only Supported** | Yes |
 | **Battery Telemetry & Est. Capacity Ratio** | `/sys/class/power_supply/BAT0` & `AC` | **Read-Only Supported** | Yes |
 | **Internal eDP Panel Backlight** | `/sys/class/backlight/intel_backlight` (`logind`) | **Fully Supported (48,000 steps)** | Yes |
-| **Fan Tachometer RPM & Manual PWM** | Standard hwmon fan/PWM ABI; vendor AML candidate paths | **No standard fan RPM/PWM node; static AML paths found but not runtime-verified** | **Mock support only** |
-| **Keyboard Backlight & RGB Zones** | `/sys/class/leds/*kbd_backlight*` | **Not Exposed by Default Kernel (Preview Mode)** | **Full RW in Mock Mode** |
-| **Battery Charge Limit Threshold** | Standard power_supply threshold ABI; vendor FlexiCharger AML candidate | **No standard threshold node; static FlexiCharger path found but not runtime-verified** | **Mock support only** |
+| **Fan Tachometer RPM & Manual PWM** | Standard hwmon fan/PWM ABI; static AML paths locked | **No standard fan RPM/PWM node (`FirmwareAutomatic`); static AML paths unverified & locked** | **Mock / Curve Preview only (`--mock-hardware full`)** |
+| **Keyboard Backlight & Static RGB** | `CLV0001` (`\_SB_.DCHU`, `_DSM 0x67`, clean-room `acer_clv0001_kbd`) or `/sys/class/leds/*kbd_backlight*` | **17 presets + Stage 17/18 static 24-bit RGB + 5 levels physically verified when module loaded (`accepted_no_hw_readback`, single-zone); Preview when unbound** | **Full RW in `clv0001` and `full` mock modes** |
+| **Battery Charge Limit Threshold** | Standard `power_supply` threshold ABI (`BAT0`); Stage 23A read-only `OGNS` NVS probes | **No standard threshold node (`NotDetected`); Stage 23A probes observed `OGNS` NVS shadow (`1/70/80`) only; live EC unverified & setters locked** | **Mock only (`--mock-hardware full`)** |
 
 ---
 
@@ -97,10 +97,13 @@ ctest --test-dir build --output-on-failure
 # Launch against physical system hardware (read-verified):
 ./build/acer-control-center
 
+# Launch with simulated CLV0001 kernel driver bound (17 presets & 5 discrete levels):
+./build/acer-control-center --mock-hardware clv0001
+
 # Launch with simulated full capabilities (RGB LED sysfs + Fan PWM + Battery Threshold):
 ./build/acer-control-center --mock-hardware full
 
-# Launch with simulated A715-59G default kernel posture mirror:
+# Launch with simulated A715-59G default kernel posture mirror (CLV0001 unbound):
 ./build/acer-control-center --mock-hardware mirror
 ```
 
@@ -120,10 +123,12 @@ rpmbuild --define "_topdir $(pwd)/build/rpmbuild" -ba build/rpmbuild/SPECS/acer-
 ## Project Documentation
 
 - [Project State & Hydrogen Handoff](docs/PROJECT_STATE.md)
+- [Release Readiness & QA Assessment (Stage 28)](docs/RELEASE_READINESS.md)
+- [ACPI Runtime & Static Safety Investigation (Stages 23A/23B)](docs/ACPI_RUNTIME_INVESTIGATION.md)
 - [Engineering Workflow & Agent Collaboration](docs/WORKFLOW.md)
 - [Industrial-Technical Design System](docs/DESIGN_SYSTEM.md)
 - [Hardware Audit & Capability Matrix (`A715-59G / Kelilu_RTH`)](docs/HARDWARE_AUDIT_A715_59G.md)
-- [Architecture Decision Record (ADR-001)](docs/ARCHITECTURE_ADR.md)
+- [Architecture Decision Records (ADR-001 & ADR-002)](docs/ARCHITECTURE_ADR.md)
 - [Fedora Linux 45 Packaging & Privilege Guide](docs/FEDORA_45_PACKAGING.md)
 
 ---

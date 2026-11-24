@@ -14,37 +14,27 @@ Current design direction:
 - DAMX is a functional reference for workspace responsibilities, not a visual target, driver dependency or hardware compatibility source.
 - Preserve the Qt 6 / QML / C++23 architecture approved in ADR-001 unless a concrete reason and new ADR justify changing it.
 
-## 2. Public repository snapshot — verified during this audit
+## 2. Repository snapshot — reconciled 2026-11-23
 
 Repository: https://github.com/zethasaintlab/acer-control-center-linux
 
-At the time of this audit:
-- Default branch: main
-- Main HEAD: c456e1c99d7c6174804fcbb7ec47a7c3ecd43092
-- Main commit date: 2026-11-14
-- Main commit message: merge of release/v1.0.0-final-hardening
-- Public branches observed: main, release/v1.0.0-final-hardening, feature/clevo-keyboard-backlight.
-- feature/clevo-keyboard-backlight is a Stage 12-era branch whose latest observed commit is 9904fabc3be01804b5221260767b8b32ce047edd (2026-11-14). It is not the later Stage 17/18 implementation described in recent local engineering reports.
+- **`origin/main` (`fde5b4c`):** Merges PR #1 (`docs/hydrogen-workflow-design-realignment`) on top of `c456e1c` (`v1.0.0`). Contains the public governance/design docs without the `CLV0001` driver or Stage 17–37 implementation.
+- **Active local & PR branch (`feat/clv0001-keyboard-integration`, Draft PR #2):** Rebased onto `fde5b4c` at `e1a90bb`, advanced through `efbf9c8` (Stage 32 release closure) and `d51861b` / `50d7fe1` / `88d8f7c` (Stages 34.4–34.7 documentation privacy hardening and green Fedora 45 GitHub Actions CI across `push` and `pull_request`). Uncommitted Stage 37 changes on top of `88d8f7c` reconcile `CLV0001` requested vs. driver-accepted telemetry state and Stage 36 host activation evidence. Pre-rebase history (`a4531b7`) is preserved on `backup/pre-hydrogen-20261123-100354`.
+- **Host runtime snapshot (`7.3.3-300.fc45.x86_64`, 2026-11-24):** `acer-control-center-1.0.0-6.fc45.x86_64` (unsigned local Stage 30.3 candidate) remains installed on host (`acer-control-daemon.service` `enabled` and `active`, `CapabilityBoundingSet=` empty, `ReadWritePaths` scoped to `intel_pstate`, `cpufreq`, and `CLV0001:00`). In Stage 36, `acer_clv0001_kbd.ko` (`sha256: 02ff5bf3...`) was compiled, installed to `/lib/modules/7.3.3-300.fc45.x86_64/extra/`, loaded, and bound to `CLV0001:00` (`\_SB_.DCHU`), accepting one `cyan 4` preset write (`FF 00 C8 F0`, `integer` return, illumination confirmed by user, physical readback unsupported). Local RPM candidate `1.0.0-7.fc45` remains unsigned and unpublished.
 
-The public main tree contains 99 tracked files and the Qt/QML application, C++ HAL, D-Bus/Polkit service, tests, packaging, agent rules and docs. It does not contain the later driver/acer_clv0001_kbd.c path referenced by the recent local Stage 17/18 handoff.
+## 3. Application architecture and current implementation status
 
-Recent local engineering context reports a branch named feat/clv0001-keyboard-integration at commit a4531b711a2c626832d4d212b8cf219d6b302f16 and a physically verified Stage 18 custom-RGB integration. That branch/commit was not present among the public GitHub branches inspected in this audit. Treat this as a local-workspace handoff claim until the next session inspects the actual checkout and reconciles its Git history. Do not overwrite or reset that local work to match public main.
+The active `feat/clv0001-keyboard-integration` working tree uses:
+- C++23 and Qt 6 / QtQuick-QML (`CMake` + Fedora RPM packaging).
+- An unprivileged desktop GUI (`geteuid() == 0` guard) and a hardened `acer-control-daemon` D-Bus/Polkit service.
+- Clean-room `CLV0001` (`\_SB_.DCHU`) `_DSM 0x67` kernel driver (`driver/acer_clv0001_kbd.c`) and HAL backend (`Clv0001KeyboardBackend`) supporting 17 verified presets, 5 discrete levels (`0..4`), and Stage 17/18 static 24-bit custom RGB (`supports_custom_rgb=1`).
+- Stage 21.1 hardware-honesty fixes already present in the staged HAL: `findFirstFanPwmHwmonPath()` requires `isVerifiedFanDriverName("acer_ec_fans")` plus both `pwm1` and `pwm1_enable`, `probeAllCapabilities()` classifies the A715-59G fan posture as `FirmwareAutomatic` (`PNP0C09:00`), and `BAT0/cycle_count == 0` is conservatively reported as `NOT REPORTED`.
+- Generic `charge_control_end_threshold` support in HAL/daemon remains disabled (`NotDetected`) on `Kelilu_RTH` because `BAT0` does not expose it and Clevo FlexiCharger AML paths remain runtime-unverified.
 
-## 3. Application architecture and current public-main implementation
-
-The public main snapshot uses:
-- C++23 and Qt 6 / QtQuick-QML.
-- CMake and Fedora RPM packaging.
-- An unprivileged desktop GUI.
-- A D-Bus daemon with narrow Polkit actions for privileged controls.
-- Hardware discovery, telemetry, control operations, configuration, diagnostics and mock sysfs roots.
-- Eight QML workspaces in Main.qml: Overview, Performance, Thermal & Fans, Keyboard Studio, Battery & Power, NVIDIA GPU, Diagnostics and Settings.
-
-The current public-main visual implementation is the older Precision Hardware Atelier layout: top status bar, left navigation rail, bottom status strip and workspace pages composed from instrument panels/grids. It is the historical baseline, not the intended final Endfield-inspired design.
-
-A public-main backend review identified a fan capability detection gap: findFirstFanPwmHwmonPath() accepts either fan1_input OR pwm1, and probeAllCapabilities() promotes any matching path to FullySupported. The project safety contract requires a known verified driver and a complete actuator interface (including the required enable semantics) before exposing control. This needs a focused implementation review before any fan control can be enabled.
-
-The generic charge threshold implementation currently targets the standard BAT0 charge_control_end_threshold sysfs attribute. It does not implement the newly discovered Clevo FlexiCharger AML protocol.
+### Historical UI & architectural gaps from Stage 21 WIP (resolved in Stages 24–25)
+- **Historical UI redesign gap (Stage 21 WIP, resolved in Stage 25):** Preliminary Stage 21 QML kept the legacy 8-tab Atelier shell without freshness/Polkit states; Stage 25 replaced it with the responsive Endfield-inspired shell and component suite (see §9 and `docs/DESIGN_SYSTEM.md`).
+- **Historical ADR-001 async invariant violation (resolved in Stage 24):** Prior to Stage 24, `ControlCenterController` invoked `TelemetryCollector::collectSnapshot()` and `QDBus::Block` calls on the GUI thread; Stage 24 moved collection onto `TelemetryCoordinator` and non-blocking `QDBusPendingCallWatcher` (`AsyncControlClient`).
+- **Historical eager workspace instantiation (resolved in Stage 24):** Prior to Stage 24, `Main.qml` eagerly instantiated all 8 workspace views; `Main.qml` now uses lazy single-view `workspaceLoader` instantiation.
 
 ## 4. Hardware facts and capability posture
 
@@ -58,11 +48,11 @@ Target:
 - DCHU _DSM UUID 93f224e4-fbdc-4bbf-add6-db71bdc0afad.
 
 ### Keyboard
-- Stage 15 physically verified all 17 keyboard presets on the exact A715-59G.
-- Stage 17 physically verified one arbitrary static RGB color through the custom kernel interface.
-- Stage 18 physically verified end-to-end custom static RGB from the GUI on the local engineering workspace.
+- Stage 14/15 physically verified all 17 keyboard presets and levels `0..4` on the exact A715-59G (archived in `docs/HARDWARE_AUDIT_A715_59G.md` §2.4).
+- Stage 17 physically verified one arbitrary static 24-bit RGB color (`#12A7E3`, level `4`, payload `A7 12 E3 F0`) via `build/driver-build-stage17/acer_clv0001_kbd.ko` (`docs/HARDWARE_AUDIT_A715_59G.md` §2.5).
+- Stage 18 integrated custom static RGB into the GUI/HAL/daemon pipeline and was physically tested by the operator using `#12A7E3` at brightness level `4`; `docs/HARDWARE_AUDIT_A715_59G.md` §2.6 records the missing verbatim machine capture log as a documentation gap. `physical_readback` remains `unsupported` (`accepted_no_hw_readback`), and per-zone split is unsupported (single-zone uniform backlight).
+- **Stage 36–37 live host state (2026-11-24):** `acer_clv0001_kbd.ko` is installed under `/lib/modules/7.3.3-300.fc45.x86_64/extra/` and bound to `CLV0001:00` (`\_SB_.DCHU`), reporting `status=accepted_no_hw_readback`, `preset=cyan`, `brightness_level=4`, `payload_grb=FF 00 C8 F0`, `acpi_return_type=integer`, `physical_readback=unsupported` with user-confirmed illumination (exact hue unconfirmed). `modprobe -R "acpi:CLV0001:"` resolves to `acer_clv0001_kbd` (same-kernel reboot autoload expected via udev `80-drivers.rules`, not reboot-tested); cross-kernel rebuild integration remains a future packaging step.
 - False-RGB temporal animation is deferred.
-- The latest local implementation and tests must be reconciled with the actual checkout before Hydrogen changes or advertises these paths.
 
 ### Fan
 - Standard hwmon fan RPM/PWM sysfs nodes and PNP0C0B fan devices were not detected in the reported physical system.
@@ -72,24 +62,40 @@ Target:
 - Product posture remains firmware automatic; no fan control or fan query has been runtime-authorized.
 
 ### Battery
-- BAT0 telemetry is available; standard charge_control_end_threshold is not exposed.
-- Stage 22 static AML found a Clevo FlexiCharger getter/setter path, discrete start/stop preset arrays and ECMD 0xCB transport.
-- Stage 22.1 found that the getter reads GNVS/OGNS NVS shadow values rather than live EC readback; PK04 0x1F writes NVS before attempting ECMD and lacks threshold ordering/range validation and rollback.
-- The static preset arrays are start 40, 50, 60, 70, 80, 90 percent and stop 60, 70, 80, 90, 100 percent. They do not prove live EC acceptance.
-- Product posture remains battery telemetry only; no charge-limit firmware call is authorized.
+- **BAT0 & FlexiCharger posture:** `BAT0` telemetry is available (`cycle_count=0` labeled `NOT REPORTED`); standard `charge_control_end_threshold` is absent (`NotDetected`). Stage 23A.1.3 (`GCMD 0x77`) and Stage 23A.2.2 (`PK04 0x1E`) external single-shot probes observed matching `OGNS` ACPI NVS shadow values (`BAEE >> 1 = 0x01`, `BSCP = 70`, `BTCP = 80`) and firmware `FCSC` (`40..90`) / `FCTC` (`60..100`) constant arrays (`docs/ACPI_RUNTIME_INVESTIGATION.md`). Because live EC register state (`ECMD 0xCB`) and physical charge-limit enforcement remain unverified and `PK04 0x1F` lacks threshold validation and rollback, product posture remains **battery telemetry only** (`cap.battery.limit` disabled on physical `A715-59G`).
 
 ## 5. ACPI investigation stage
 
 ### Completed
 - Stage 22: DSDT and SSDT1–SSDT17 extracted and statically disassembled offline. No AML methods were invoked.
 - Stage 22.1: source-line evidence and method side effects reviewed. It identified differences between WMBB and DCHU, EC mailbox writes in query paths, EC/NVS access distinctions and synchronization concerns.
+- Stage 22.2: closed all five offline AML analysis items against the 18 individual `.dsl` tables (`docs/HARDWARE_AUDIT_A715_59G.md` §5.3–§5.6):
+  - Corrected `BAT0._BTP` (`DSDT/DSDT.dsl:95677-95701`) from "empty stub" to an EC mailbox-backed (`ECMD 0xF2/0xC0`) ACPI battery trip-point method (unrelated to FlexiCharger), and confirmed conditional `BAT0._BIX` (`PSF0 & 0x00010000`, `UPBX` reading `EC.RAM.CYCN`).
+  - Resolved `EC.ECOK` (`DSDT/DSDT.dsl:100605`) as an AML `IntObj` (`Name (ECOK, Zero)`) initialized and updated through `EC._REG (0x03, One)` -> `EREG`, clarifying `SSDT1.dsl:44`'s `FieldUnitObj` heuristic.
+  - Documented the distinct synchronization mechanisms across `DCHU._DSM` (`Serialized` method entry only), `WMBB`/`PATM`, `ECMD`/`PATM`, and `acer_clv0001_kbd` `ctx->lock` (sysfs writers only).
+  - Verified exact contracts and access paths for `DCHU.GCMD 0x77` (requires `Package{Buffer}` in `Arg3`; `OGNS` NVS only), `DCHU.PK04 0x1E` (`ECOK`-gated `OGNS` NVS + static `FCSC`/`FCTC`), and `DCHU.PK04 0x08` (`ECOK`-gated `OGNS` NVS, `WMI.PSTG ()` stub, conditional single-byte `SystemMemory` `EC.RAM.RINF`, and `SSDT4.PDDS` `IGDM` read), preserving the distinction between NVS shadow values, direct `SystemMemory` reads, and unverified live EC state.
+  - Kept `PK07` excluded from the initial Stage 23 candidate set unless new evidence establishes a concrete need.
 
-### Pending
-- Stage 22.2: correct the ACPI 6.6 battery-method inventory, resolve the exact ECOK object/access type, verify Serialized method semantics and finalize the exact Tier-1 query contracts.
-- Stage 23: only after Stage 22.2 closure and separate explicit authorization, consider the narrowly scoped zero-mailbox DCHU queries. The candidates are DCHU GCMD 0x77, DCHU PK04 0x1E and DCHU PK04 0x08 (optionally PK07 if justified).
-- Stage 23 is not authorized by this handoff.
+- **Stage 23A.1.3 (`GCMD 0x77` — Operator-Reported Runtime Result):** External single-shot probe (`stage23a1_gcmd77_probe_v3.ko`, SHA-256 `aebcbb90...`) passed 6-field exact DMI guard, symbol provenance audit (`22/22`), `_STA = 0x0F`, and `_DSM 0x77` (`AE_OK`, `Integer 0x00504601`, decoded `OGNS` NVS `BAEE>>1=1, BSCP=70, BTCP=80`); unloaded cleanly (`docs/ACPI_RUNTIME_INVESTIGATION.md` §2).
+- **Stage 23A.2.2 (`PK04 0x1E` — Runtime Verified, Verbatim Log Captured):** Confirmed `SCLT`/`TCLT` are `BufferField`s (not methods); external single-shot probe (`stage23a2_pk04_1e_probe_v2.ko`, SHA-256 `09ef7e50...`) passed preflight, `_STA = 0x0F`, `_DSM 0x04/0x1E` (`AE_OK`, 256B `POPULATED_CASE_1E`: `01 46 50`, `FCSC`/`FCTC` constants, zero padding, zero ACPICA Global Lock warnings) and unloaded cleanly (`docs/ACPI_RUNTIME_INVESTIGATION.md` §3). Both Stage 23A probes verify **`OGNS` NVS shadow consistency only** — not live EC state or physical charging limits.
+- **Stage 23B.1 / 23B.1.1 (`PK04 0x08` — Closed Safety-Blocked / STOP):** Classified `STATIC_READ_ONLY_BUT_RUNTIME_RACE_OR_POINTER_VALIDITY_UNRESOLVED`. Explicitly **stopped** before probe creation due to unreserved `EC.RAM.RINF` (`0xFE0B01DB`, omitted by `PNP0C02:02`/E820; supersedes Stage 22.2's `0xDC` note) and unguarded `NoLock` `IGDM`/`SANV.ASLB` reads concurrent with `i915` (`docs/ACPI_RUNTIME_INVESTIGATION.md` §5).
 
-Do not invoke PK0C, DCHU PK0D, GCMD 0x63/0x64/0x6E, SCMD 0x68/0x69/0x76/0x79, PK0E or PK04 0x1F on physical hardware. Do not call WMI, DCHU _DSM, WMBB or EC methods under the previous static-only authorization.
+### Consolidated Subsystem Capability & Evidence Summary (Stage 28)
+
+| Subsystem | Live/Repo Posture | Primary Evidence Class |
+|---|---|---|
+| CPU Telemetry & RAPL Power | Live via `coretemp`, `/proc`, daemon RAPL | Runtime verified (`A715-59G`) |
+| CPU Performance Tuning & Profiles | Live RW via daemon + `tuned-ppd` / `intel_pstate` | Runtime verified (daemon D-Bus + readback) |
+| Thermal Sensors | Live RO (`hwmon` / `thermal_zone`) | Runtime verified (`A715-59G`) |
+| Fan Tachometer & PWM Override | `FirmwareAutomatic` (`NotDetected`; Curve Preview / `--mock-hardware full` only) | Safety-locked (`NotDetected`; static AML paths unverified) |
+| Keyboard Backlight & Static RGB | `CLV0001` 17 presets + static 24-bit RGB (`accepted_no_hw_readback`); Preview when unbound | Physically verified (presets & Stage 17 RGB; module currently unloaded) |
+| Battery Telemetry | Live RO (`BAT0`; `cycle_count=0` -> `NOT REPORTED`) | Runtime verified (`A715-59G`) |
+| Battery Charge Threshold / FlexiCharger | Disabled (`NotDetected`; `--mock-hardware full` only; Stage 23A read-only NVS only) | Stage 23A `OGNS` NVS only; EC/physical unverified; setters locked |
+| `PK04 0x08` System/Platform Status | Probe build/execution explicitly **STOPPED** | Safety-blocked (`STATIC_READ_ONLY_BUT_RUNTIME_RACE_OR_POINTER_VALIDITY_UNRESOLVED`) |
+| NVIDIA RTX 3050 GPU | Live RO via dynamic `dlopen` NVML (fallback `/proc/driver/nvidia`) | Runtime verified (`nvidia 620.70.06` / graceful no-NVML fallback) |
+
+### Safety Locks Retained
+Do **not** build, load, or invoke `PK04 0x08`, `PK07`, `PK0C`, `DCHU.PK0D`, `GCMD 0x63/0x64/0x6E–0x71`, `SCMD 0x68/0x69/0x76/0x79`, `PK0E`, `PK04 0x1F`, or `BAT0._BTP` on physical hardware. Standalone Stage 23A `.ko` probes live strictly in the external audit workspace and are not packaged or shipped.
 
 ## 6. Deferred work
 
@@ -99,13 +105,18 @@ Do not invoke PK0C, DCHU PK0D, GCMD 0x63/0x64/0x6E, SCMD 0x68/0x69/0x76/0x79, PK
 - General-purpose or arbitrary ACPI/WMI/EC execution interface.
 - DAMX driver installation or wholesale reuse.
 
-## 7. Immediate next actions
+## 7. Next actions & Release Readiness
 
-1. Hydrogen must inspect the active local checkout, branch, HEAD, uncommitted changes and the available local Stage 17/18 artifacts before reconciling with public GitHub.
-2. Complete Stage 22.2 only within its static-only scope. Do not broaden the prior authorization.
-3. After evidence closure, request separate operator authorization before any Stage 23 runtime query.
-4. Begin UI redesign from information architecture and task workflows, using docs/DESIGN_SYSTEM.md. Do not begin with palette replacement.
-5. Review fan capability detection and existing generic charge-limit controls against the evidence before changing any hardware-facing implementation.
+See [docs/RELEASE_READINESS.md](RELEASE_READINESS.md) and [docs/HOST_INTEGRATION_A715_59G.md](HOST_INTEGRATION_A715_59G.md) for the complete release-engineering and host-validation record:
+- **Stage 29 (`74a34f7`):** Committed Stage 28/28.1 hardware evidence and release readiness checkpoint (6 files).
+- **Stages 30–30.3 (`build/release-stage30/` .. `build/release-stage30-3/`):** Verified clean `git archive` source export (`1.0.0-4.fc45`), composite SPDX audit (`GPL-2.0-or-later AND (GPL-3.0-or-later WITH GPL-3.0-linking-source-exception) AND CC0-1.0`), canonical FSF `COPYING.GPL-2.0` (`edaef632...`) under `%license`, `1.0.0-5.fc45` license finalization, and `1.0.0-6.fc45` reconciled local RPM candidate (`CTest 2/2`, `desktop-file-validate`, `appstreamcli validate --no-net` passed; `rpmlint` zero license errors/warnings).
+- **Stage 31 Preflight & Stage 31.1 Host Integration:** User-initiated DNF5 transaction `#66` (`2026-11-23 20:38:48–20:38:50 WIB`) upgraded host from `1.0.0-3.fc45` to `acer-control-center-1.0.0-6.fc45.x86_64`. Stage 31.1 verified `rpm -V` clean, `systemd` restart/enablement, D-Bus `GetDaemonVersion` (`1.0.0-fc45`) & `GetRaplPowerSnapshot`, Polkit XML/actions, native Hyprland Wayland mapping, 8-view screenshot navigation, real-host telemetry dump, and unchanged `settings.json` (`dc6b1d7c...`). Package remains locally built, unsigned, and unpublished.
+- **Stages 32–34.7 (`efbf9c8` .. `88d8f7c`):** Committed Stage 32 closure (`efbf9c8`), verified clean-source `1.0.0-7.fc45` provenance, hardened documentation privacy (`d51861b`), and established passing `Fedora 45 CI` across `push` and `pull_request` on Draft PR #2 (`88d8f7c`, using headless `QT_QPA_PLATFORM=offscreen`, `tar` source export validation, and `setpriv` `CAP_DAC_OVERRIDE` removal).
+- **Stages 35–37 (2026-11-24):** Stage 35 read-only PR audit identified High QML/ConfigStore defects (queued separately from this stage) and stale docs. Stage 36 built/installed/bound `acer_clv0001_kbd` on `7.3.3-300.fc45.x86_64` and verified `cyan 4` firmware acceptance (`FF 00 C8 F0`) + illumination; Stage 37 reconciled requested vs. driver-accepted keyboard telemetry and evaluated DKMS vs. Fedora `akmods` (`docs/FEDORA_45_PACKAGING.md` §5.9).
+
+1. Review Stage 37 uncommitted telemetry reconciliation and documentation updates alongside the Stage 35 UI/ConfigStore remediation backlog before marking Draft PR #2 Ready for Review.
+2. Optional operator-gated checks remain open outside this closure: interactive desktop Polkit authentication prompt (`auth_admin_keep`), live `PrepareForSleep` suspend/resume cycle, empirical reboot-autoload check, and future cross-kernel DKMS/`akmods` packaging.
+3. Keep physical fan control, battery FlexiCharger setters, and `PK04 0x08` disabled/blocked unless future hardware-safety evidence overturns the current blockers.
 
 ## 8. Confidence vocabulary
 
@@ -117,3 +128,11 @@ Use these labels consistently:
 - **Preview/mock:** simulated or design-only, never physical.
 - **Not detected:** no matching runtime interface found; this does not prove firmware lacks a hidden path.
 - **Unsupported:** authoritative evidence establishes incompatibility or absence, not merely a missing sysfs node.
+
+---
+
+## 9. Stage 24–26 Implementation Snapshot (Committed at `b854a2c` / `e5d6fc1`)
+
+- **Asynchronous runtime (Stage 24):** `TelemetryCoordinator` + `TelemetryWorker` move sysfs/proc/NVML reads off the GUI thread; `DbusControlTransport` eliminates `QDBus::Block` from GUI interactions; explicit `FreshnessState` and `ControlAuthState` states are exposed via `ControlCenterController` alongside lazy single-view `workspaceLoader` instantiation in `Main.qml`.
+- **Structural UI rebuild (Stage 25):** Replaced legacy Atelier pages with a responsive Endfield-inspired 3-tier shell (`minimumWidth: 680`, `minimumHeight: 540`) and reusable components (`CommandModule`, `TelemetryMetricTile`, `TelemetryStateBanner`, `CadKeyValueRow`).
+- **Integration & safety posture (Stage 26):** Native Wayland execution verified under Fedora 45 Hyprland (`7.3.3-300.fc45.x86_64`, `acer-control-daemon` system D-Bus `GetDaemonVersion`/`GetRaplPowerSnapshot`, `nvidia 620.70.06` NVML); `MODE` reconciles cleanly with live `tuned-ppd`; `CMakeLists.txt` systemd unit path and `.desktop` metadata fixed; isolated `rpmbuild -bb` (`1.0.0-4.fc45.x86_64`), staging install, `appstreamcli`, `desktop-file-validate`, `test_core_and_hal` (18/18), and `test_gui_atelier` (9/9) pass. *(Historical Stage 26 snapshot note: Stage 23A.1.3 and Stage 23A.2.2 single-shot read-only probes were later executed separately as recorded in §5, while fan PWM, FlexiCharger setters, and `PK04 0x08` remain locked.)*

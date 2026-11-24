@@ -6,8 +6,34 @@
 
 #include <QDateTime>
 #include <QDBusMessage>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 namespace acc::daemon {
+
+namespace {
+
+QString buildErrorJson(const QString& errorCode, const QString& verificationStatus, const QString& message) {
+    QJsonObject obj;
+    obj.insert(QStringLiteral("applied"), false);
+    obj.insert(QStringLiteral("error_code"), errorCode);
+    obj.insert(QStringLiteral("verification_status"),
+               verificationStatus.isEmpty() ? QStringLiteral("rejected_before_execution") : verificationStatus);
+    obj.insert(QStringLiteral("message"), message);
+    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+}
+
+QString formatControlResultJson(const core::ControlResult& res) {
+    if (res.applied && !res.readbackSummary.isEmpty()) {
+        return res.readbackSummary;
+    }
+    if (!res.applied) {
+        return buildErrorJson(res.errorCode, res.verificationStatusId, res.message);
+    }
+    return res.readbackSummary;
+}
+
+} // namespace
 
 DaemonServiceObject::DaemonServiceObject(AuthPolicyMode authMode, QObject* parent)
     : QObject(parent), m_authorizer(authMode) {}
@@ -84,7 +110,9 @@ void DaemonServiceObject::SetCpuPerformanceTuning(
     QString authReason;
     if (!verifyCaller(QString(PolkitActions::kSetPowerProfile), true, authReason)) {
         applied = false;
-        readback_json = QStringLiteral("{}");
+        readback_json = buildErrorJson(QStringLiteral("ERR_POLKIT_UNAUTHORIZED"),
+                                       QStringLiteral("rejected_before_execution"),
+                                       authReason);
         error_code = QStringLiteral("ERR_POLKIT_UNAUTHORIZED");
         core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DAEMON"), authReason);
         return;
@@ -98,7 +126,7 @@ void DaemonServiceObject::SetCpuPerformanceTuning(
         static_cast<int>(max_perf_pct)
     );
     applied = res.applied;
-    readback_json = res.readbackSummary;
+    readback_json = formatControlResultJson(res);
     error_code = res.errorCode;
 }
 
@@ -113,7 +141,9 @@ void DaemonServiceObject::SetKeyboardLighting(
     QString authReason;
     if (!verifyCaller(QString(PolkitActions::kSetKeyboardLighting), true, authReason)) {
         applied = false;
-        readback_json = QStringLiteral("{}");
+        readback_json = buildErrorJson(QStringLiteral("ERR_POLKIT_UNAUTHORIZED"),
+                                       QStringLiteral("rejected_before_execution"),
+                                       authReason);
         error_code = QStringLiteral("ERR_POLKIT_UNAUTHORIZED");
         core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DAEMON"), authReason);
         return;
@@ -125,7 +155,7 @@ void DaemonServiceObject::SetKeyboardLighting(
         zones_hex_csv
     );
     applied = res.applied;
-    readback_json = res.readbackSummary;
+    readback_json = formatControlResultJson(res);
     error_code = res.errorCode;
 }
 
@@ -164,7 +194,9 @@ void DaemonServiceObject::SetFanControlMode(
     QString authReason;
     if (!verifyCaller(QString(PolkitActions::kSetFanMode), true, authReason)) {
         applied = false;
-        readback_json = QStringLiteral("{}");
+        readback_json = buildErrorJson(QStringLiteral("ERR_POLKIT_UNAUTHORIZED"),
+                                       QStringLiteral("rejected_before_execution"),
+                                       authReason);
         error_code = QStringLiteral("ERR_POLKIT_UNAUTHORIZED");
         core::DiagnosticRedactor::instance().appendLog(QStringLiteral("WARN"), QStringLiteral("DAEMON"), authReason);
         return;
@@ -175,7 +207,7 @@ void DaemonServiceObject::SetFanControlMode(
         static_cast<int>(duty_pct)
     );
     applied = res.applied;
-    readback_json = res.readbackSummary;
+    readback_json = formatControlResultJson(res);
     error_code = res.errorCode;
 }
 

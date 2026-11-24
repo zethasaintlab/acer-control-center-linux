@@ -231,22 +231,51 @@ void FanCurveEditorItem::keyPressEvent(QKeyEvent* event) {
     }
     m_selectedIndex = std::clamp(m_selectedIndex, 0, static_cast<int>(m_points.size()) - 1);
     QVariantMap cur = m_points.at(m_selectedIndex).toMap();
+    int temp = cur.value(QStringLiteral("tempC")).toInt();
     int duty = cur.value(QStringLiteral("dutyPct")).toInt();
+    const bool shiftHeld = (event->modifiers() & Qt::ShiftModifier) != 0;
 
-    if (event->key() == Qt::Key_Left) {
+    if (event->key() == Qt::Key_Home) {
+        m_selectedIndex = 0;
+        update();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_End) {
+        m_selectedIndex = static_cast<int>(m_points.size()) - 1;
+        update();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Left && !shiftHeld) {
         m_selectedIndex = std::max(0, m_selectedIndex - 1);
         update();
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_Right) {
+    if (event->key() == Qt::Key_Right && !shiftHeld) {
         m_selectedIndex = std::min(static_cast<int>(m_points.size()) - 1, m_selectedIndex + 1);
         update();
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) {
-        duty += (event->key() == Qt::Key_Up) ? 2 : -2;
+    if ((event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) && shiftHeld) {
+        temp += (event->key() == Qt::Key_Right) ? 2 : -2;
+        cur.insert(QStringLiteral("tempC"), std::clamp(temp, kMinTemp, kMaxTemp));
+        m_points[m_selectedIndex] = cur;
+        enforceMonotonicCurve();
+        Q_EMIT pointsChanged();
+        Q_EMIT curveEdited(m_points);
+        update();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down
+        || event->key() == Qt::Key_PageUp || event->key() == Qt::Key_PageDown) {
+        const int delta = (event->key() == Qt::Key_PageUp) ? 10
+                        : (event->key() == Qt::Key_PageDown) ? -10
+                        : (event->key() == Qt::Key_Up) ? 2 : -2;
+        duty += delta;
         cur.insert(QStringLiteral("dutyPct"), std::clamp(duty, kMinDuty, kMaxDuty));
         m_points[m_selectedIndex] = cur;
         enforceMonotonicCurve();
@@ -270,9 +299,21 @@ void FanCurveEditorItem::paint(QPainter* painter) {
     painter->fillRect(QRectF(0, 0, w, h), m_bgColor);
     const QRectF plot = plotArea();
 
-    QFont monoFont(QStringLiteral("monospace"));
+    QFont monoFont(QStringLiteral("JetBrains Mono"));
     monoFont.setPixelSize(10);
     painter->setFont(monoFont);
+
+    const bool isLightBg = m_bgColor.lightness() > 128;
+    const QColor crosshairCol = isLightBg ? QColor(QStringLiteral("#7C868E")) : QColor(QStringLiteral("#5C6463"));
+    auto drawCrosshair = [&](double cx, double cy) {
+        painter->setPen(QPen(crosshairCol, 1.0));
+        painter->drawLine(QPointF(cx - 4.0, cy), QPointF(cx + 4.0, cy));
+        painter->drawLine(QPointF(cx, cy - 4.0), QPointF(cx, cy + 4.0));
+    };
+    drawCrosshair(plot.left(), plot.top());
+    drawCrosshair(plot.right(), plot.top());
+    drawCrosshair(plot.left(), plot.bottom());
+    drawCrosshair(plot.right(), plot.bottom());
 
     // 1. Horizontal PWM gridlines
     for (int d = 20; d <= 100; d += 20) {
@@ -295,7 +336,7 @@ void FanCurveEditorItem::paint(QPainter* painter) {
 
     // 3. Live CPU temperature vertical crosshair
     const double curTempX = nodeToScreen(static_cast<int>(std::lround(m_currentTempC)), kMinDuty, plot).x();
-    painter->setPen(QPen(QColor(QStringLiteral("#E5A024")), 1.2, Qt::DashLine));
+    painter->setPen(QPen(QColor(QStringLiteral("#F5D328")), 1.2, Qt::DashLine));
     painter->drawLine(QPointF(curTempX, plot.top()), QPointF(curTempX, plot.bottom()));
 
     // 4. Piecewise curve & area fill
@@ -324,7 +365,7 @@ void FanCurveEditorItem::paint(QPainter* painter) {
         painter->setPen(QPen(m_accentColor, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter->drawPath(linePath);
 
-        // 5. Draggable control nodes
+        // 5. Draggable control nodes (precision square/diamond CAD reticles)
         for (int i = 0; i < m_points.size(); ++i) {
             const QVariantMap m = m_points.at(i).toMap();
             const int t = m.value(QStringLiteral("tempC")).toInt();
@@ -332,9 +373,10 @@ void FanCurveEditorItem::paint(QPainter* painter) {
             const QPointF pt = nodeToScreen(t, d, plot);
             const bool selected = (i == m_selectedIndex);
 
-            painter->setPen(QPen(selected ? QColor(QStringLiteral("#FFFFFF")) : m_bgColor, 2.0));
+            painter->setPen(QPen(selected ? QColor(QStringLiteral("#FFEA00")) : m_bgColor, 1.8));
             painter->setBrush(m_accentColor);
-            painter->drawEllipse(pt, selected ? 6.5 : 5.0, selected ? 6.5 : 5.0);
+            const double rad = selected ? 5.5 : 4.5;
+            painter->drawRect(QRectF(pt.x() - rad, pt.y() - rad, rad * 2.0, rad * 2.0));
 
             painter->setPen(m_textColor);
             painter->drawText(
@@ -347,15 +389,14 @@ void FanCurveEditorItem::paint(QPainter* painter) {
 
     // 6. Top status badge
     const QString modeBadge = m_hwPwmSupported
-                                  ? QStringLiteral("HARDWARE PWM CURVE ACTIVE  |  LIVE TARGET: %1% @ %2°C")
+                                  ? QStringLiteral("HARDWARE PWM CURVE ACTIVE  //  LIVE TARGET: %1% @ %2°C")
                                         .arg(interpolatedDutyPct())
                                         .arg(m_currentTempC, 0, 'f', 1)
-                                  : QStringLiteral("PREVIEW / SIMULATION ONLY (FIRMWARE EC AUTO)  |  SIMULATED TARGET: %1% @ %2°C")
+                                  : QStringLiteral("PREVIEW ONLY (FIRMWARE AUTOMATIC EC)  //  SIM TARGET: %1% @ %2°C")
                                         .arg(interpolatedDutyPct())
                                         .arg(m_currentTempC, 0, 'f', 1);
-    const bool isLightBg = m_bgColor.lightness() > 128;
-    const QColor nominalCol = isLightBg ? QColor(QStringLiteral("#168A56")) : QColor(QStringLiteral("#2EBE7E"));
-    const QColor warningCol = isLightBg ? QColor(QStringLiteral("#B87503")) : QColor(QStringLiteral("#E5A024"));
+    const QColor nominalCol = isLightBg ? QColor(QStringLiteral("#4A7A00")) : QColor(QStringLiteral("#A4E61D"));
+    const QColor warningCol = isLightBg ? QColor(QStringLiteral("#A86400")) : QColor(QStringLiteral("#F5B82E"));
     painter->setPen(m_hwPwmSupported ? nominalCol : warningCol);
     painter->drawText(QRectF(plot.left(), 4.0, plot.width(), 18.0), Qt::AlignLeft | Qt::AlignVCenter, modeBadge);
 

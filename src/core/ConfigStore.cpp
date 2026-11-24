@@ -40,7 +40,7 @@ AppSettings ConfigStore::defaultSettings() {
     AppSettings s;
     s.schemaVersion = 1;
     s.darkTheme = true;
-    s.accentColorHex = QStringLiteral("#3B9EFF");
+    s.accentColorHex = QStringLiteral("#FFEA00");
     s.pollingIntervalMs = 1000;
     s.reducedMotion = false;
     s.compactNavigation = false;
@@ -66,14 +66,14 @@ AppSettings ConfigStore::defaultSettings() {
     s.customOperatingProfile.isCustom = true;
 
     s.customAccentSwatches = {
-        QStringLiteral("#3B9EFF"),
-        QStringLiteral("#2EBE7E"),
-        QStringLiteral("#E5A024"),
-        QStringLiteral("#E04F5F"),
-        QStringLiteral("#00B8D9"),
-        QStringLiteral("#D97706"),
-        QStringLiteral("#84CC16"),
-        QStringLiteral("#94A3B8")
+        QStringLiteral("#FFEA00"),
+        QStringLiteral("#A4E61D"),
+        QStringLiteral("#F5D328"),
+        QStringLiteral("#2596FF"),
+        QStringLiteral("#F5B82E"),
+        QStringLiteral("#9B6BFF"),
+        QStringLiteral("#E06C65"),
+        QStringLiteral("#68C938")
     };
 
     s.customKeyboardSwatches = {
@@ -94,6 +94,8 @@ AppSettings ConfigStore::defaultSettings() {
     p1.mode = QStringLiteral("static");
     p1.brightnessPct = 80;
     p1.timeoutSeconds = 30;
+    p1.clv0001PresetName = QStringLiteral("cyan");
+    p1.clv0001BrightnessLevel = 4;
     p1.zones = {
         KeyboardZoneColor{0, QStringLiteral("Zone 1 (WASD / Left)"), 59, 158, 255, QStringLiteral("#3B9EFF")},
         KeyboardZoneColor{1, QStringLiteral("Zone 2 (Center Alpha)"), 59, 158, 255, QStringLiteral("#3B9EFF")},
@@ -108,6 +110,8 @@ AppSettings ConfigStore::defaultSettings() {
     p2.mode = QStringLiteral("static");
     p2.brightnessPct = 60;
     p2.timeoutSeconds = 60;
+    p2.clv0001PresetName = QStringLiteral("white");
+    p2.clv0001BrightnessLevel = 3;
     p2.zones = {
         KeyboardZoneColor{0, QStringLiteral("Zone 1 (WASD / Left)"), 255, 236, 209, QStringLiteral("#FFECD1")},
         KeyboardZoneColor{1, QStringLiteral("Zone 2 (Center Alpha)"), 255, 244, 229, QStringLiteral("#FFF4E5")},
@@ -122,6 +126,8 @@ AppSettings ConfigStore::defaultSettings() {
     p3.mode = QStringLiteral("static");
     p3.brightnessPct = 100;
     p3.timeoutSeconds = 0;
+    p3.clv0001PresetName = QStringLiteral("red");
+    p3.clv0001BrightnessLevel = 4;
     p3.zones = {
         KeyboardZoneColor{0, QStringLiteral("Zone 1 (WASD / Left)"), 224, 79, 95, QStringLiteral("#E04F5F")},
         KeyboardZoneColor{1, QStringLiteral("Zone 2 (Center Alpha)"), 59, 158, 255, QStringLiteral("#3B9EFF")},
@@ -243,6 +249,8 @@ QJsonObject ConfigStore::serializeSettings(const AppSettings& s) {
         kpObj.insert(QStringLiteral("mode"), kp.mode);
         kpObj.insert(QStringLiteral("brightness_pct"), kp.brightnessPct);
         kpObj.insert(QStringLiteral("timeout_seconds"), kp.timeoutSeconds);
+        kpObj.insert(QStringLiteral("clv0001_preset"), kp.clv0001PresetName);
+        kpObj.insert(QStringLiteral("clv0001_brightness_level"), kp.clv0001BrightnessLevel);
 
         QJsonArray zonesArr;
         for (const KeyboardZoneColor& z : kp.zones) {
@@ -309,6 +317,43 @@ bool ConfigStore::deserializeAndValidateSettings(const QJsonObject& obj, AppSett
     s.launchAtLogin = obj.value(QStringLiteral("launch_at_login")).toBool(s.launchAtLogin);
     s.enableNotifications = obj.value(QStringLiteral("enable_notifications")).toBool(s.enableNotifications);
 
+    const auto parseValidatedSwatchArray = [&](const QString& key, QStringList& target) {
+        if (!obj.contains(key)) {
+            return;
+        }
+        if (!obj.value(key).isArray()) {
+            if (outWarning) {
+                *outWarning = QStringLiteral("Invalid %1 array; retained default swatches.").arg(key);
+            }
+            return;
+        }
+        QStringList parsed;
+        const QJsonArray arr = obj.value(key).toArray();
+        for (const QJsonValue& val : arr) {
+            if (!val.isString()) {
+                continue;
+            }
+            RgbColor swatchRgb;
+            if (!ColorScience::parseHexToRgb(val.toString(), swatchRgb)) {
+                continue;
+            }
+            const QString canonicalHex = ColorScience::rgbToHex(swatchRgb);
+            if (!parsed.contains(canonicalHex)) {
+                parsed.append(canonicalHex);
+                if (parsed.size() >= 12) {
+                    break;
+                }
+            }
+        }
+        if (!parsed.isEmpty()) {
+            target = parsed;
+        } else if (!arr.isEmpty() && outWarning) {
+            *outWarning = QStringLiteral("No valid hex colors in %1; retained default swatches.").arg(key);
+        }
+    };
+    parseValidatedSwatchArray(QStringLiteral("custom_accent_swatches"), s.customAccentSwatches);
+    parseValidatedSwatchArray(QStringLiteral("custom_keyboard_swatches"), s.customKeyboardSwatches);
+
     const QStringList validProfileIds = {
         QStringLiteral("quiet"), QStringLiteral("balanced"),
         QStringLiteral("performance"), QStringLiteral("custom")
@@ -372,9 +417,25 @@ bool ConfigStore::deserializeAndValidateSettings(const QJsonObject& obj, AppSett
                 continue;
             }
             kp.enabled = kpObj.value(QStringLiteral("enabled")).toBool(true);
-            kp.mode = kpObj.value(QStringLiteral("mode")).toString(QStringLiteral("static"));
+            const QString rawKbdMode = kpObj.value(QStringLiteral("mode")).toString(QStringLiteral("static")).trimmed().toLower();
+            kp.mode = (rawKbdMode == QLatin1String("static") ||
+                       rawKbdMode == QLatin1String("breathing") ||
+                       rawKbdMode == QLatin1String("wave"))
+                          ? rawKbdMode
+                          : QStringLiteral("static");
             kp.brightnessPct = std::clamp(kpObj.value(QStringLiteral("brightness_pct")).toInt(80), 0, 100);
             kp.timeoutSeconds = std::clamp(kpObj.value(QStringLiteral("timeout_seconds")).toInt(30), 0, 3600);
+            static const QStringList kValidClvPresets = {
+                QStringLiteral("off"), QStringLiteral("red"), QStringLiteral("orange"),
+                QStringLiteral("yellow"), QStringLiteral("lime"), QStringLiteral("light-green"),
+                QStringLiteral("green"), QStringLiteral("green-cyan"), QStringLiteral("cyan"),
+                QStringLiteral("light-blue"), QStringLiteral("blue"), QStringLiteral("violet"),
+                QStringLiteral("magenta"), QStringLiteral("pink"), QStringLiteral("flesh"),
+                QStringLiteral("bluish-white"), QStringLiteral("white")
+            };
+            const QString rawPreset = kpObj.value(QStringLiteral("clv0001_preset")).toString(QStringLiteral("cyan")).trimmed().toLower();
+            kp.clv0001PresetName = kValidClvPresets.contains(rawPreset) ? rawPreset : QStringLiteral("cyan");
+            kp.clv0001BrightnessLevel = std::clamp(kpObj.value(QStringLiteral("clv0001_brightness_level")).toInt(4), 0, 4);
 
             const QJsonArray zArr = kpObj.value(QStringLiteral("zones")).toArray();
             for (const QJsonValue& zVal : zArr) {

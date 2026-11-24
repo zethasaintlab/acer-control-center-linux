@@ -13,11 +13,27 @@ struct CpuStatSample {
     uint64_t totalJiffies = 0;
 };
 
+struct TelemetryExternalHints {
+    bool useExternalDbusHints = false;
+    bool daemonReachable = false;
+    QString activeTunedProfile;
+    bool hasRaplSample = false;
+    uint64_t raplPkgUj = 0;
+    uint64_t raplCoreUj = 0;
+    uint64_t raplPsysUj = 0;
+    int64_t raplTimestampUs = 0;
+    bool raplAvailable = false;
+};
+
 class TelemetryCollector {
 public:
     TelemetryCollector();
 
     core::SystemSnapshot collectSnapshot(const QString& activeProfileId);
+    core::SystemSnapshot collectSnapshot(const QString& activeProfileId, const TelemetryExternalHints* hints);
+
+    // Resets delta counters when backend mode / sysfs root changes
+    void resetDeltas();
 
     // Allows feeding RAPL microjoule counters obtained from the privileged D-Bus daemon
     void updateRaplCounters(uint64_t pkgUj, uint64_t coreUj, uint64_t psysUj, int64_t timestampUs, bool available);

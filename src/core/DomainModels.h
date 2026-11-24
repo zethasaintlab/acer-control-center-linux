@@ -21,8 +21,11 @@ struct DmiIdentity {
     QString biosVersion;
     QString biosDate;
     QString chassisType;
+    QString kernelRelease;
     QString odmSubsystemNote;
     QStringList wmiGuids;
+    QStringList acpiDevices;
+    QStringList loadedDrivers;
     bool acerWmiLoaded = false;
 };
 
@@ -112,7 +115,9 @@ struct ThermalTelemetry {
 
 struct GpuTelemetry {
     bool available = false;
-    QString sourceLabel; // "NVML (libnvidia-ml.so.1)", "PCI/Sysfs Fallback", "Mock NVML"
+    bool telemetryMeasuredByNvml = false;
+    bool powerLimitsMeasured = false;
+    QString sourceLabel; // "NVML (libnvidia-ml.so.1)", "/proc/driver/nvidia Fallback", "Mock NVML"
     QString name;
     QString driverVersion;
     QString pciBusId;
@@ -126,14 +131,14 @@ struct GpuTelemetry {
     int graphicsClockMhz = 0;
     int smClockMhz = 0;
     int memClockMhz = 0;
-    int maxGraphicsClockMhz = 2100;
-    int maxMemClockMhz = 7001;
+    int maxGraphicsClockMhz = 0;
+    int maxMemClockMhz = 0;
     double powerDrawWatts = 0.0;
     double rawPowerWatts = 0.0;
     bool powerRailGated = false;
-    double powerDefaultLimitWatts = 60.0;
-    double powerMinLimitWatts = 1.0;
-    double powerMaxLimitWatts = 75.0;
+    double powerDefaultLimitWatts = 0.0;
+    double powerMinLimitWatts = 0.0;
+    double powerMaxLimitWatts = 0.0;
     QString pstate;
     uint64_t throttleReasonsBitmask = 0;
     QStringList throttleReasonsDecoded;
@@ -155,8 +160,11 @@ struct BatteryTelemetry {
     double chargeFullDesignAh = 0.0;
     double wearHealthPct = 0.0;
     int cycleCount = 0;
+    bool cycleCountReported = false;
+    QString cycleCountLabel = QStringLiteral("NOT REPORTED");
     bool chargeLimitSupported = false;
     int chargeEndThresholdPct = 100;
+    int previousChargeEndThresholdPct = 100;
     QString chargeLimitSysfsPath;
     QString statusExplanation;
 };
@@ -177,18 +185,64 @@ struct KeyboardLightingProfile {
     QString mode = QStringLiteral("static"); // "static", "breathing", "wave"
     int brightnessPct = 80;
     int timeoutSeconds = 30;
+    QString clv0001PresetName = QStringLiteral("cyan");
+    int clv0001BrightnessLevel = 4;
     std::vector<KeyboardZoneColor> zones;
+};
+
+enum class KeyboardBackendKind {
+    None,
+    LinuxLedsMulticolorRgb,
+    LinuxLedsMonochrome,
+    Clv0001AcpiDsmPreset,
+    Clv0001AcpiUnbound
+};
+
+enum class KeyboardExecutionStatus {
+    NotExecuted,
+    RejectedBeforeExecution,
+    AcpiEvalFailed,
+    UnexpectedAcpiReturnType,
+    AcceptedByAcpiNoReadback,
+    VerifiedPhysicalReadback
+};
+
+struct Clv0001PresetInfo {
+    QString name;
+    uint8_t g = 0;
+    uint8_t r = 0;
+    uint8_t b = 0;
+    QString previewHex;
 };
 
 struct KeyboardHardwareState {
     CapabilityState capabilityState = CapabilityState::NotDetected;
+    KeyboardBackendKind backendKind = KeyboardBackendKind::None;
+    QString backendKindId = QStringLiteral("none");
+    QString controlModeBadge = QStringLiteral("UNSUPPORTED LIGHTING");
     QString ledSysfsPath;
+    bool clv0001DevicePresent = false;
+    QString clv0001AcpiPath;
+    QString clv0001Status;
+    bool clv0001DriverBound = false;
     bool supportsBacklightBrightness = false;
     bool supportsRgbZones = false;
+    bool supportsPresetColors = false;
+    bool supportsArbitraryRgb = false;
     bool supportsTimeout = false;
+    bool independentHwReadback = false;
     int zoneCount = 4;
     int maxBrightness = 100;
     int currentBrightnessPct = 0;
+    int discreteBrightnessLevels = 5;
+    QString currentPresetName = QStringLiteral("unknown");
+    int currentBrightnessLevel = -1;
+    QString lastPayloadHex = QStringLiteral("UNAVAILABLE");
+    QString driverLastStatus = QStringLiteral("unavailable");
+    QString driverLastPreset = QStringLiteral("unknown");
+    int driverLastBrightnessLevel = -1;
+    QString driverLastPayloadHex = QStringLiteral("UNAVAILABLE");
+    QString driverLastAcpiReturnType = QStringLiteral("none");
     QString hardwareRoutingBadge;
     QString hardwareExplanation;
 };
@@ -212,12 +266,63 @@ struct ControlResult {
     QString errorCode;
     QString message;
     QString readbackSummary;
+    QString verificationStatusId;
+    bool physicalStateVerified = false;
 };
 
+enum class TelemetryFreshness {
+    Unavailable = 0,
+    Fresh = 1,
+    Stale = 2
+};
+
+enum class ControlAuthState {
+    Idle = 0,
+    Pending = 1,
+    Authorized = 2,
+    Denied = 3,
+    DaemonUnavailable = 4,
+    Failed = 5
+};
+
+inline QString telemetryFreshnessToId(TelemetryFreshness freshness) {
+    switch (freshness) {
+        case TelemetryFreshness::Fresh:
+            return QStringLiteral("fresh");
+        case TelemetryFreshness::Stale:
+            return QStringLiteral("stale");
+        case TelemetryFreshness::Unavailable:
+            return QStringLiteral("unavailable");
+    }
+    return QStringLiteral("unavailable");
+}
+
+inline QString controlAuthStateToId(ControlAuthState state) {
+    switch (state) {
+        case ControlAuthState::Idle:
+            return QStringLiteral("idle");
+        case ControlAuthState::Pending:
+            return QStringLiteral("pending");
+        case ControlAuthState::Authorized:
+            return QStringLiteral("authorized");
+        case ControlAuthState::Denied:
+            return QStringLiteral("denied");
+        case ControlAuthState::DaemonUnavailable:
+            return QStringLiteral("daemon_unavailable");
+        case ControlAuthState::Failed:
+            return QStringLiteral("failed");
+    }
+    return QStringLiteral("idle");
+}
+
 struct SystemSnapshot {
+    bool valid = false;
+    bool collectionFailed = false;
+    QString collectionError;
     int64_t timestampMs = 0;
     bool mockModeActive = false;
     QString mockScenarioName;
+    bool daemonReachable = false;
     DmiIdentity dmi;
     CpuTelemetry cpu;
     MemoryTelemetry memory;
