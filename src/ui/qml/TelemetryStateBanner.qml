@@ -62,6 +62,8 @@ Rectangle {
     color: Qt.rgba(stateColor.r, stateColor.g, stateColor.b, theme.darkTheme ? 0.14 : 0.11)
     border.width: 1
     border.color: stateColor
+    Accessible.role: Accessible.StaticText
+    Accessible.name: root.stateBadge + ": " + root.detailMessage
 
     Rectangle {
         anchors.left: parent.left
@@ -93,7 +95,7 @@ Rectangle {
                 font.family: theme.fontMono
                 font.pixelSize: 10
                 font.weight: Font.Bold
-                color: theme.darkInk
+                color: theme.darkTheme ? theme.darkInk : "#FFFFFF"
             }
         }
 

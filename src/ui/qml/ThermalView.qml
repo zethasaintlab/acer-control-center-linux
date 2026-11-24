@@ -61,6 +61,18 @@ Flickable {
                 }
             }
 
+            Text {
+                visible: ctrl.fansModel.length === 0
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: root.telemetryUnavailable
+                      ? "Collecting initial thermal and tachometer snapshot..."
+                      : "No active hwmon fan tachometer channels reported on this platform."
+                font.family: theme.fontSans
+                font.pixelSize: 11
+                color: theme.textMuted
+            }
+
             // Live Tachometers (ONLY shown when genuine hwmon fan*_input sensors exist)
             Grid {
                 visible: ctrl.fansModel.length > 0
@@ -78,7 +90,7 @@ Flickable {
                         unitText: "RPM"
                         valueColor: theme.telemetryLime
                         accentBarColor: theme.telemetryLimeBar
-                        subText: "PWM DUTY: " + modelData.pwmPct + "% · " + (modelData.isWritable ? "WRITABLE" : "READ-ONLY")
+                        subText: "PWM DUTY: " + modelData.pwmPct + "% · " + (modelData.writable ? "WRITABLE" : "READ-ONLY")
                         stale: root.telemetryStale
                         unavailable: root.telemetryUnavailable
                     }
@@ -103,6 +115,7 @@ Flickable {
                     height: 32
                     text: "APPLY MANUAL DUTY (" + root.manualDutyPct + "%)"
                     enabledState: ctrl.manualFanSupported && !ctrl.controlOperationPending
+                    pendingState: ctrl.controlOperationPending && ctrl.controlOperationName.indexOf("fan") >= 0
                     onClicked: ctrl.setFanMode("manual", root.manualDutyPct)
                 }
 
@@ -110,12 +123,12 @@ Flickable {
                     height: 32
                     text: "MAX COOLING (100%)"
                     enabledState: ctrl.manualFanSupported && !ctrl.controlOperationPending
+                    pendingState: ctrl.controlOperationPending && ctrl.controlOperationName.indexOf("fan") >= 0
                     onClicked: ctrl.setFanMode("manual", 100)
                 }
 
                 AtelierSlider {
                     width: Math.min(280, parent.width)
-                    height: 40
                     label: ctrl.manualFanSupported ? "PWM Duty Override" : "PWM Override (Locked)"
                     unit: "%"
                     minValue: 25
@@ -147,6 +160,10 @@ Flickable {
                     id: curveEditor
                     width: parent.width
                     height: root.splitLower ? Math.max(270, sensorMod.implicitHeight - curveMod.headerHeight - 66) : 270
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.Chart
+                    Accessible.name: "Thermal Response Curve Schematic"
+                    Accessible.description: "Left/Right selects control point, Up/Down adjusts fan duty percentage, Shift+Left/Right adjusts temperature threshold."
                     points: ctrl.fanCurvePoints
                     currentTempC: ctrl.cpuPackageTempC
                     hardwarePwmSupported: ctrl.manualFanSupported
@@ -173,6 +190,7 @@ Flickable {
                               ? ("APPLY CURVE TARGET (" + curveEditor.interpolatedDutyPct + "%)")
                               : ("PREVIEW TARGET ONLY (" + curveEditor.interpolatedDutyPct + "%)")
                         enabledState: ctrl.manualFanSupported && !ctrl.controlOperationPending
+                        pendingState: ctrl.controlOperationPending && ctrl.controlOperationName.indexOf("fan") >= 0
                         primaryAccent: ctrl.manualFanSupported
                         onClicked: ctrl.setFanMode("curve", curveEditor.interpolatedDutyPct)
                     }
@@ -189,6 +207,18 @@ Flickable {
                 badgeText: ctrl.thermalSensorsModel.length + " SENSORS (RO)"
                 badgeColor: theme.statusInfo
                 contentSpacing: 6
+
+                Text {
+                    visible: ctrl.thermalSensorsModel.length === 0
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: root.telemetryUnavailable
+                          ? "Awaiting thermal zone and hwmon sensor readback..."
+                          : "No thermal diodes reported by kernel."
+                    font.family: theme.fontSans
+                    font.pixelSize: 11
+                    color: theme.textMuted
+                }
 
                 Repeater {
                     model: ctrl.thermalSensorsModel

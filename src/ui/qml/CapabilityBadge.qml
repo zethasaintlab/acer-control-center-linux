@@ -41,9 +41,11 @@ Rectangle {
     width: Math.min(root.maxWidth, badgeRow.implicitWidth + 14)
     radius: theme.radiusStructural
     clip: true
-    color: Qt.rgba(resolvedColor.r, resolvedColor.g, resolvedColor.b, theme.darkTheme ? 0.14 : 0.10)
+    color: Qt.rgba(resolvedColor.r, resolvedColor.g, resolvedColor.b, 0.08)
     border.width: 1
     border.color: resolvedColor
+    Accessible.role: Accessible.StaticText
+    Accessible.name: "Status: " + root.badgeText
 
     Row {
         id: badgeRow

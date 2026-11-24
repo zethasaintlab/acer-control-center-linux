@@ -19,6 +19,11 @@ Rectangle {
     clip: true
     activeFocusOnTab: root.interactive
     opacity: root.enabledState ? (root.pendingState ? 0.85 : 1.0) : 0.48
+    Accessible.role: Accessible.Button
+    Accessible.name: root.pendingState ? (root.text + " (pending)") : root.text
+    Accessible.pressed: mouseArea.pressed
+    Accessible.checkable: true
+    Accessible.checked: root.activeState
 
     color: {
         if (!root.enabledState) return theme.surfaceHeader;

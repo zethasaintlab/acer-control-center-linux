@@ -160,6 +160,11 @@ public:
     Q_PROPERTY(QString kbdHardwareExplanation READ kbdHardwareExplanation NOTIFY telemetryUpdated)
     Q_PROPERTY(QString kbdBackendKindId READ kbdBackendKindId NOTIFY telemetryUpdated)
     Q_PROPERTY(QString kbdControlModeBadge READ kbdControlModeBadge NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdDriverLastStatus READ kbdDriverLastStatus NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdDriverLastPreset READ kbdDriverLastPreset NOTIFY telemetryUpdated)
+    Q_PROPERTY(int kbdDriverLastBrightnessLevel READ kbdDriverLastBrightnessLevel NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdDriverLastPayloadHex READ kbdDriverLastPayloadHex NOTIFY telemetryUpdated)
+    Q_PROPERTY(QString kbdDriverLastAcpiReturnType READ kbdDriverLastAcpiReturnType NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdHardwareConnected READ kbdHardwareConnected NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdRgbSupported READ kbdRgbSupported NOTIFY telemetryUpdated)
     Q_PROPERTY(bool kbdSupportsPresetColors READ kbdSupportsPresetColors NOTIFY telemetryUpdated)
@@ -369,6 +374,11 @@ public:
     QString kbdHardwareExplanation() const { return m_snapshot.keyboardHw.hardwareExplanation; }
     QString kbdBackendKindId() const { return m_snapshot.keyboardHw.backendKindId; }
     QString kbdControlModeBadge() const { return m_snapshot.keyboardHw.controlModeBadge; }
+    QString kbdDriverLastStatus() const { return m_snapshot.keyboardHw.driverLastStatus; }
+    QString kbdDriverLastPreset() const { return m_snapshot.keyboardHw.driverLastPreset; }
+    int kbdDriverLastBrightnessLevel() const { return m_snapshot.keyboardHw.driverLastBrightnessLevel; }
+    QString kbdDriverLastPayloadHex() const { return m_snapshot.keyboardHw.driverLastPayloadHex; }
+    QString kbdDriverLastAcpiReturnType() const { return m_snapshot.keyboardHw.driverLastAcpiReturnType; }
     bool kbdHardwareConnected() const { return m_snapshot.keyboardHw.supportsBacklightBrightness; }
     bool kbdRgbSupported() const { return m_snapshot.keyboardHw.supportsRgbZones; }
     bool kbdSupportsPresetColors() const { return m_snapshot.keyboardHw.supportsPresetColors; }

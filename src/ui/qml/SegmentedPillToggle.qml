@@ -17,6 +17,10 @@ Rectangle {
     border.color: root.activeFocus ? theme.accentBorder : theme.borderSubtle
     activeFocusOnTab: root.enabledState
     opacity: root.enabledState ? 1.0 : 0.50
+    Accessible.role: Accessible.Button
+    Accessible.name: (root.rightActive ? root.rightLabel : root.leftLabel) + " (" + root.leftLabel + " / " + root.rightLabel + ")"
+    Accessible.checkable: true
+    Accessible.checked: root.rightActive
 
     Row {
         anchors.fill: parent

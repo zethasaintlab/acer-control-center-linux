@@ -99,20 +99,20 @@ QColor ThemeEngine::textSecondary() const {
     return m_darkTheme ? QColor(QStringLiteral("#B8C0C4")) : QColor(QStringLiteral("#3E454B"));
 }
 QColor ThemeEngine::textMuted() const {
-    return m_darkTheme ? QColor(QStringLiteral("#8C9398")) : QColor(QStringLiteral("#5D656C"));
+    return m_darkTheme ? QColor(QStringLiteral("#A0A7AC")) : QColor(QStringLiteral("#484F55"));
 }
 
 QColor ThemeEngine::statusNominal() const {
-    return m_darkTheme ? QColor(QStringLiteral("#A4E61D")) : QColor(QStringLiteral("#4A7A00"));
+    return m_darkTheme ? QColor(QStringLiteral("#A4E61D")) : QColor(QStringLiteral("#2E5000"));
 }
 QColor ThemeEngine::statusWarning() const {
-    return m_darkTheme ? QColor(QStringLiteral("#F5B82E")) : QColor(QStringLiteral("#A86400"));
+    return m_darkTheme ? QColor(QStringLiteral("#F5B82E")) : QColor(QStringLiteral("#724000"));
 }
 QColor ThemeEngine::statusCritical() const {
-    return m_darkTheme ? QColor(QStringLiteral("#E06C65")) : QColor(QStringLiteral("#C5283D"));
+    return m_darkTheme ? QColor(QStringLiteral("#F5958E")) : QColor(QStringLiteral("#9B1829"));
 }
 QColor ThemeEngine::statusInfo() const {
-    return m_darkTheme ? QColor(QStringLiteral("#2596FF")) : QColor(QStringLiteral("#0066CC"));
+    return m_darkTheme ? QColor(QStringLiteral("#64B9FF")) : QColor(QStringLiteral("#004899"));
 }
 QColor ThemeEngine::brandYellow() const {
     return QColor(QStringLiteral("#FFEA00"));
@@ -121,13 +121,13 @@ QColor ThemeEngine::industrialAmber() const {
     return QColor(QStringLiteral("#F5D328"));
 }
 QColor ThemeEngine::telemetryLime() const {
-    return m_darkTheme ? QColor(QStringLiteral("#A4E61D")) : QColor(QStringLiteral("#4A7A00"));
+    return m_darkTheme ? QColor(QStringLiteral("#A4E61D")) : QColor(QStringLiteral("#2E5000"));
 }
 QColor ThemeEngine::telemetryLimeBar() const {
     return QColor(QStringLiteral("#A4E61D"));
 }
 QColor ThemeEngine::technicalCyan() const {
-    return m_darkTheme ? QColor(QStringLiteral("#2596FF")) : QColor(QStringLiteral("#0066CC"));
+    return m_darkTheme ? QColor(QStringLiteral("#64B9FF")) : QColor(QStringLiteral("#004899"));
 }
 
 void ThemeEngine::setAccentSwatches(const QStringList& list) {

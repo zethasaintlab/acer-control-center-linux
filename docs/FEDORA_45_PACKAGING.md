@@ -3,7 +3,7 @@
 **Target Distribution:** Fedora Linux 45 (`fc45`)  
 **Target Desktop Environments:** KDE Plasma 6 (Wayland) & Hyprland (Wayland)  
 **Target Hardware:** Acer Aspire 7 A715-59G (`board_name: RTH`, `board_vendor: Kelilu_RTH`)  
-**Package License:** `GPL-3.0-or-later WITH GPL-3.0-linking-source-exception`
+**Package License:** `GPL-2.0-or-later AND (GPL-3.0-or-later WITH GPL-3.0-linking-source-exception) AND CC0-1.0`
 
 ---
 
@@ -342,4 +342,19 @@ sudo dnf5 downgrade ./build/rpmbuild/RPMS/x86_64/acer-control-center-1.0.0-1.fc4
 sudo systemctl daemon-reload
 sudo systemctl restart acer-control-daemon.service
 ```
-No persistent `/etc/modules-load.d/` or DKMS entry is registered by either the RPM or manual `insmod`, so unloading returns the kernel to stock unbound posture immediately.
+No persistent `/etc/modules-load.d/` or DKMS entry is registered by the RPM itself (`AUTOINSTALL="no"` in `driver/dkms.conf`), so unloading returns the kernel to stock unbound posture immediately. Notice that once `acer_clv0001_kbd.ko` is installed under `/lib/modules/<running-kver>/extra/` and `depmod -a` is run, Fedora's standard udev rule (`/usr/lib/udev/rules.d/80-drivers.rules`) resolves modalias `acpi:CLV0001:` via `modules.alias` (`alias acpi*:CLV0001:* acer_clv0001_kbd`, verified via `modprobe -R`) for that exact kernel only; booting into a newer upgraded kernel will leave `CLV0001:00` unbound unless rebuilt.
+
+### 5.9 Future Cross-Kernel Driver Distribution Strategy (DKMS vs. Fedora `akmods`)
+
+Because installing `/lib/modules/<kver>/extra/acer_clv0001_kbd.ko` manually does not survive Fedora kernel updates, automated cross-kernel packaging requires choosing either DKMS or Fedora `akmods`:
+
+| Criterion | Option A — Opt-In DKMS (`acer-control-center-kmod-dkms` + `driver/dkms.conf`) | Option B — Fedora `akmods` (`acer-control-center-kmod` / `kmodtool` SRP) |
+|---|---|---|
+| **Fedora 45 Ecosystem Fit** | Supported via Fedora `dkms` package (already stubbed by `driver/dkms.conf` + `driver/Makefile`). | Native Fedora/RPM Fusion standard; `akmodsd` produces versioned `kmod-acer-clv0001-<kver>` RPMs managed by DNF. |
+| **Operational Complexity** | Low: reuses existing `driver/dkms.conf` (changing `AUTOINSTALL="yes"` only inside an opt-in subpackage, keeping base RPM source-only). | Higher: requires separate `-kmod-common`, `akmod-*`, `kmodtool` RPM macro specs, and COPR/Fedora kmod build conventions. |
+| **Kernel Upgrade Behavior** | `dkms autoinstall` service builds on boot/install when `kernel-devel-<new-kver>` matches. | Builds binary `kmod-*.rpm` via `akmods` systemd/DNF hook and installs it into the RPM DB. |
+| **RPM DB Ownership & Rollback** | Built `.ko` sits outside RPM file tracking (`/var/lib/dkms/...` & `/lib/modules/.../extra/`); removed cleanly by `dkms remove` / `%preun`. | Cleanest RPM DB ownership (`rpm -qf` owns every `.ko`); uninstall/rollback happens through DNF. |
+| **Secure Boot MOK Signing** | Built-in `dkms.conf` + `/etc/dkms/framework.conf` MOK key enrollment (`/var/lib/dkms/mok.pub`). | Built-in `/etc/pki/akmods/` `kmodgenca` MOK enrollment. |
+| **API Breakage Failure Handling** | Fails build into `/var/lib/dkms/.../build/make.log`; leaves system booting safely with `CLV0001` in Preview Mode. | Fails akmod build log; leaves system booting safely with `CLV0001` in Preview Mode. |
+
+**Canonical Recommendation:** Use **Option B (`akmods`) as the canonical long-term Fedora / COPR distribution path** once published in an external Fedora repository (so generated `.ko` artifacts are RPM-owned, cleanly auditable, and rollback-safe via DNF), while keeping the main `acer-control-center` RPM **source-only** (`AUTOINSTALL="no"` in `driver/dkms.conf`, zero automatic kernel compilation or module loading unless the operator explicitly installs a separate `akmod` or opt-in DKMS package).

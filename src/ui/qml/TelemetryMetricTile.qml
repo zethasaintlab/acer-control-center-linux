@@ -21,6 +21,8 @@ Rectangle {
     color: theme.surfaceOverlay
     border.width: 1
     border.color: stale ? theme.statusWarning : theme.borderSubtle
+    Accessible.role: Accessible.StaticText
+    Accessible.name: root.label + ": " + (root.unavailable ? "Unavailable" : (root.valueText + (root.unitText.length > 0 ? (" " + root.unitText) : "")))
 
     // Left semantic telemetry register bar
     Rectangle {

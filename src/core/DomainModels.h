@@ -235,9 +235,14 @@ struct KeyboardHardwareState {
     int maxBrightness = 100;
     int currentBrightnessPct = 0;
     int discreteBrightnessLevels = 5;
-    QString currentPresetName = QStringLiteral("cyan");
-    int currentBrightnessLevel = 4;
-    QString lastPayloadHex = QStringLiteral("00 00 00 F0");
+    QString currentPresetName = QStringLiteral("unknown");
+    int currentBrightnessLevel = -1;
+    QString lastPayloadHex = QStringLiteral("UNAVAILABLE");
+    QString driverLastStatus = QStringLiteral("unavailable");
+    QString driverLastPreset = QStringLiteral("unknown");
+    int driverLastBrightnessLevel = -1;
+    QString driverLastPayloadHex = QStringLiteral("UNAVAILABLE");
+    QString driverLastAcpiReturnType = QStringLiteral("none");
     QString hardwareRoutingBadge;
     QString hardwareExplanation;
 };

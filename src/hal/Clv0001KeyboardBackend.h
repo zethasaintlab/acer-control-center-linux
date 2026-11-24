@@ -23,11 +23,11 @@ struct Clv0001Topology {
     QString statePath;
     QString presetsPath;
     bool dmiEligible = false;
-    QString lastAppliedStatus;
-    QString lastAppliedPreset;
-    int lastAppliedBrightnessLevel = 0;
-    QString lastPayloadHex;
-    QString lastAcpiReturnType;
+    QString lastAppliedStatus = QStringLiteral("unavailable");
+    QString lastAppliedPreset = QStringLiteral("unknown");
+    int lastAppliedBrightnessLevel = -1;
+    QString lastPayloadHex = QStringLiteral("UNAVAILABLE");
+    QString lastAcpiReturnType = QStringLiteral("none");
 };
 
 /**

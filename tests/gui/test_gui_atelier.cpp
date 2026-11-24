@@ -5,6 +5,7 @@
 #include <QDBusPendingCallWatcher>
 #include <QElapsedTimer>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -17,6 +18,8 @@
 #include "app/AsyncControlClient.h"
 #include "app/ControlCenterController.h"
 #include "app/ThemeEngine.h"
+#include "core/ColorScience.h"
+#include "core/ConfigStore.h"
 #include "daemon/DaemonServiceObject.h"
 #include "hal/SysfsRoot.h"
 #include "ui/FanCurveEditorItem.h"
@@ -369,6 +372,39 @@ private slots:
         QCOMPARE(controller.kbdPresetName(), QStringLiteral("white"));
         controller.selectKbdProfile(prevProfId);
         QCOMPARE(controller.kbdBrightnessLevel(), 3);
+        QTest::qWait(50);
+        controller.selectKbdPreset(QStringLiteral("cyan"));
+        controller.setKbdBrightnessLevel(4);
+        controller.applyKeyboardLightingToHardware();
+        QCOMPARE(controller.statusBannerIsError(), false);
+        QVERIFY(controller.waitForNextSnapshot(3000));
+        QCOMPARE(controller.kbdDriverLastStatus(), QStringLiteral("accepted_no_hw_readback"));
+        QCOMPARE(controller.kbdDriverLastPreset(), QStringLiteral("cyan"));
+        QCOMPARE(controller.kbdDriverLastBrightnessLevel(), 4);
+        QCOMPARE(controller.kbdDriverLastPayloadHex(), QStringLiteral("FF 00 C8 F0"));
+        QCOMPARE(controller.kbdPhysicalReadbackSupported(), false);
+
+        // Changing requested UI profile to Warm White must NOT alter reported driver-accepted cyan state
+        controller.selectKbdProfile(QStringLiteral("workstation_warm"));
+        QCOMPARE(controller.kbdPresetName(), QStringLiteral("white"));
+        QCOMPARE(controller.kbdDriverLastPreset(), QStringLiteral("cyan"));
+        QCOMPARE(controller.kbdDriverLastPayloadHex(), QStringLiteral("FF 00 C8 F0"));
+
+        // Switching back to MockPhysicalMirror must drop mock CLV0001 driver state cleanly with no stale leak
+        controller.telemetryCoordinator()->setSimulatedCollectionDelayMsForTest(80);
+        controller.refreshNow();
+        controller.switchHardwareMode(1);
+        controller.telemetryCoordinator()->setSimulatedCollectionDelayMsForTest(0);
+        QCOMPARE(controller.kbdDriverLastStatus(), QStringLiteral("unavailable"));
+        QCOMPARE(controller.kbdDriverLastPreset(), QStringLiteral("unknown"));
+        QVERIFY(controller.waitForNextSnapshot(3000));
+        QCOMPARE(controller.kbdDriverLastStatus(), QStringLiteral("unavailable"));
+        QCOMPARE(controller.kbdDriverLastPreset(), QStringLiteral("unknown"));
+        QCOMPARE(controller.kbdDriverLastBrightnessLevel(), -1);
+        QCOMPARE(controller.kbdDriverLastPayloadHex(), QStringLiteral("UNAVAILABLE"));
+
+        controller.switchHardwareMode(3);
+        QVERIFY(controller.waitForNextSnapshot(3000));
         QTest::qWait(50);
         controller.selectKbdPreset(QStringLiteral("off"));
         controller.applyKeyboardLightingToHardware();
@@ -727,6 +763,232 @@ private slots:
         QCoreApplication::processEvents();
         QImage lightCadImg = window->grabWindow();
         QVERIFY(!lightCadImg.isNull());
+    }
+
+    void testThemeEngineWcagContrastAllTokens() {
+        app::ThemeEngine theme;
+        for (bool dark : {true, false}) {
+            theme.setDarkTheme(dark);
+            const QList<QColor> backgrounds = dark
+                ? QList<QColor>{theme.surfacePrimary(), theme.surfaceElevated(), theme.surfaceOverlay()}
+                : QList<QColor>{theme.surfaceSunken(), theme.surfacePrimary(), theme.surfaceElevated(), theme.surfaceOverlay()};
+            const QList<QColor> foregrounds = {
+                theme.textPrimary(),
+                theme.textSecondary(),
+                theme.textMuted(),
+                theme.statusNominal(),
+                theme.statusWarning(),
+                theme.statusCritical(),
+                theme.statusInfo(),
+                theme.telemetryLime(),
+                theme.technicalCyan(),
+            };
+            for (const QColor& bg : backgrounds) {
+                for (const QColor& fg : foregrounds) {
+                    const double ratio = core::ColorScience::contrastRatio(fg, bg);
+                    QVERIFY2(ratio >= 4.5,
+                             qPrintable(QStringLiteral("dark=%1 fg=%2 bg=%3 cr=%4")
+                                            .arg(dark)
+                                            .arg(fg.name(), bg.name())
+                                            .arg(ratio, 0, 'f', 2)));
+                }
+            }
+
+            // TelemetryStateBanner pill text ink (darkInk in Dark mode, #FFFFFF in Light mode)
+            const QColor pillInk = dark ? theme.darkInk() : QColor(QStringLiteral("#FFFFFF"));
+            for (const QColor& stateBg : {theme.statusNominal(), theme.statusWarning(), theme.statusCritical(), theme.statusInfo()}) {
+                const double pillCr = core::ColorScience::contrastRatio(pillInk, stateBg);
+                QVERIFY2(pillCr >= 4.5,
+                         qPrintable(QStringLiteral("pill dark=%1 ink=%2 bg=%3 cr=%4")
+                                        .arg(dark)
+                                        .arg(pillInk.name(), stateBg.name())
+                                        .arg(pillCr, 0, 'f', 2)));
+            }
+        }
+    }
+
+    void testStage38UiComponentAndControllerRegressions() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+        qputenv("ACC_CONFIG_DIR", tempDir.path().toUtf8());
+
+        app::ThemeEngine theme;
+        app::ControlCenterController controller(&theme);
+        controller.switchHardwareMode(2);
+        QVERIFY(controller.waitForNextSnapshot(3000));
+
+        // 1. AtelierSlider: binding preservation + drag commit-on-release + keyboard navigation
+        QQmlEngine sliderEngine;
+        sliderEngine.rootContext()->setContextProperty(QStringLiteral("theme"), &theme);
+        QQmlComponent sliderComp(&sliderEngine);
+        const QByteArray cleanSliderHostQml = R"QML(
+import QtQuick 2.15
+import "qrc:/qml/qml" as Ui
+
+Item {
+    width: 320
+    height: 80
+    property int backingVal: 20
+    property int movedCount: 0
+    property int commitCount: 0
+    property int lastCommitted: -1
+    Ui.AtelierSlider {
+        id: s
+        objectName: "testSlider"
+        width: 300
+        label: "Brightness"
+        minValue: 0
+        maxValue: 100
+        stepSize: 2
+        value: parent.backingVal
+        onValueMoved: parent.movedCount++
+        onValueCommitted: function(v) {
+            parent.commitCount++
+            parent.lastCommitted = v
+            parent.backingVal = v
+        }
+    }
+}
+)QML";
+        sliderComp.setData(cleanSliderHostQml, QUrl(QStringLiteral("qrc:/qml/qml/SliderTestHost.qml")));
+        QVERIFY2(!sliderComp.isError(), qPrintable(sliderComp.errorString()));
+
+        QQuickWindow hostWin;
+        hostWin.resize(360, 120);
+        auto* hostItem = qobject_cast<QQuickItem*>(sliderComp.create(sliderEngine.rootContext()));
+        QVERIFY(hostItem != nullptr);
+        hostItem->setParentItem(hostWin.contentItem());
+        hostWin.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&hostWin));
+
+        auto* sliderItem = hostItem->findChild<QQuickItem*>(QStringLiteral("testSlider"));
+        QVERIFY(sliderItem != nullptr);
+        QCOMPARE(sliderItem->property("displayValue").toInt(), 20);
+
+        // Drag across multiple coordinates: movedCount increments, commitCount stays 0 until mouseRelease
+        const int yMid = static_cast<int>(sliderItem->height() - 10);
+        QTest::mousePress(&hostWin, Qt::LeftButton, Qt::NoModifier, QPoint(40, yMid));
+        QTest::mouseMove(&hostWin, QPoint(120, yMid));
+        QTest::mouseMove(&hostWin, QPoint(210, yMid));
+        QCoreApplication::processEvents();
+        QVERIFY(hostItem->property("movedCount").toInt() >= 2);
+        QCOMPARE(hostItem->property("commitCount").toInt(), 0);
+        QVERIFY(sliderItem->property("displayValue").toInt() >= 60);
+
+        QTest::mouseRelease(&hostWin, Qt::LeftButton, Qt::NoModifier, QPoint(210, yMid));
+        QCoreApplication::processEvents();
+        QCOMPARE(hostItem->property("commitCount").toInt(), 1);
+        QCOMPARE(hostItem->property("lastCommitted").toInt(), hostItem->property("backingVal").toInt());
+
+        // Keyboard PageUp / Home / End
+        sliderItem->forceActiveFocus();
+        QTest::keyClick(&hostWin, Qt::Key_Home);
+        QCOMPARE(hostItem->property("lastCommitted").toInt(), 0);
+        QTest::keyClick(&hostWin, Qt::Key_PageUp);
+        QCOMPARE(hostItem->property("lastCommitted").toInt(), 10);
+        QTest::keyClick(&hostWin, Qt::Key_End);
+        QCOMPARE(hostItem->property("lastCommitted").toInt(), 100);
+
+        // Mutating backingVal externally must still propagate because declarative `value:` binding stayed intact
+        hostItem->setProperty("backingVal", 42);
+        QCoreApplication::processEvents();
+        QCOMPARE(sliderItem->property("value").toInt(), 42);
+        QCOMPARE(sliderItem->property("displayValue").toInt(), 42);
+
+        // 2. FanCurveEditorItem Shift+Left/Right adjusts tempC, PageUp adjusts dutyPct, Home/End navigates
+        ui::FanCurveEditorItem curveEditor;
+        curveEditor.setSize(QSizeF(320, 200));
+        const int origTemp0 = curveEditor.points().at(0).toMap().value(QStringLiteral("tempC")).toInt();
+        QKeyEvent shiftRight(QEvent::KeyPress, Qt::Key_Right, Qt::ShiftModifier);
+        QCoreApplication::sendEvent(&curveEditor, &shiftRight);
+        QVERIFY(curveEditor.points().at(0).toMap().value(QStringLiteral("tempC")).toInt() > origTemp0);
+        QKeyEvent endKey(QEvent::KeyPress, Qt::Key_End, Qt::NoModifier);
+        QCoreApplication::sendEvent(&curveEditor, &endKey);
+        QKeyEvent homeKey(QEvent::KeyPress, Qt::Key_Home, Qt::NoModifier);
+        QCoreApplication::sendEvent(&curveEditor, &homeKey);
+
+        // 3. DiagnosticsView provenance & ThermalView writable fansModel + full slider height in QML
+        QQmlApplicationEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("theme"), &theme);
+        engine.rootContext()->setContextProperty(QStringLiteral("ctrl"), &controller);
+        engine.load(QUrl(QStringLiteral("qrc:/qml/qml/Main.qml")));
+        QVERIFY(!engine.rootObjects().isEmpty());
+        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        QVERIFY(window != nullptr);
+
+        controller.setCurrentTabIndex(6); // DiagnosticsView
+        QCoreApplication::processEvents();
+        auto* loader = window->findChild<QObject*>(QStringLiteral("workspaceLoader"));
+        QVERIFY(loader != nullptr);
+        auto* diagPage = loader->property("item").value<QObject*>();
+        QVERIFY(diagPage != nullptr);
+        auto* diagMod = diagPage->findChild<QObject*>(QStringLiteral("diagnosticsIdentityModule"));
+        QVERIFY(diagMod != nullptr);
+        QCOMPARE(diagMod->property("provenanceText").toString(), QStringLiteral("fixture"));
+
+        // Verify physical-hardware non-mock DiagnosticsView provenance shows "DMI + sysfs" (not stuck on "fixture")
+        QQmlEngine diagTestEngine;
+        diagTestEngine.rootContext()->setContextProperty(QStringLiteral("theme"), &theme);
+        QQmlComponent diagComp(&diagTestEngine);
+        const QByteArray physDiagHostQml = R"QML(
+import QtQuick 2.15
+import "qrc:/qml/qml" as Ui
+
+Item {
+    width: 900
+    height: 700
+    QtObject {
+        id: fakeCtrl
+        property bool mockModeActive: false
+        property bool telemetryAvailable: true
+        property string productTitle: "Aspire A715-59G"
+        property string boardTitle: "Kelilu_RTH"
+        property string biosTitle: "V1.17"
+        property string odmPlatformNote: "Acer Kelilu_RTH"
+        property string kernelRelease: "7.3.3-300.fc45.x86_64"
+        property bool daemonReachable: false
+        property string acpiDevicesJoined: "CLV0001:00"
+        property string wmiGuidsJoined: "ABBC0F6D"
+        property int hardwareModeIndex: 0
+        property var capabilitiesModel: []
+        property var diagnosticLogsModel: []
+    }
+    property alias ctrl: fakeCtrl
+    Ui.DiagnosticsView {
+        anchors.fill: parent
+    }
+}
+)QML";
+        diagComp.setData(physDiagHostQml, QUrl(QStringLiteral("qrc:/qml/qml/DiagPhysTestHost.qml")));
+        QVERIFY2(!diagComp.isError(), qPrintable(diagComp.errorString()));
+        std::unique_ptr<QObject> diagHostObj(diagComp.create(diagTestEngine.rootContext()));
+        QVERIFY(diagHostObj != nullptr);
+        auto* physDiagMod = diagHostObj->findChild<QObject*>(QStringLiteral("diagnosticsIdentityModule"));
+        QVERIFY(physDiagMod != nullptr);
+        QCOMPARE(physDiagMod->property("provenanceText").toString(), QStringLiteral("DMI + sysfs"));
+        QCOMPARE(physDiagMod->property("badgeText").toString(), QStringLiteral("PHYSICAL HARDWARE"));
+
+        controller.setCurrentTabIndex(2); // ThermalView
+        QCoreApplication::processEvents();
+        QVariantList fans = controller.fansModel();
+        QVERIFY(!fans.isEmpty());
+        QVERIFY(fans.first().toMap().contains(QStringLiteral("writable")));
+
+        // 4. importProfileBundle syncs customAccentSwatches into ThemeEngine
+        const QString customBundle = tempDir.filePath(QStringLiteral("custom-swatches-bundle.json"));
+        {
+            core::ConfigStore seedStore(tempDir.path());
+            core::AppSettings s = core::ConfigStore::defaultSettings();
+            s.accentColorHex = QStringLiteral("#2596FF");
+            s.customAccentSwatches = {QStringLiteral("#2596FF"), QStringLiteral("#ABCDEF")};
+            QString err;
+            QVERIFY(seedStore.exportProfileBundleToFile(s, customBundle, &err));
+        }
+        QVERIFY(controller.importProfileBundle(customBundle));
+        QCOMPARE(theme.accentHex(), QStringLiteral("#2596FF"));
+        QCOMPARE(theme.accentSwatches(), (QStringList{QStringLiteral("#2596FF"), QStringLiteral("#ABCDEF")}));
+
+        qputenv("ACC_CONFIG_DIR", m_tempConfigDir.path().toUtf8());
     }
 };
 

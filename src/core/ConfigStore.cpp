@@ -317,6 +317,43 @@ bool ConfigStore::deserializeAndValidateSettings(const QJsonObject& obj, AppSett
     s.launchAtLogin = obj.value(QStringLiteral("launch_at_login")).toBool(s.launchAtLogin);
     s.enableNotifications = obj.value(QStringLiteral("enable_notifications")).toBool(s.enableNotifications);
 
+    const auto parseValidatedSwatchArray = [&](const QString& key, QStringList& target) {
+        if (!obj.contains(key)) {
+            return;
+        }
+        if (!obj.value(key).isArray()) {
+            if (outWarning) {
+                *outWarning = QStringLiteral("Invalid %1 array; retained default swatches.").arg(key);
+            }
+            return;
+        }
+        QStringList parsed;
+        const QJsonArray arr = obj.value(key).toArray();
+        for (const QJsonValue& val : arr) {
+            if (!val.isString()) {
+                continue;
+            }
+            RgbColor swatchRgb;
+            if (!ColorScience::parseHexToRgb(val.toString(), swatchRgb)) {
+                continue;
+            }
+            const QString canonicalHex = ColorScience::rgbToHex(swatchRgb);
+            if (!parsed.contains(canonicalHex)) {
+                parsed.append(canonicalHex);
+                if (parsed.size() >= 12) {
+                    break;
+                }
+            }
+        }
+        if (!parsed.isEmpty()) {
+            target = parsed;
+        } else if (!arr.isEmpty() && outWarning) {
+            *outWarning = QStringLiteral("No valid hex colors in %1; retained default swatches.").arg(key);
+        }
+    };
+    parseValidatedSwatchArray(QStringLiteral("custom_accent_swatches"), s.customAccentSwatches);
+    parseValidatedSwatchArray(QStringLiteral("custom_keyboard_swatches"), s.customKeyboardSwatches);
+
     const QStringList validProfileIds = {
         QStringLiteral("quiet"), QStringLiteral("balanced"),
         QStringLiteral("performance"), QStringLiteral("custom")

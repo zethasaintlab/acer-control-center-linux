@@ -186,6 +186,11 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
     state.clv0001Status = clvTopo.status;
     state.clv0001DriverBound = clvTopo.driverBound;
     state.lastPayloadHex = clvTopo.lastPayloadHex;
+    state.driverLastStatus = clvTopo.lastAppliedStatus;
+    state.driverLastPreset = clvTopo.lastAppliedPreset;
+    state.driverLastBrightnessLevel = clvTopo.lastAppliedBrightnessLevel;
+    state.driverLastPayloadHex = clvTopo.lastPayloadHex;
+    state.driverLastAcpiReturnType = clvTopo.lastAcpiReturnType;
 
     const QString ledPath = findFirstKeyboardLedPath();
 
@@ -246,15 +251,11 @@ core::KeyboardHardwareState HardwareDiscovery::probeKeyboardHardware(const core:
         state.zoneCount = 1;
         state.maxBrightness = 4;
         state.discreteBrightnessLevels = 5;
-        state.currentPresetName = (clvTopo.lastAppliedPreset == QLatin1String("none") ||
-                                   clvTopo.lastAppliedPreset == QLatin1String("custom_rgb") ||
-                                   clvTopo.lastAppliedPreset.isEmpty())
-                                      ? QStringLiteral("cyan")
-                                      : clvTopo.lastAppliedPreset;
-        state.currentBrightnessLevel = (clvTopo.lastAppliedStatus == QLatin1String("uninitialized"))
-                                           ? 4
-                                           : clvTopo.lastAppliedBrightnessLevel;
-        state.currentBrightnessPct = Clv0001KeyboardBackend::brightnessLevelToPct(state.currentBrightnessLevel);
+        state.currentPresetName = clvTopo.lastAppliedPreset;
+        state.currentBrightnessLevel = clvTopo.lastAppliedBrightnessLevel;
+        state.currentBrightnessPct = (clvTopo.lastAppliedBrightnessLevel >= 0)
+                                         ? Clv0001KeyboardBackend::brightnessLevelToPct(clvTopo.lastAppliedBrightnessLevel)
+                                         : 0;
         state.capabilityState = core::CapabilityState::PartiallySupported;
         state.hardwareRoutingBadge = clvTopo.supportsCustomRgb
                                          ? QStringLiteral(

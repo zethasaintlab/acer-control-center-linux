@@ -217,16 +217,28 @@ int main(int argc, char* argv[]) {
         kbdObj.insert(QStringLiteral("supportsPresetColors"), controller.kbdSupportsPresetColors());
         kbdObj.insert(QStringLiteral("supportsArbitraryRgb"), controller.kbdSupportsArbitraryRgb());
         kbdObj.insert(QStringLiteral("physicalReadbackSupported"), controller.kbdPhysicalReadbackSupported());
-        kbdObj.insert(QStringLiteral("presetName"), controller.kbdPresetName());
-        kbdObj.insert(QStringLiteral("brightnessLevel"), controller.kbdBrightnessLevel());
-        kbdObj.insert(QStringLiteral("packetHex"), controller.kbdFirmwarePacketHex());
+        kbdObj.insert(QStringLiteral("physicalLedStateVerified"), controller.kbdPhysicalReadbackSupported());
+        kbdObj.insert(QStringLiteral("physicalLedStateStatus"),
+                      controller.kbdPhysicalReadbackSupported()
+                          ? QStringLiteral("verified_sysfs_readback")
+                          : QStringLiteral("unsupported_no_hw_readback"));
+        kbdObj.insert(QStringLiteral("driverAcceptedStatus"), controller.kbdDriverLastStatus());
+        kbdObj.insert(QStringLiteral("driverAcceptedPreset"), controller.kbdDriverLastPreset());
+        kbdObj.insert(QStringLiteral("driverAcceptedBrightnessLevel"), controller.kbdDriverLastBrightnessLevel());
+        kbdObj.insert(QStringLiteral("driverAcceptedPayloadHex"), controller.kbdDriverLastPayloadHex());
+        kbdObj.insert(QStringLiteral("driverAcceptedAcpiReturnType"), controller.kbdDriverLastAcpiReturnType());
+        kbdObj.insert(QStringLiteral("requestedActiveProfileId"), controller.activeKbdProfileId());
+        kbdObj.insert(QStringLiteral("requestedEnabled"), controller.kbdEnabled());
+        kbdObj.insert(QStringLiteral("requestedPresetName"), controller.kbdPresetName());
+        kbdObj.insert(QStringLiteral("requestedBrightnessLevel"), controller.kbdBrightnessLevel());
+        kbdObj.insert(QStringLiteral("requestedPacketHex"), controller.kbdFirmwarePacketHex());
         kbdObj.insert(QStringLiteral("clv0001DevicePresent"), clvTopo.devicePresent);
         kbdObj.insert(QStringLiteral("clv0001AcpiPath"), clvTopo.acpiPath);
         kbdObj.insert(QStringLiteral("clv0001Status"), clvTopo.status);
         kbdObj.insert(QStringLiteral("clv0001DriverBound"), clvTopo.driverBound);
         kbdObj.insert(QStringLiteral("clv0001DmiEligible"), clvTopo.dmiEligible);
-        kbdObj.insert(QStringLiteral("clv0001LastStatus"), clvTopo.lastAppliedStatus);
-        kbdObj.insert(QStringLiteral("clv0001LastAcpiReturnType"), clvTopo.lastAcpiReturnType);
+        kbdObj.insert(QStringLiteral("clv0001LastStatus"), controller.kbdDriverLastStatus());
+        kbdObj.insert(QStringLiteral("clv0001LastAcpiReturnType"), controller.kbdDriverLastAcpiReturnType());
         root.insert(QStringLiteral("keyboard"), kbdObj);
 
         root.insert(QStringLiteral("capabilities"), QJsonArray::fromVariantList(controller.capabilitiesModel()));

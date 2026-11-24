@@ -1433,6 +1433,171 @@ private Q_SLOTS:
 
         hal::SysfsRoot::instance().setMode(hal::HardwareMode::PhysicalSystem);
     }
+
+    void testClv0001DriverStateProvenanceAndFallback() {
+        auto& root = hal::SysfsRoot::instance();
+
+        // 1. Unbound CLV0001 (MockPhysicalMirror) must report unavailable/unknown, never white/cyan
+        root.setMode(hal::HardwareMode::MockPhysicalMirror);
+        const core::DmiIdentity mirrorDmi = hal::HardwareDiscovery::probeDmiAndWmi();
+        const core::KeyboardHardwareState unboundState = hal::HardwareDiscovery::probeKeyboardHardware(mirrorDmi);
+        QCOMPARE(unboundState.clv0001DriverBound, false);
+        QCOMPARE(unboundState.driverLastStatus, QStringLiteral("unavailable"));
+        QCOMPARE(unboundState.driverLastPreset, QStringLiteral("unknown"));
+        QCOMPARE(unboundState.driverLastBrightnessLevel, -1);
+        QCOMPARE(unboundState.driverLastPayloadHex, QStringLiteral("UNAVAILABLE"));
+        QCOMPARE(unboundState.currentPresetName, QStringLiteral("unknown"));
+        QCOMPARE(unboundState.currentBrightnessLevel, -1);
+        QCOMPARE(unboundState.independentHwReadback, false);
+
+        // 2. Bound but uninitialized CLV0001 driver preserves uninitialized/none/0 cleanly
+        root.setMode(hal::HardwareMode::MockClv0001DriverActive);
+        const core::DmiIdentity clvDmi = hal::HardwareDiscovery::probeDmiAndWmi();
+        const core::KeyboardHardwareState initState = hal::HardwareDiscovery::probeKeyboardHardware(clvDmi);
+        QCOMPARE(initState.clv0001DriverBound, true);
+        QCOMPARE(initState.driverLastStatus, QStringLiteral("uninitialized"));
+        QCOMPARE(initState.driverLastPreset, QStringLiteral("none"));
+        QCOMPARE(initState.driverLastBrightnessLevel, 0);
+        QCOMPARE(initState.driverLastPayloadHex, QStringLiteral("00 00 00 F0"));
+        QCOMPARE(initState.currentPresetName, QStringLiteral("none"));
+        QCOMPARE(initState.currentBrightnessLevel, 0);
+
+        // 3. Accepted cyan 4 preserves exact driver-accepted provenance without claiming HW readback
+        const QString statePath =
+            root.resolvePath(QStringLiteral("/sys/devices/LNXSYSTM:00/LNXSYBUS:00/CLV0001:00/clv0001_kbd_state"));
+        {
+            QFile sf(statePath);
+            QVERIFY(sf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            sf.write("status=accepted_no_hw_readback\n"
+                     "preset=cyan\n"
+                     "brightness_level=4\n"
+                     "payload_grb=FF 00 C8 F0\n"
+                     "acpi_return_type=integer\n"
+                     "physical_readback=unsupported\n");
+        }
+        const core::KeyboardHardwareState cyanState = hal::HardwareDiscovery::probeKeyboardHardware(clvDmi);
+        QCOMPARE(cyanState.driverLastStatus, QStringLiteral("accepted_no_hw_readback"));
+        QCOMPARE(cyanState.driverLastPreset, QStringLiteral("cyan"));
+        QCOMPARE(cyanState.driverLastBrightnessLevel, 4);
+        QCOMPARE(cyanState.driverLastPayloadHex, QStringLiteral("FF 00 C8 F0"));
+        QCOMPARE(cyanState.driverLastAcpiReturnType, QStringLiteral("integer"));
+        QCOMPARE(cyanState.currentPresetName, QStringLiteral("cyan"));
+        QCOMPARE(cyanState.currentBrightnessLevel, 4);
+        QCOMPARE(cyanState.independentHwReadback, false);
+
+        // 4. custom_rgb state is preserved faithfully rather than rewritten to cyan
+        {
+            QFile sf(statePath);
+            QVERIFY(sf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            sf.write("status=accepted_no_hw_readback\n"
+                     "preset=custom_rgb\n"
+                     "brightness_level=4\n"
+                     "payload_grb=A7 12 E3 F0\n"
+                     "acpi_return_type=integer\n"
+                     "physical_readback=unsupported\n");
+        }
+        const core::KeyboardHardwareState rgbState = hal::HardwareDiscovery::probeKeyboardHardware(clvDmi);
+        QCOMPARE(rgbState.driverLastPreset, QStringLiteral("custom_rgb"));
+        QCOMPARE(rgbState.driverLastPayloadHex, QStringLiteral("A7 12 E3 F0"));
+
+        // 5. Invalid/malformed/empty clv0001_kbd_state never leaks default cyan or white
+        {
+            QFile sf(statePath);
+            QVERIFY(sf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            sf.write("status=accepted_no_hw_readback\n"
+                     "preset=\n"
+                     "brightness_level=99\n"
+                     "payload_grb=BOGUS\n");
+        }
+        const core::KeyboardHardwareState badFieldsState = hal::HardwareDiscovery::probeKeyboardHardware(clvDmi);
+        QCOMPARE(badFieldsState.driverLastStatus, QStringLiteral("accepted_no_hw_readback"));
+        QCOMPARE(badFieldsState.driverLastPreset, QStringLiteral("unknown"));
+        QCOMPARE(badFieldsState.driverLastBrightnessLevel, -1);
+        QCOMPARE(badFieldsState.driverLastPayloadHex, QStringLiteral("INVALID"));
+
+        {
+            QFile sf(statePath);
+            QVERIFY(sf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            sf.write("");
+        }
+        const core::KeyboardHardwareState emptyState = hal::HardwareDiscovery::probeKeyboardHardware(clvDmi);
+        QCOMPARE(emptyState.driverLastStatus, QStringLiteral("unavailable"));
+        QCOMPARE(emptyState.driverLastPreset, QStringLiteral("unknown"));
+        QCOMPARE(emptyState.driverLastBrightnessLevel, -1);
+        QCOMPARE(emptyState.driverLastPayloadHex, QStringLiteral("UNAVAILABLE"));
+
+        root.setMode(hal::HardwareMode::PhysicalSystem);
+    }
+
+    void testConfigStoreCustomSwatchesPersistenceAndValidation() {
+        QTemporaryDir tempDir;
+        QVERIFY(tempDir.isValid());
+
+        core::ConfigStore store(tempDir.path());
+        core::AppSettings settings = core::ConfigStore::defaultSettings();
+        settings.customAccentSwatches = {
+            QStringLiteral("#112233"),
+            QStringLiteral("#aabbcc"),
+            QStringLiteral("#AABBCC"),
+            QStringLiteral("NOT_HEX"),
+            QStringLiteral("#FFEA00")
+        };
+        settings.customKeyboardSwatches = {
+            QStringLiteral("#00c8f0"),
+            QStringLiteral("#123456"),
+            QStringLiteral("#00C8F0")
+        };
+
+        QString err;
+        QVERIFY(store.saveSettings(settings, &err));
+
+        QString warn;
+        const core::AppSettings loaded = store.loadSettings(&warn);
+        QCOMPARE(loaded.customAccentSwatches, (QStringList{QStringLiteral("#112233"), QStringLiteral("#AABBCC"), QStringLiteral("#FFEA00")}));
+        QCOMPARE(loaded.customKeyboardSwatches, (QStringList{QStringLiteral("#00C8F0"), QStringLiteral("#123456")}));
+
+        // Bundle export/import must also preserve custom swatches
+        const QString bundlePath = tempDir.filePath(QStringLiteral("swatch-bundle.json"));
+        QVERIFY(store.exportProfileBundleToFile(loaded, bundlePath, &err));
+        core::AppSettings imported;
+        QVERIFY(store.importProfileBundleFromFile(bundlePath, imported, &err));
+        QCOMPARE(imported.customAccentSwatches, loaded.customAccentSwatches);
+        QCOMPARE(imported.customKeyboardSwatches, loaded.customKeyboardSwatches);
+
+        // Invalid or legacy missing swatch arrays fall back safely to defaults without breaking schema
+        QFile sf(store.settingsFilePath());
+        QVERIFY(sf.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        sf.write("{\"schema_version\":1,\"accent_color_hex\":\"#2596FF\","
+                 "\"custom_accent_swatches\":[\"BADHEX\",123],"
+                 "\"custom_keyboard_swatches\":\"not-an-array\"}");
+        sf.close();
+
+        QString fallbackWarn;
+        const core::AppSettings recovered = store.loadSettings(&fallbackWarn);
+        const core::AppSettings defaults = core::ConfigStore::defaultSettings();
+        QVERIFY(!fallbackWarn.isEmpty());
+        QCOMPARE(recovered.accentColorHex, QStringLiteral("#2596FF"));
+        QCOMPARE(recovered.customAccentSwatches, defaults.customAccentSwatches);
+        QCOMPARE(recovered.customKeyboardSwatches, defaults.customKeyboardSwatches);
+
+        // Verify ColorScience WCAG AA accent derivation against worst card surfaces in both modes
+        const QStringList checkSwatches = {
+            QStringLiteral("#FFEA00"), QStringLiteral("#A4E61D"), QStringLiteral("#F5D328"),
+            QStringLiteral("#2596FF"), QStringLiteral("#F5B82E"), QStringLiteral("#9B6BFF"),
+            QStringLiteral("#E06C65"), QStringLiteral("#68C938"), QStringLiteral("#3B82F6")
+        };
+        for (bool dark : {true, false}) {
+            const QColor worstBg = dark ? QColor(QStringLiteral("#333837")) : QColor(QStringLiteral("#C5CDD2"));
+            const QColor primaryBg = dark ? QColor(QStringLiteral("#222524")) : QColor(QStringLiteral("#D8DCDF"));
+            for (const QString& hex : checkSwatches) {
+                const auto tok = core::ColorScience::deriveAccessibleAccentTokens(QColor(hex), dark);
+                QVERIFY2(tok.wcagAaNormal, qPrintable(hex));
+                QVERIFY2(core::ColorScience::contrastRatio(tok.readableOnSurface, primaryBg) >= 4.5, qPrintable(hex));
+                QVERIFY2(core::ColorScience::contrastRatio(tok.readableOnSurface, worstBg) >= 4.5, qPrintable(hex));
+                QVERIFY2(core::ColorScience::contrastRatio(tok.onAccentText, tok.primary) >= 4.5, qPrintable(hex));
+            }
+        }
+    }
 };
 
 QTEST_MAIN(TestCoreAndHal)

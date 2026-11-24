@@ -46,6 +46,11 @@ QMap<QString, QString> parseKeyValueState(const QString& stateText) {
     return kv;
 }
 
+bool isValidGrbHexPayload(const QString& payloadHex) {
+    static const QRegularExpression kGrbRegex(QStringLiteral("^[0-9A-F]{2} [0-9A-F]{2} [0-9A-F]{2} F0$"));
+    return kGrbRegex.match(payloadHex.trimmed()).hasMatch();
+}
+
 } // namespace
 
 const std::vector<core::Clv0001PresetInfo>& Clv0001KeyboardBackend::verifiedPresets() {
@@ -337,15 +342,34 @@ Clv0001Topology Clv0001KeyboardBackend::probeTopology(const core::DmiIdentity& d
             topo.supportsCustomRgb = (presetsKv.value(QStringLiteral("supports_custom_rgb")) == QLatin1String("1"));
         }
 
-        const QString stateText = SysfsRoot::readFileTrimmed(topo.statePath);
+        bool readOk = false;
+        const QString stateText = SysfsRoot::readFileTrimmed(topo.statePath, &readOk);
         const QMap<QString, QString> kv = parseKeyValueState(stateText);
-        topo.lastAppliedStatus = kv.value(QStringLiteral("status"), QStringLiteral("uninitialized"));
-        topo.lastAppliedPreset = kv.value(QStringLiteral("preset"), QStringLiteral("none"));
-        bool okBri = false;
-        const int briLvl = kv.value(QStringLiteral("brightness_level")).toInt(&okBri);
-        topo.lastAppliedBrightnessLevel = okBri ? std::clamp(briLvl, 0, 4) : 0;
-        topo.lastPayloadHex = kv.value(QStringLiteral("payload_grb"), QStringLiteral("00 00 00 F0"));
-        topo.lastAcpiReturnType = kv.value(QStringLiteral("acpi_return_type"), QStringLiteral("none"));
+        const QString rawStatus = kv.value(QStringLiteral("status")).trimmed();
+        if (!readOk || rawStatus.isEmpty()) {
+            topo.lastAppliedStatus = QStringLiteral("unavailable");
+            topo.lastAppliedPreset = QStringLiteral("unknown");
+            topo.lastAppliedBrightnessLevel = -1;
+            topo.lastPayloadHex = QStringLiteral("UNAVAILABLE");
+            topo.lastAcpiReturnType = QStringLiteral("none");
+        } else {
+            topo.lastAppliedStatus = rawStatus;
+            const QString rawPreset = kv.value(QStringLiteral("preset")).trimmed();
+            topo.lastAppliedPreset = rawPreset.isEmpty() ? QStringLiteral("unknown") : rawPreset;
+            bool okBri = false;
+            const int briLvl = kv.value(QStringLiteral("brightness_level")).trimmed().toInt(&okBri);
+            topo.lastAppliedBrightnessLevel = (okBri && briLvl >= 0 && briLvl <= 4) ? briLvl : -1;
+            const QString rawPayload = kv.value(QStringLiteral("payload_grb")).trimmed().toUpper();
+            if (isValidGrbHexPayload(rawPayload)) {
+                topo.lastPayloadHex = rawPayload;
+            } else if (rawPayload.isEmpty()) {
+                topo.lastPayloadHex = QStringLiteral("UNAVAILABLE");
+            } else {
+                topo.lastPayloadHex = QStringLiteral("INVALID");
+            }
+            const QString rawRetType = kv.value(QStringLiteral("acpi_return_type")).trimmed();
+            topo.lastAcpiReturnType = rawRetType.isEmpty() ? QStringLiteral("none") : rawRetType;
+        }
     }
 
     return topo;
@@ -362,11 +386,6 @@ void Clv0001KeyboardBackend::resetRateLimiterForTesting() {
 }
 
 namespace {
-
-bool isValidGrbHexPayload(const QString& payloadHex) {
-    static const QRegularExpression kGrbRegex(QStringLiteral("^[0-9A-F]{2} [0-9A-F]{2} [0-9A-F]{2} F0$"));
-    return kGrbRegex.match(payloadHex.trimmed()).hasMatch();
-}
 
 core::ControlResult executeValidatedClv0001Write(
     const Clv0001Topology& topo,

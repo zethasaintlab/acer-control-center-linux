@@ -24,7 +24,13 @@ Flickable {
             width: parent.width
             indexCode: "01"
             title: "ORTHOGRAPHIC CHASSIS DECK // " + ctrl.kbdControlModeBadge
-            provenanceText: "PACKET GRB [" + ctrl.kbdFirmwarePacketHex + "]"
+            provenanceText: "REQUESTED GRB [" + ctrl.kbdFirmwarePacketHex + "]"
+                            + (ctrl.kbdHardwareConnected
+                               ? (" · DRIVER STATE: "
+                                  + ctrl.kbdDriverLastPreset.toUpperCase()
+                                  + " L" + (ctrl.kbdDriverLastBrightnessLevel >= 0 ? ctrl.kbdDriverLastBrightnessLevel : "?")
+                                  + " [" + ctrl.kbdDriverLastStatus + "]")
+                               : "")
             badgeText: ctrl.kbdCapabilityBadge
             hazardMode: !ctrl.kbdPhysicalReadbackSupported
             contentSpacing: 10
@@ -348,6 +354,8 @@ Flickable {
                         font.family: theme.fontMono; font.pixelSize: 12
                         color: hexInvalid ? theme.statusCritical : theme.textPrimary
                         selectByMouse: true
+                        Accessible.role: Accessible.EditableText
+                        Accessible.name: "Keyboard hex color"
                         background: Rectangle {
                             radius: theme.radiusStructural
                             color: theme.surfaceSunken
@@ -382,6 +390,10 @@ Flickable {
                             id: kbdSwatch
                             width: 22; height: 22; radius: theme.radiusStructural
                             activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: "Select keyboard swatch " + modelData
+                            Accessible.checkable: true
+                            Accessible.checked: ctrl.kbdPickerHex === modelData
                             color: modelData
                             border.width: (kbdSwatch.activeFocus || ctrl.kbdPickerHex === modelData) ? 2 : 1
                             border.color: kbdSwatch.activeFocus ? theme.brandYellow : (ctrl.kbdPickerHex === modelData ? theme.textPrimary : theme.borderSubtle)

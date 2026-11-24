@@ -28,6 +28,8 @@ Rectangle {
     implicitHeight: compactRows ? 54 : 34
     height: compactRows ? 54 : 34
     radius: theme.radiusStructural
+    Accessible.role: Accessible.StaticText
+    Accessible.name: root.label + ": " + (root.unavailable ? "Unavailable" : root.valueText)
     color: theme.surfaceOverlay
     border.width: 1
     border.color: stale ? theme.statusWarning : theme.borderSubtle

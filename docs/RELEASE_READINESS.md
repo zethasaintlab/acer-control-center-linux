@@ -1,9 +1,9 @@
 # Release Readiness & QA Assessment — Acer Control Center (`1.0.0-7.fc45`)
 
-- **Assessment Date:** 2026-11-23 (Stage 32 final release closure; initial Stage 28 closure at `e5d6fc1`)
-- **Committed Baseline:** `feat/clv0001-keyboard-integration` at `74a34f7` (Stage 29 documentation/spec checkpoint)
+- **Assessment Date:** 2026-11-24 (Stage 37 update; initial Stage 32 closure at `efbf9c8`, CI at `88d8f7c`)
+- **Committed Baseline:** `feat/clv0001-keyboard-integration` at `88d8f7c` (Stages 32–34.7 release closure, privacy hardening, and passing Fedora 45 GitHub Actions CI)
 - **Host-Integrated Package:** `acer-control-center-1.0.0-6.fc45.x86_64` (Stage 30.3 candidate installed via user DNF5 transaction `#66` and validated in Stage 31.1; see [docs/HOST_INTEGRATION_A715_59G.md](HOST_INTEGRATION_A715_59G.md))
-- **Uncommitted Local Closure Overlays:** Stage 30.2 license compliance (`COPYING.GPL-2.0`, composite SPDX `License:` + `%license`), Stage 30.3 reconciliation, and Stage 32 closure (`docs/HOST_INTEGRATION_A715_59G.md`, `Release: 7%{?dist}`)
+- **Uncommitted Stage 37 Working-Tree Changes:** Reconciled requested vs. driver-accepted `CLV0001` keyboard telemetry state and Stage 36–37 documentation
 - **Target Platform:** Acer Aspire 7 `A715-59G` (`RTH` / `Kelilu_RTH`, `INSYDE Corp. V1.17`), Fedora Linux 45 (`7.3.3-300.fc45.x86_64`), Wayland (`Hyprland` / `KDE Plasma`)
 - **Application Version / Packaging Release:** `1.0.0` / `7%{?dist}`
 
@@ -11,9 +11,9 @@
 
 ## 1. Release Posture Verdict
 
-**Verdict:** **Locally built, packaging-verified (`1.0.0-7.fc45.x86_64`), and host-integrated on the target Acer Aspire A715-59G (`1.0.0-6.fc45.x86_64` verified in Stage 31.1). Ready for repository review and Stage 32 commit authorization.**
+**Verdict:** **Locally built, CI-verified at `88d8f7c` (`Fedora 45 CI`), and host-integrated on the target Acer Aspire A715-59G (`1.0.0-6.fc45.x86_64` + Stage 36 `acer_clv0001_kbd` activation on `7.3.3-300.fc45.x86_64`). Open Stage 35 High UI/ConfigStore remediation and Stage 37 telemetry reconciliation must be resolved/committed before merging Draft PR #2.**
 
-The package remains an **unsigned, locally built, unpublished** RPM candidate (not a signed Fedora/Copr release) and is **not** hardware-certified for unverified fan PWM/tachometer overrides or battery FlexiCharger threshold setters, both of which remain fail-closed (`NotDetected` / `FirmwareAutomatic`) by design. The `1.0.0-7.fc45` candidate refreshes `%doc` only and carries no binary/code changes relative to host-verified `1.0.0-6.fc45`.
+The package remains an **unsigned, locally built, unpublished** RPM candidate (not a signed Fedora/Copr release) and is **not** hardware-certified for unverified fan PWM/tachometer overrides or battery FlexiCharger threshold setters, both of which remain fail-closed (`NotDetected` / `FirmwareAutomatic`) by design. The `1.0.0-7.fc45` candidate at `efbf9c8`/`88d8f7c` has not been installed on host (host runs `1.0.0-6.fc45`).
 
 ---
 
@@ -62,14 +62,14 @@ The package remains an **unsigned, locally built, unpublished** RPM candidate (n
 | Gated Item | Current State | Why Gated |
 |---|---|---|
 | **Host Package State (`1.0.0-6.fc45` installed; `1.0.0-7.fc45` built locally)** | Host runs verified `1.0.0-6.fc45` (upgraded from `1.0.0-3` via user DNF5 transaction `#66`); `1.0.0-7.fc45` adds `%doc HOST_INTEGRATION_A715_59G.md` only and is not installed. | Unnecessary host transaction avoided since binaries/runtime are identical to `1.0.0-6.fc45`. |
-| **Live `acer_clv0001_kbd` Reload Post-Stage 26** | `acer_clv0001_kbd` is unloaded (`CLV0001:00` unbound; UI in Preview Mode). | Kernel module `insmod`/DKMS build on live host requires operator action. |
+| **Stage 36 `acer_clv0001_kbd` Activation (`7.3.3-300.fc45.x86_64`)** | Built, installed to `/lib/modules/7.3.3-300.fc45.x86_64/extra/`, bound to `CLV0001:00`, and accepted `cyan 4` (`FF 00 C8 F0`, `integer`) with operator-confirmed illumination; `modprobe -R "acpi:CLV0001:"` resolves to `acer_clv0001_kbd`. | Same-kernel reboot autoload (`80-drivers.rules`) is unverified by reboot; cross-kernel DKMS/`akmods` integration remains future packaging work. |
 | **Live Interactive Desktop Polkit Prompt (`auth_admin_keep`)** | XML and `pkaction` defaults verified; interactive password dialog not clicked autonomously. | Requires live desktop authentication dialog interaction by human operator. |
 | **Live `PrepareForSleep` Suspend/Resume Cycle** | Implemented and unit-verified (`TelemetryCoordinator` pause/resume wiring). | Triggering host suspend/resume mutates host power state. |
 
 ---
 
-## 3. Recommended Pre-Commit / Maintainer Checklist
+## 3. Recommended Pre-Merge / Release Checklist
 
-1. Review Stage 32 working-tree changes (`COPYING.GPL-2.0`, `docs/HOST_INTEGRATION_A715_59G.md`, `docs/PROJECT_STATE.md`, `docs/RELEASE_READINESS.md`, `packaging/fedora/acer-control-center.spec`) and authorize the single local commit (`docs(release): close host integration and release readiness`).
+1. Review Stage 37 telemetry reconciliation (`driverAccepted*` vs. `requested*`) and resolve Stage 35 High QML/ConfigStore findings before marking Draft PR #2 Ready for Review.
 2. Keep `backup/pre-hydrogen-20261123-100354`, `stash@{0}`, and `stash@{1}` intact until remote publication policy is decided.
-3. Preserve external diagnostic probes in the private external ACPI audit workspace outside the source repository; do not ship or invoke `PK04 0x08` or unverified `ECMD` setters.
+3. Keep `v1.0.0` immutable; coordinate `v1.1.0` / `1.1.0-1.fc45` signing and optional cross-kernel `akmods`/DKMS subpackaging post-merge. Preserve external diagnostic probes in the private external ACPI audit workspace outside the source repository; do not ship or invoke `PK04 0x08` or unverified `ECMD` setters.

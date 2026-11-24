@@ -327,6 +327,10 @@ Window {
                         activeFocusOnTab: true
                         property bool isCurrent: ctrl.currentTabIndex === index
                         property bool isCompact: !mainWindow.isWideRail
+                        Accessible.role: Accessible.Button
+                        Accessible.name: modelData.code + " " + modelData.title
+                        Accessible.checkable: true
+                        Accessible.checked: navDelegate.isCurrent
 
                         color: isCurrent
                                ? theme.surfaceSelectedDark

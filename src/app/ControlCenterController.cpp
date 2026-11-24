@@ -16,6 +16,7 @@
 #include <QPixmap>
 #include <QPointer>
 #include <QRandomGenerator>
+#include <QSignalBlocker>
 #include <algorithm>
 #include <cmath>
 
@@ -1372,14 +1373,26 @@ bool ControlCenterController::importProfileBundle(const QString& filePath) {
     const QString target = filePath.trimmed().isEmpty()
                                ? QDir(m_configStore.configDirectory()).filePath(QStringLiteral("acer-profiles-export.json"))
                                : filePath.trimmed();
-    const bool ok = m_configStore.importProfileBundleFromFile(target, m_settings, &err);
+    core::AppSettings imported;
+    const bool ok = m_configStore.importProfileBundleFromFile(target, imported, &err);
     if (ok) {
+        m_settings = imported;
         if (m_theme) {
-            m_theme->setDarkTheme(m_settings.darkTheme);
-            m_theme->setReducedMotion(m_settings.reducedMotion);
-            m_theme->setCompactNavigation(m_settings.compactNavigation);
-            m_theme->setAccentFromHex(m_settings.accentColorHex);
+            {
+                QSignalBlocker blocker(m_theme);
+                m_theme->setDarkTheme(imported.darkTheme);
+                m_theme->setReducedMotion(imported.reducedMotion);
+                m_theme->setCompactNavigation(imported.compactNavigation);
+                m_theme->setAccentSwatches(imported.customAccentSwatches);
+                m_theme->setAccentFromHex(imported.accentColorHex);
+            }
+            Q_EMIT m_theme->themeChanged();
+            Q_EMIT m_theme->motionChanged();
+            Q_EMIT m_theme->layoutChanged();
+            Q_EMIT m_theme->swatchesChanged();
+            Q_EMIT m_theme->accentChanged();
         }
+        m_settings = imported;
         loadActiveKeyboardProfileFromSettings();
         persistSettings();
         Q_EMIT settingsUpdated();

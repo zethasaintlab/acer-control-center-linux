@@ -179,6 +179,10 @@ Flickable {
                                 id: accSwatch
                                 width: 24; height: 24; radius: theme.radiusStructural
                                 activeFocusOnTab: true
+                                Accessible.role: Accessible.Button
+                                Accessible.name: "Select accent swatch " + modelData
+                                Accessible.checkable: true
+                                Accessible.checked: theme.accentHex === modelData
                                 color: modelData
                                 border.width: (accSwatch.activeFocus || theme.accentHex === modelData) ? 2 : 1
                                 border.color: accSwatch.activeFocus ? theme.brandYellow : (theme.accentHex === modelData ? theme.textPrimary : theme.borderSubtle)
@@ -225,17 +229,34 @@ Flickable {
 
                         TextField {
                             id: appHexInput
+                            property bool hexInvalid: false
                             width: 92; height: 30
                             text: theme.accentHex
-                            font.family: theme.fontMono; font.pixelSize: 12; color: theme.textPrimary
+                            font.family: theme.fontMono; font.pixelSize: 12
+                            color: hexInvalid ? theme.statusCritical : theme.textPrimary
                             selectByMouse: true
+                            Accessible.role: Accessible.EditableText
+                            Accessible.name: "Application accent hex color"
                             background: Rectangle {
                                 radius: theme.radiusStructural
                                 color: theme.surfaceSunken
-                                border.width: appHexInput.activeFocus ? 2 : 1
-                                border.color: appHexInput.activeFocus ? theme.accentBorder : theme.borderSubtle
+                                border.width: (appHexInput.activeFocus || appHexInput.hexInvalid) ? 2 : 1
+                                border.color: appHexInput.hexInvalid
+                                              ? theme.statusCritical
+                                              : (appHexInput.activeFocus ? theme.accentBorder : theme.borderSubtle)
                             }
-                            onEditingFinished: theme.setAccentFromHex(text)
+                            onTextEdited: hexInvalid = false
+                            onEditingFinished: hexInvalid = !theme.setAccentFromHex(text)
+                        }
+
+                        Connections {
+                            target: theme
+                            function onAccentChanged() {
+                                if (!appHexInput.activeFocus) {
+                                    appHexInput.hexInvalid = false;
+                                    appHexInput.text = theme.accentHex;
+                                }
+                            }
                         }
 
                         AtelierButton { height: 30; pillShape: false; text: "SAVE SWATCH"; onClicked: theme.saveCurrentAccentToSwatches() }
@@ -243,9 +264,19 @@ Flickable {
                     }
 
                     Text {
+                        visible: appHexInput.hexInvalid
                         width: parent.width
                         wrapMode: Text.WordWrap
-                        text: "WCAG 2.2 Guardrail: Custom accent colors automatically derive accessible readable text tokens (>= 4.5:1 AA against #222524 Dark HUD or #D8DCDF Light CAD) without modifying physical keyboard lighting."
+                        text: "Invalid hex color. Enter a 6-digit sRGB value such as #FFEA00."
+                        font.family: theme.fontMono
+                        font.pixelSize: 10
+                        color: theme.statusCritical
+                    }
+
+                    Text {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        text: "WCAG 2.2 Guardrail: Custom accent colors automatically derive accessible readable text tokens (>= 4.5:1 AA against dark HUD or light CAD surfaces) without modifying physical keyboard lighting."
                         font.family: theme.fontSans
                         font.pixelSize: 11
                         color: theme.textSecondary

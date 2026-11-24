@@ -11,6 +11,10 @@ Item {
     property int stepSize: 1
     property bool enabledState: true
     property color fillColor: theme.telemetryLimeBar
+    property bool dragging: false
+    property int dragValue: value
+    readonly property int displayValue: dragging ? dragValue : clampValue(root.value)
+    signal valueMoved(int newValue)
     signal valueCommitted(int newValue)
 
     implicitWidth: 220
@@ -18,10 +22,23 @@ Item {
     activeFocusOnTab: root.enabledState
     opacity: root.enabledState ? 1.0 : 0.55
 
-    function clampAndEmit(v) {
-        var c = Math.max(root.minValue, Math.min(root.maxValue, Math.round(v)));
-        root.value = c;
+    Accessible.role: Accessible.Slider
+    Accessible.name: root.label
+    Accessible.description: root.displayValue + (root.unit.length > 0 ? (" " + root.unit) : "")
+
+    function clampValue(v) {
+        return Math.max(root.minValue, Math.min(root.maxValue, Math.round(v)));
+    }
+
+    function commitValue(v) {
+        var c = clampValue(v);
         root.valueCommitted(c);
+    }
+
+    onEnabledStateChanged: {
+        if (!root.enabledState && root.dragging) {
+            root.dragging = false;
+        }
     }
 
     Row {
@@ -41,7 +58,7 @@ Item {
         }
 
         Text {
-            text: root.value + (root.unit.length > 0 ? (" " + root.unit) : "")
+            text: root.displayValue + (root.unit.length > 0 ? (" " + root.unit) : "")
             width: parent.width * 0.32
             horizontalAlignment: Text.AlignRight
             font.family: theme.fontMono
@@ -78,7 +95,7 @@ Item {
         Rectangle {
             width: {
                 var span = Math.max(1, root.maxValue - root.minValue);
-                var frac = Math.max(0.0, Math.min(1.0, (root.value - root.minValue) / span));
+                var frac = Math.max(0.0, Math.min(1.0, (root.displayValue - root.minValue) / span));
                 return Math.max(4, parent.width * frac);
             }
             height: parent.height
@@ -96,7 +113,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             x: {
                 var span = Math.max(1, root.maxValue - root.minValue);
-                var frac = Math.max(0.0, Math.min(1.0, (root.value - root.minValue) / span));
+                var frac = Math.max(0.0, Math.min(1.0, (root.displayValue - root.minValue) / span));
                 return Math.max(0, Math.min(track.width - width, track.width * frac - width * 0.5));
             }
             color: root.enabledState ? theme.brandYellow : theme.textMuted
@@ -111,22 +128,64 @@ Item {
             enabled: root.enabledState
             cursorShape: root.enabledState ? Qt.PointingHandCursor : Qt.ForbiddenCursor
 
-            function updateFromMouse(mx) {
+            function valueFromMouse(mx) {
                 var frac = Math.max(0.0, Math.min(1.0, mx / Math.max(1.0, track.width)));
                 var raw = root.minValue + frac * (root.maxValue - root.minValue);
-                root.clampAndEmit(raw);
+                return root.clampValue(raw);
             }
 
             onPressed: function(mouse) {
                 root.forceActiveFocus();
-                updateFromMouse(mouse.x);
+                root.dragValue = valueFromMouse(mouse.x);
+                root.dragging = true;
+                root.valueMoved(root.dragValue);
             }
             onPositionChanged: function(mouse) {
-                if (pressed) updateFromMouse(mouse.x);
+                if (pressed && root.dragging) {
+                    var nextVal = valueFromMouse(mouse.x);
+                    if (nextVal !== root.dragValue) {
+                        root.dragValue = nextVal;
+                        root.valueMoved(nextVal);
+                    }
+                }
+            }
+            onReleased: function(mouse) {
+                if (root.dragging) {
+                    var finalVal = valueFromMouse(mouse.x);
+                    root.dragValue = finalVal;
+                    root.dragging = false;
+                    root.commitValue(finalVal);
+                }
+            }
+            onCanceled: {
+                root.dragging = false;
             }
         }
     }
 
-    Keys.onLeftPressed: if (root.enabledState) root.clampAndEmit(root.value - root.stepSize)
-    Keys.onRightPressed: if (root.enabledState) root.clampAndEmit(root.value + root.stepSize)
+    Keys.onPressed: function(event) {
+        if (!root.enabledState) {
+            return;
+        }
+        var pageStep = Math.max(root.stepSize, 10);
+        if (event.key === Qt.Key_Left) {
+            root.commitValue(root.displayValue - root.stepSize);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Right) {
+            root.commitValue(root.displayValue + root.stepSize);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_PageUp) {
+            root.commitValue(root.displayValue + pageStep);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_PageDown) {
+            root.commitValue(root.displayValue - pageStep);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_Home) {
+            root.commitValue(root.minValue);
+            event.accepted = true;
+        } else if (event.key === Qt.Key_End) {
+            root.commitValue(root.maxValue);
+            event.accepted = true;
+        }
+    }
 }

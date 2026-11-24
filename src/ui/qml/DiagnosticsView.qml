@@ -17,12 +17,18 @@ Flickable {
 
         // 01 // PLATFORM IDENTITY & HARDWARE BACKEND SWITCHER
         CommandModule {
+            id: platIdentityMod
+            objectName: "diagnosticsIdentityModule"
             width: parent.width
             indexCode: "01"
             title: "PLATFORM IDENTITY & SIMULATION BACKEND"
-            provenanceText: ctrl.dmiAvailable ? "DMI + sysfs" : "fixture"
-            badgeText: ctrl.mockModeActive ? "MOCK HARDWARE" : "PHYSICAL HARDWARE"
-            badgeColor: ctrl.mockModeActive ? theme.statusWarning : theme.statusNominal
+            provenanceText: !ctrl.mockModeActive
+                            ? (ctrl.telemetryAvailable ? "DMI + sysfs" : "awaiting DMI + sysfs")
+                            : "fixture"
+            badgeText: !ctrl.telemetryAvailable
+                       ? "INITIALIZING"
+                       : (ctrl.mockModeActive ? "MOCK HARDWARE" : "PHYSICAL HARDWARE")
+            badgeColor: (!ctrl.telemetryAvailable || ctrl.mockModeActive) ? theme.statusWarning : theme.statusNominal
             contentSpacing: 10
 
             Grid {
@@ -33,15 +39,34 @@ Flickable {
                 Column {
                     width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
                     spacing: 0
-                    CadKeyValueRow { width: parent.width; keyText: "PRODUCT"; valueText: ctrl.productTitle }
-                    CadKeyValueRow { width: parent.width; keyText: "BOARD / BIOS"; valueText: ctrl.boardTitle + " · " + ctrl.biosTitle }
-                    CadKeyValueRow { width: parent.width; keyText: "ODM PLATFORM"; valueText: ctrl.odmPlatformNote; showDivider: false }
+                    CadKeyValueRow {
+                        width: parent.width
+                        keyText: "PRODUCT"
+                        valueText: ctrl.telemetryAvailable && ctrl.productTitle.length > 0 ? ctrl.productTitle : "--"
+                    }
+                    CadKeyValueRow {
+                        width: parent.width
+                        keyText: "BOARD / BIOS"
+                        valueText: ctrl.telemetryAvailable && (ctrl.boardTitle.length > 0 || ctrl.biosTitle.length > 0)
+                                   ? (ctrl.boardTitle + " · " + ctrl.biosTitle)
+                                   : "--"
+                    }
+                    CadKeyValueRow {
+                        width: parent.width
+                        keyText: "ODM PLATFORM"
+                        valueText: ctrl.telemetryAvailable && ctrl.odmPlatformNote.length > 0 ? ctrl.odmPlatformNote : "--"
+                        showDivider: false
+                    }
                 }
 
                 Column {
                     width: parent.columns === 2 ? (parent.width - 12) * 0.5 : parent.width
                     spacing: 0
-                    CadKeyValueRow { width: parent.width; keyText: "KERNEL"; valueText: ctrl.kernelRelease.length > 0 ? ctrl.kernelRelease : "--" }
+                    CadKeyValueRow {
+                        width: parent.width
+                        keyText: "KERNEL"
+                        valueText: ctrl.telemetryAvailable && ctrl.kernelRelease.length > 0 ? ctrl.kernelRelease : "--"
+                    }
                     CadKeyValueRow {
                         width: parent.width; keyText: "DAEMON";
                         valueText: ctrl.daemonReachable ? "ONLINE (POLKIT READY)" : "UNAVAILABLE"
@@ -49,7 +74,11 @@ Flickable {
                     }
                     CadKeyValueRow {
                         width: parent.width; keyText: "ACPI / WMI";
-                        valueText: (ctrl.acpiDevicesJoined.length > 0 ? ctrl.acpiDevicesJoined : "none") + " | " + ctrl.wmiGuidsJoined
+                        valueText: !ctrl.telemetryAvailable
+                                   ? "--"
+                                   : ((ctrl.acpiDevicesJoined.length > 0 ? ctrl.acpiDevicesJoined : "none")
+                                      + " | "
+                                      + (ctrl.wmiGuidsJoined.length > 0 ? ctrl.wmiGuidsJoined : "none"))
                         showDivider: false
                     }
                 }
@@ -77,6 +106,18 @@ Flickable {
             stripeColor: theme.telemetryLime
             contentSpacing: 5
 
+            Text {
+                visible: ctrl.capabilitiesModel.length === 0
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: ctrl.telemetryAvailable
+                      ? "No discovered hardware capability records reported."
+                      : "Collecting initial hardware capability matrix..."
+                font.family: theme.fontSans
+                font.pixelSize: 12
+                color: theme.textMuted
+            }
+
             Repeater {
                 model: ctrl.capabilitiesModel
                 delegate: Rectangle {
@@ -86,6 +127,9 @@ Flickable {
                     color: theme.surfaceOverlay
                     border.width: 1
                     border.color: theme.borderSubtle
+                    Accessible.role: Accessible.StaticText
+                    Accessible.name: modelData.title + ": " + modelData.stateBadge
+                    Accessible.description: modelData.interfacePath + " — " + modelData.summary
 
                     Column {
                         id: capRowCol
@@ -149,6 +193,16 @@ Flickable {
                 width: parent.width
                 spacing: 4
 
+                Text {
+                    visible: ctrl.diagnosticLogsModel.length === 0
+                    width: parent.width
+                    wrapMode: Text.WordWrap
+                    text: "No diagnostic events recorded yet."
+                    font.family: theme.fontMono
+                    font.pixelSize: 11
+                    color: theme.textMuted
+                }
+
                 Repeater {
                     model: ctrl.diagnosticLogsModel
                     delegate: Rectangle {
@@ -157,6 +211,8 @@ Flickable {
                         radius: theme.radiusStructural
                         color: theme.surfaceOverlay
                         border.width: 1; border.color: theme.hairlineRule
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: logLineTxt.text
 
                         Rectangle {
                             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom

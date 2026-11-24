@@ -231,22 +231,51 @@ void FanCurveEditorItem::keyPressEvent(QKeyEvent* event) {
     }
     m_selectedIndex = std::clamp(m_selectedIndex, 0, static_cast<int>(m_points.size()) - 1);
     QVariantMap cur = m_points.at(m_selectedIndex).toMap();
+    int temp = cur.value(QStringLiteral("tempC")).toInt();
     int duty = cur.value(QStringLiteral("dutyPct")).toInt();
+    const bool shiftHeld = (event->modifiers() & Qt::ShiftModifier) != 0;
 
-    if (event->key() == Qt::Key_Left) {
+    if (event->key() == Qt::Key_Home) {
+        m_selectedIndex = 0;
+        update();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_End) {
+        m_selectedIndex = static_cast<int>(m_points.size()) - 1;
+        update();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Left && !shiftHeld) {
         m_selectedIndex = std::max(0, m_selectedIndex - 1);
         update();
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_Right) {
+    if (event->key() == Qt::Key_Right && !shiftHeld) {
         m_selectedIndex = std::min(static_cast<int>(m_points.size()) - 1, m_selectedIndex + 1);
         update();
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) {
-        duty += (event->key() == Qt::Key_Up) ? 2 : -2;
+    if ((event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) && shiftHeld) {
+        temp += (event->key() == Qt::Key_Right) ? 2 : -2;
+        cur.insert(QStringLiteral("tempC"), std::clamp(temp, kMinTemp, kMaxTemp));
+        m_points[m_selectedIndex] = cur;
+        enforceMonotonicCurve();
+        Q_EMIT pointsChanged();
+        Q_EMIT curveEdited(m_points);
+        update();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down
+        || event->key() == Qt::Key_PageUp || event->key() == Qt::Key_PageDown) {
+        const int delta = (event->key() == Qt::Key_PageUp) ? 10
+                        : (event->key() == Qt::Key_PageDown) ? -10
+                        : (event->key() == Qt::Key_Up) ? 2 : -2;
+        duty += delta;
         cur.insert(QStringLiteral("dutyPct"), std::clamp(duty, kMinDuty, kMaxDuty));
         m_points[m_selectedIndex] = cur;
         enforceMonotonicCurve();
